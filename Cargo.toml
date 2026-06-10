@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/kinetik-ui-core", "crates/kinetik-ui-widgets"]
+members = [
+    "crates/kinetik-ui-core",
+    "crates/kinetik-ui-text",
+    "crates/kinetik-ui-widgets",
+]
 
 [workspace.package]
 edition = "2024"
