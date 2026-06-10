@@ -8,6 +8,7 @@ pub mod identity;
 pub mod input;
 pub mod layout;
 pub mod memory;
+pub mod render;
 pub mod runtime;
 pub mod units;
 
@@ -22,6 +23,10 @@ pub use layout::{
     fit_box, pad_rect, row_layout, stack_layout,
 };
 pub use memory::UiMemory;
+pub use render::{
+    Brush, ClipId, Color, CornerRadius, ImageId, LayerId, LinePrimitive, Primitive, RectPrimitive,
+    Stroke, TextureId, Transform,
+};
 pub use runtime::{FrameContext, FrameOutput, RepaintRequest, TimeInfo, ViewportInfo};
 pub use units::{PhysicalPoint, PhysicalSize, ScaleFactor};
 
