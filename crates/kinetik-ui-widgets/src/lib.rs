@@ -5,6 +5,7 @@ use kinetik_ui_core::{
     Rect, RectPrimitive, Response, Stroke, TextPrimitive, Theme, UiInput, UiMemory, WidgetId,
     draggable, fit_box, focusable, selectable,
 };
+use kinetik_ui_text::TextEditState;
 
 /// Output emitted by a widget.
 #[derive(Debug, Clone, PartialEq)]
@@ -303,13 +304,131 @@ pub fn image(rect: Rect, image: ImageId) -> WidgetOutput {
     WidgetOutput::new(None, vec![Primitive::Image(ImagePrimitive { image, rect })])
 }
 
+/// Output emitted by editable text widgets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextFieldOutput {
+    /// Base widget output.
+    pub widget: WidgetOutput,
+    /// Whether the text changed this frame.
+    pub changed: bool,
+}
+
+/// Emits a single-line text field and applies text input while focused.
+pub fn text_field(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> TextFieldOutput {
+    let before = state.text.clone();
+    let response = focusable(id, rect, input, memory, disabled);
+    if response.state.focused && !disabled {
+        state.apply_input(&input.text_events, &input.keyboard.events);
+    }
+    let border = if response.state.focused {
+        theme.colors.accent
+    } else {
+        theme.colors.border
+    };
+
+    TextFieldOutput {
+        widget: WidgetOutput::new(
+            Some(response),
+            vec![
+                Primitive::Rect(RectPrimitive {
+                    rect,
+                    fill: Some(Brush::Solid(theme.colors.surface_sunken)),
+                    stroke: Some(Stroke::new(1.0, Brush::Solid(border))),
+                    radius: theme.radius,
+                }),
+                Primitive::Text(TextPrimitive {
+                    origin: Point::new(rect.x + theme.spacing.sm, rect.y + theme.text_size + 5.0),
+                    text: state.text.clone(),
+                    size: theme.text_size,
+                    brush: Brush::Solid(theme.colors.text),
+                }),
+            ],
+        ),
+        changed: before != state.text,
+    }
+}
+
+/// Output emitted by numeric input.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumericInputOutput {
+    /// Text field output.
+    pub field: TextFieldOutput,
+    /// Parsed numeric value, if valid.
+    pub value: Option<f32>,
+    /// Whether the current text parses as a number.
+    pub valid: bool,
+}
+
+/// Emits a numeric input field.
+pub fn numeric_input(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> NumericInputOutput {
+    let field = text_field(id, rect, state, input, memory, theme, disabled);
+    let value = state.text.trim().parse::<f32>().ok();
+
+    NumericInputOutput {
+        field,
+        value,
+        valid: value.is_some() || state.text.trim().is_empty(),
+    }
+}
+
+/// Output emitted by search fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchFieldOutput {
+    /// Text field output.
+    pub field: TextFieldOutput,
+    /// Current query.
+    pub query: String,
+    /// Whether the query is empty.
+    pub empty: bool,
+}
+
+/// Emits a search-oriented text field.
+pub fn search_field(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> SearchFieldOutput {
+    let field = text_field(id, rect, state, input, memory, theme, disabled);
+    let query = state.text.clone();
+
+    SearchFieldOutput {
+        field,
+        empty: query.is_empty(),
+        query,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{IconId, button, checkbox, icon_button, image, label, panel, slider, toggle};
+    use super::{
+        IconId, button, checkbox, icon_button, image, label, numeric_input, panel, search_field,
+        slider, text_field, toggle,
+    };
     use kinetik_ui_core::{
         ImageId, Point, PointerButtonState, PointerInput, Primitive, Rect, UiInput, UiMemory,
         WidgetId, default_dark_theme,
     };
+    use kinetik_ui_text::TextEditState;
 
     fn input_at(x: f32, y: f32) -> UiInput {
         UiInput {
@@ -428,5 +547,67 @@ mod tests {
             image(Rect::new(0.0, 0.0, 10.0, 10.0), ImageId::from_raw(1)).primitives[0],
             Primitive::Image(_)
         ));
+    }
+
+    #[test]
+    fn text_field_applies_input_while_focused() {
+        let theme = default_dark_theme();
+        let id = WidgetId::from_key("text");
+        let mut memory = UiMemory::new();
+        memory.focused = Some(id);
+        let mut state = TextEditState::new("");
+        let input = UiInput {
+            text_events: vec![kinetik_ui_core::TextInputEvent::Commit("a".to_owned())],
+            ..UiInput::default()
+        };
+
+        let output = text_field(
+            id,
+            Rect::new(0.0, 0.0, 80.0, 24.0),
+            &mut state,
+            &input,
+            &mut memory,
+            &theme,
+            false,
+        );
+
+        assert!(output.changed);
+        assert_eq!(state.text, "a");
+    }
+
+    #[test]
+    fn numeric_input_reports_parse_state() {
+        let theme = default_dark_theme();
+        let mut state = TextEditState::new("42");
+        let output = numeric_input(
+            WidgetId::from_key("number"),
+            Rect::new(0.0, 0.0, 80.0, 24.0),
+            &mut state,
+            &UiInput::default(),
+            &mut UiMemory::new(),
+            &theme,
+            false,
+        );
+
+        assert!(output.valid);
+        assert_eq!(output.value, Some(42.0));
+    }
+
+    #[test]
+    fn search_field_reports_query() {
+        let theme = default_dark_theme();
+        let mut state = TextEditState::new("media");
+        let output = search_field(
+            WidgetId::from_key("search"),
+            Rect::new(0.0, 0.0, 80.0, 24.0),
+            &mut state,
+            &UiInput::default(),
+            &mut UiMemory::new(),
+            &theme,
+            false,
+        );
+
+        assert_eq!(output.query, "media");
+        assert!(!output.empty);
     }
 }
