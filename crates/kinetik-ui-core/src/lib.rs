@@ -35,7 +35,7 @@ pub use layout::{
 pub use memory::UiMemory;
 pub use render::{
     Brush, ClipId, Color, CornerRadius, ImageId, ImagePrimitive, LayerId, LinePrimitive, Primitive,
-    RectPrimitive, Stroke, TextPrimitive, TextureId, Transform,
+    RectPrimitive, Stroke, TextPrimitive, TextureId, TexturePrimitive, Transform,
 };
 pub use runtime::{FrameContext, FrameOutput, RepaintRequest, TimeInfo, ViewportInfo};
 pub use theme::{

@@ -3,10 +3,12 @@
 pub mod collections;
 pub mod dock;
 pub mod overlays;
+pub mod viewport;
 
 pub use collections::*;
 pub use dock::*;
 pub use overlays::*;
+pub use viewport::*;
 
 use kinetik_ui_core::{
     Brush, ComponentState, CornerRadius, ImageId, ImagePrimitive, LinePrimitive, Point, Primitive,
