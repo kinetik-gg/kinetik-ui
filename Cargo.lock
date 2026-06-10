@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "kinetik-ui-core"
 version = "0.1.0"
+
+[[package]]
+name = "kinetik-ui-widgets"
+version = "0.1.0"
+dependencies = [
+ "kinetik-ui-core",
+]

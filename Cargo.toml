@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kinetik-ui-core"]
+members = ["crates/kinetik-ui-core", "crates/kinetik-ui-widgets"]
 
 [workspace.package]
 edition = "2024"
@@ -14,4 +14,3 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
-
