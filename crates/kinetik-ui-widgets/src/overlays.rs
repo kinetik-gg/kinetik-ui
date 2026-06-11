@@ -1,7 +1,8 @@
 //! Overlay, menu, popover, and command palette models.
 
 use kinetik_ui_core::{
-    ActionContext, ActionDescriptor, ActionId, ActionQueue, ActionSource, Point, Rect, Size,
+    ActionContext, ActionDescriptor, ActionId, ActionQueue, ActionSource, Point, Rect,
+    SemanticAction, SemanticActionKind, SemanticNode, SemanticRole, Size, WidgetId,
 };
 
 /// Stable overlay identity.
@@ -27,12 +28,20 @@ impl OverlayId {
 pub enum OverlayKind {
     /// Popover surface.
     Popover,
+    /// Dropdown surface anchored to a control.
+    Dropdown,
+    /// Context menu opened from a contextual target.
+    ContextMenu,
     /// Menu surface.
     Menu,
     /// Command palette surface.
     CommandPalette,
     /// Tooltip surface.
     Tooltip,
+    /// Modal overlay that blocks interaction with lower layers.
+    Modal,
+    /// Drag preview surface.
+    DragPreview,
 }
 
 /// Dismissal behavior for an overlay.
@@ -42,6 +51,20 @@ pub enum OverlayDismissal {
     Manual,
     /// Overlay closes when the pointer activates outside its bounds.
     OutsideClick,
+    /// Overlay closes when Escape is pressed.
+    Escape,
+    /// Overlay closes when either outside activation or Escape occurs.
+    OutsideClickOrEscape,
+}
+
+impl OverlayDismissal {
+    fn closes_on_outside_click(self) -> bool {
+        matches!(self, Self::OutsideClick | Self::OutsideClickOrEscape)
+    }
+
+    fn closes_on_escape(self) -> bool {
+        matches!(self, Self::Escape | Self::OutsideClickOrEscape)
+    }
 }
 
 /// Overlay entry in top-to-bottom ordering.
@@ -49,6 +72,8 @@ pub enum OverlayDismissal {
 pub struct OverlayEntry {
     /// Overlay identity.
     pub id: OverlayId,
+    /// Parent overlay for nested menu/popover behavior.
+    pub parent: Option<OverlayId>,
     /// Overlay kind.
     pub kind: OverlayKind,
     /// Overlay bounds.
@@ -57,6 +82,46 @@ pub struct OverlayEntry {
     pub modal: bool,
     /// Dismissal behavior.
     pub dismissal: OverlayDismissal,
+}
+
+impl OverlayEntry {
+    /// Creates a manual non-modal overlay entry.
+    #[must_use]
+    pub const fn new(id: OverlayId, kind: OverlayKind, rect: Rect) -> Self {
+        Self {
+            id,
+            parent: None,
+            kind,
+            rect,
+            modal: false,
+            dismissal: OverlayDismissal::Manual,
+        }
+    }
+
+    /// Returns this entry with a parent overlay.
+    #[must_use]
+    pub const fn with_parent(mut self, parent: OverlayId) -> Self {
+        self.parent = Some(parent);
+        self
+    }
+
+    /// Returns this entry with modality set.
+    #[must_use]
+    pub const fn modal(mut self, modal: bool) -> Self {
+        self.modal = modal;
+        self
+    }
+
+    /// Returns this entry with dismissal behavior set.
+    #[must_use]
+    pub const fn dismiss_on(mut self, dismissal: OverlayDismissal) -> Self {
+        self.dismissal = dismissal;
+        self
+    }
+
+    fn captures_lower_layers(&self) -> bool {
+        self.modal || self.kind == OverlayKind::Modal
+    }
 }
 
 /// Retained overlay stack.
@@ -78,10 +143,29 @@ impl OverlayStack {
         self.entries.push(entry);
     }
 
-    /// Closes an overlay by ID.
+    /// Opens a child overlay when its parent is still present.
+    ///
+    /// Returns `false` when the parent is missing and leaves the stack unchanged.
+    pub fn open_child(&mut self, parent: OverlayId, entry: OverlayEntry) -> bool {
+        if !self.entries.iter().any(|candidate| candidate.id == parent) {
+            return false;
+        }
+        self.open(entry.with_parent(parent));
+        true
+    }
+
+    /// Closes an overlay and any nested descendants by ID.
     pub fn close(&mut self, id: OverlayId) -> Option<OverlayEntry> {
-        let index = self.entries.iter().position(|entry| entry.id == id)?;
-        Some(self.entries.remove(index))
+        let closed = self.entries.iter().find(|entry| entry.id == id).cloned()?;
+        let closing = self.descendant_ids(id);
+        self.entries.retain(|entry| !closing.contains(&entry.id));
+        Some(closed)
+    }
+
+    /// Closes and returns the top overlay.
+    pub fn close_top(&mut self) -> Option<OverlayEntry> {
+        let id = self.top()?.id;
+        self.close(id)
     }
 
     /// Returns the top overlay.
@@ -99,19 +183,102 @@ impl OverlayStack {
     /// Returns true when any modal overlay is open.
     #[must_use]
     pub fn has_modal(&self) -> bool {
-        self.entries.iter().any(|entry| entry.modal)
+        self.entries.iter().any(OverlayEntry::captures_lower_layers)
+    }
+
+    /// Returns the overlay that should receive focus by default.
+    #[must_use]
+    pub fn focus_target(&self) -> Option<OverlayId> {
+        self.top().map(|entry| entry.id)
+    }
+
+    /// Returns the topmost overlay containing a point.
+    #[must_use]
+    pub fn topmost_at(&self, point: Point) -> Option<&OverlayEntry> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| entry.rect.contains_point(point))
+    }
+
+    /// Returns the overlay that captures pointer routing for a point.
+    ///
+    /// A point inside any overlay routes to the topmost containing overlay. A
+    /// point outside every overlay routes to the topmost modal overlay, if one
+    /// exists, so lower UI cannot receive interaction through it.
+    #[must_use]
+    pub fn pointer_capture_target(&self, point: Point) -> Option<OverlayId> {
+        self.topmost_at(point).map_or_else(
+            || {
+                self.entries
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.captures_lower_layers())
+                    .map(|entry| entry.id)
+            },
+            |entry| Some(entry.id),
+        )
     }
 
     /// Returns overlays that should close for an outside activation point.
     #[must_use]
     pub fn outside_click_close_requests(&self, point: Point) -> Vec<OverlayId> {
-        self.entries
-            .iter()
-            .rev()
-            .take_while(|entry| !entry.rect.contains_point(point))
-            .filter(|entry| entry.dismissal == OverlayDismissal::OutsideClick)
+        let mut requests = Vec::new();
+        for entry in self.entries.iter().rev() {
+            if entry.rect.contains_point(point) {
+                break;
+            }
+            if entry.dismissal.closes_on_outside_click() {
+                requests.push(entry.id);
+            }
+            if entry.captures_lower_layers() || !entry.dismissal.closes_on_outside_click() {
+                break;
+            }
+        }
+        requests
+    }
+
+    /// Returns the top overlay that should close for Escape.
+    #[must_use]
+    pub fn escape_close_request(&self) -> Option<OverlayId> {
+        self.top()
+            .filter(|entry| entry.dismissal.closes_on_escape())
             .map(|entry| entry.id)
-            .collect()
+    }
+
+    /// Returns dismissal requests for a frame's overlay input.
+    #[must_use]
+    pub fn dismissal_requests(
+        &self,
+        outside_activation: Option<Point>,
+        escape_pressed: bool,
+    ) -> Vec<OverlayId> {
+        let mut requests = outside_activation
+            .map_or_else(Vec::new, |point| self.outside_click_close_requests(point));
+        if escape_pressed
+            && let Some(id) = self.escape_close_request()
+            && !requests.contains(&id)
+        {
+            requests.push(id);
+        }
+        requests
+    }
+
+    fn descendant_ids(&self, root: OverlayId) -> Vec<OverlayId> {
+        let mut ids = vec![root];
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for entry in &self.entries {
+                if entry.parent.is_some_and(|parent| ids.contains(&parent))
+                    && !ids.contains(&entry.id)
+                {
+                    ids.push(entry.id);
+                    changed = true;
+                }
+            }
+        }
+        ids
     }
 }
 
@@ -214,38 +381,177 @@ pub struct PopoverRequest {
 /// Places a popover in logical units.
 #[must_use]
 pub fn place_popover(request: PopoverRequest, viewport: Rect) -> Rect {
-    let mut rect = match request.placement {
-        PopoverPlacement::Below => Rect::new(
-            request.anchor.x,
-            request.anchor.max_y() + request.offset,
-            request.size.width,
-            request.size.height,
-        ),
-        PopoverPlacement::Above => Rect::new(
-            request.anchor.x,
-            request.anchor.y - request.offset - request.size.height,
-            request.size.width,
-            request.size.height,
-        ),
-        PopoverPlacement::Right => Rect::new(
-            request.anchor.max_x() + request.offset,
-            request.anchor.y,
-            request.size.width,
-            request.size.height,
-        ),
-        PopoverPlacement::Left => Rect::new(
-            request.anchor.x - request.offset - request.size.width,
-            request.anchor.y,
-            request.size.width,
-            request.size.height,
-        ),
-    };
-
-    if request.fit_viewport {
-        rect.x = rect.x.clamp(viewport.x, viewport.max_x() - rect.width);
-        rect.y = rect.y.clamp(viewport.y, viewport.max_y() - rect.height);
+    let viewport = sanitize_rect(viewport).max_zero();
+    let size = Size::new(
+        sanitize_extent(request.size.width),
+        sanitize_extent(request.size.height),
+    );
+    let anchor = sanitize_rect(request.anchor);
+    let offset = sanitize_extent(request.offset);
+    let preferred = popover_rect(anchor, size, request.placement, offset);
+    if !request.fit_viewport {
+        return preferred;
     }
-    rect
+
+    let mut rect = preferred;
+    for placement in placement_candidates(request.placement) {
+        let candidate = popover_rect(anchor, size, placement, offset);
+        let adjusted = clamp_popover_cross_axis(candidate, placement, viewport);
+        if placement_axis_fits(candidate, placement, viewport) && viewport.contains_rect(adjusted) {
+            rect = adjusted;
+            break;
+        }
+    }
+
+    clamp_rect_to_viewport(rect, viewport)
+}
+
+fn popover_rect(anchor: Rect, size: Size, placement: PopoverPlacement, offset: f32) -> Rect {
+    match placement {
+        PopoverPlacement::Below => {
+            Rect::new(anchor.x, anchor.max_y() + offset, size.width, size.height)
+        }
+        PopoverPlacement::Above => Rect::new(
+            anchor.x,
+            anchor.y - offset - size.height,
+            size.width,
+            size.height,
+        ),
+        PopoverPlacement::Right => {
+            Rect::new(anchor.max_x() + offset, anchor.y, size.width, size.height)
+        }
+        PopoverPlacement::Left => Rect::new(
+            anchor.x - offset - size.width,
+            anchor.y,
+            size.width,
+            size.height,
+        ),
+    }
+}
+
+fn placement_candidates(preferred: PopoverPlacement) -> [PopoverPlacement; 4] {
+    match preferred {
+        PopoverPlacement::Below => [
+            PopoverPlacement::Below,
+            PopoverPlacement::Above,
+            PopoverPlacement::Right,
+            PopoverPlacement::Left,
+        ],
+        PopoverPlacement::Above => [
+            PopoverPlacement::Above,
+            PopoverPlacement::Below,
+            PopoverPlacement::Right,
+            PopoverPlacement::Left,
+        ],
+        PopoverPlacement::Right => [
+            PopoverPlacement::Right,
+            PopoverPlacement::Left,
+            PopoverPlacement::Below,
+            PopoverPlacement::Above,
+        ],
+        PopoverPlacement::Left => [
+            PopoverPlacement::Left,
+            PopoverPlacement::Right,
+            PopoverPlacement::Below,
+            PopoverPlacement::Above,
+        ],
+    }
+}
+
+fn placement_axis_fits(rect: Rect, placement: PopoverPlacement, viewport: Rect) -> bool {
+    match placement {
+        PopoverPlacement::Below | PopoverPlacement::Above => {
+            rect.y >= viewport.y && rect.max_y() <= viewport.max_y()
+        }
+        PopoverPlacement::Right | PopoverPlacement::Left => {
+            rect.x >= viewport.x && rect.max_x() <= viewport.max_x()
+        }
+    }
+}
+
+fn clamp_popover_cross_axis(rect: Rect, placement: PopoverPlacement, viewport: Rect) -> Rect {
+    match placement {
+        PopoverPlacement::Below | PopoverPlacement::Above => Rect::new(
+            clamp_origin(rect.x, rect.width, viewport.x, viewport.max_x()),
+            rect.y,
+            rect.width,
+            rect.height,
+        ),
+        PopoverPlacement::Right | PopoverPlacement::Left => Rect::new(
+            rect.x,
+            clamp_origin(rect.y, rect.height, viewport.y, viewport.max_y()),
+            rect.width,
+            rect.height,
+        ),
+    }
+}
+
+fn clamp_rect_to_viewport(rect: Rect, viewport: Rect) -> Rect {
+    Rect::new(
+        clamp_origin(rect.x, rect.width, viewport.x, viewport.max_x()),
+        clamp_origin(rect.y, rect.height, viewport.y, viewport.max_y()),
+        rect.width,
+        rect.height,
+    )
+}
+
+fn clamp_origin(origin: f32, extent: f32, min: f32, max: f32) -> f32 {
+    let max_origin = max - extent;
+    if max_origin < min {
+        min
+    } else {
+        origin.clamp(min, max_origin)
+    }
+}
+
+fn sanitize_rect(rect: Rect) -> Rect {
+    Rect::new(
+        sanitize_coordinate(rect.x),
+        sanitize_coordinate(rect.y),
+        sanitize_extent(rect.width),
+        sanitize_extent(rect.height),
+    )
+}
+
+fn sanitize_coordinate(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+fn sanitize_extent(value: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// Builds a semantic node for an overlay surface.
+#[must_use]
+pub fn overlay_semantics(entry: &OverlayEntry, label: impl Into<String>) -> SemanticNode {
+    let role = match entry.kind {
+        OverlayKind::Menu | OverlayKind::ContextMenu | OverlayKind::Dropdown => SemanticRole::Menu,
+        OverlayKind::CommandPalette => SemanticRole::CommandPalette,
+        OverlayKind::Popover => SemanticRole::Custom("popover".to_owned()),
+        OverlayKind::Tooltip => SemanticRole::Custom("tooltip".to_owned()),
+        OverlayKind::Modal => SemanticRole::Custom("modal".to_owned()),
+        OverlayKind::DragPreview => SemanticRole::Custom("drag-preview".to_owned()),
+    };
+    let mut node =
+        SemanticNode::new(WidgetId::from_raw(entry.id.raw()), role, entry.rect).with_label(label);
+    if matches!(
+        entry.kind,
+        OverlayKind::Menu
+            | OverlayKind::Dropdown
+            | OverlayKind::ContextMenu
+            | OverlayKind::CommandPalette
+            | OverlayKind::Modal
+    ) {
+        node = node.focusable(true);
+    }
+    if entry.dismissal != OverlayDismissal::Manual {
+        node = node.with_action(SemanticAction::new(SemanticActionKind::Dismiss, "Dismiss"));
+    }
+    node
 }
 
 /// Command palette entry.
@@ -259,6 +565,8 @@ pub struct CommandPaletteEntry {
     pub keywords: Vec<String>,
     /// Whether the action can currently be invoked.
     pub enabled: bool,
+    /// Checked/toggled state when the action is checkable.
+    pub checked: Option<bool>,
 }
 
 impl From<&ActionDescriptor> for CommandPaletteEntry {
@@ -268,6 +576,7 @@ impl From<&ActionDescriptor> for CommandPaletteEntry {
             label: action.label.clone(),
             keywords: action.keywords.clone(),
             enabled: action.can_invoke(),
+            checked: action.state.checked,
         }
     }
 }
@@ -351,10 +660,11 @@ impl CommandPalette {
 mod tests {
     use super::{
         CommandPalette, Menu, OverlayDismissal, OverlayEntry, OverlayId, OverlayKind, OverlayStack,
-        PopoverPlacement, PopoverRequest, place_popover,
+        PopoverPlacement, PopoverRequest, overlay_semantics, place_popover,
     };
     use kinetik_ui_core::{
-        ActionContext, ActionDescriptor, ActionId, ActionQueue, Point, Rect, Size,
+        ActionContext, ActionDescriptor, ActionId, ActionQueue, Point, Rect, SemanticActionKind,
+        SemanticRole, Size,
     };
 
     fn action(id: &str, label: &str) -> ActionDescriptor {
@@ -364,26 +674,26 @@ mod tests {
     #[test]
     fn overlay_stack_preserves_order_and_replaces_ids() {
         let mut stack = OverlayStack::new();
-        let first = OverlayEntry {
-            id: OverlayId::from_raw(1),
-            kind: OverlayKind::Menu,
-            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
-            modal: false,
-            dismissal: OverlayDismissal::OutsideClick,
-        };
+        let first = OverlayEntry::new(
+            OverlayId::from_raw(1),
+            OverlayKind::Menu,
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+        )
+        .dismiss_on(OverlayDismissal::OutsideClick);
         let replacement = OverlayEntry {
             rect: Rect::new(1.0, 1.0, 10.0, 10.0),
             ..first.clone()
         };
 
         stack.open(first);
-        stack.open(OverlayEntry {
-            id: OverlayId::from_raw(2),
-            kind: OverlayKind::CommandPalette,
-            rect: Rect::new(0.0, 0.0, 20.0, 20.0),
-            modal: true,
-            dismissal: OverlayDismissal::Manual,
-        });
+        stack.open(
+            OverlayEntry::new(
+                OverlayId::from_raw(2),
+                OverlayKind::CommandPalette,
+                Rect::new(0.0, 0.0, 20.0, 20.0),
+            )
+            .modal(true),
+        );
         stack.open(replacement);
 
         assert_eq!(stack.entries().len(), 2);
@@ -394,13 +704,14 @@ mod tests {
     #[test]
     fn outside_click_requests_dismissible_overlays() {
         let mut stack = OverlayStack::new();
-        stack.open(OverlayEntry {
-            id: OverlayId::from_raw(1),
-            kind: OverlayKind::Popover,
-            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
-            modal: false,
-            dismissal: OverlayDismissal::OutsideClick,
-        });
+        stack.open(
+            OverlayEntry::new(
+                OverlayId::from_raw(1),
+                OverlayKind::Popover,
+                Rect::new(0.0, 0.0, 10.0, 10.0),
+            )
+            .dismiss_on(OverlayDismissal::OutsideClick),
+        );
 
         assert_eq!(
             stack.outside_click_close_requests(Point::new(20.0, 20.0)),
@@ -447,7 +758,142 @@ mod tests {
         );
 
         assert!((rect.x - 60.0).abs() < f32::EPSILON);
-        assert!((rect.y - 60.0).abs() < f32::EPSILON);
+        assert!((rect.y - 46.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn popover_clamp_handles_overlay_larger_than_viewport() {
+        let rect = place_popover(
+            PopoverRequest {
+                anchor: Rect::new(80.0, 80.0, 10.0, 10.0),
+                size: Size::new(180.0, 160.0),
+                placement: PopoverPlacement::Below,
+                offset: 4.0,
+                fit_viewport: true,
+            },
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+        );
+
+        assert!((rect.x - 0.0).abs() < f32::EPSILON);
+        assert!((rect.y - 0.0).abs() < f32::EPSILON);
+        assert_eq!(rect.size(), Size::new(180.0, 160.0));
+    }
+
+    #[test]
+    fn nested_close_removes_descendants() {
+        let mut stack = OverlayStack::new();
+        let parent = OverlayId::from_raw(1);
+        let child = OverlayId::from_raw(2);
+        let grandchild = OverlayId::from_raw(3);
+
+        stack.open(OverlayEntry::new(
+            parent,
+            OverlayKind::Menu,
+            Rect::new(0.0, 0.0, 20.0, 20.0),
+        ));
+        assert!(stack.open_child(
+            parent,
+            OverlayEntry::new(
+                child,
+                OverlayKind::Popover,
+                Rect::new(20.0, 0.0, 20.0, 20.0)
+            )
+        ));
+        assert!(stack.open_child(
+            child,
+            OverlayEntry::new(
+                grandchild,
+                OverlayKind::ContextMenu,
+                Rect::new(40.0, 0.0, 20.0, 20.0),
+            )
+        ));
+
+        assert_eq!(stack.entries().len(), 3);
+        assert_eq!(stack.close(parent).map(|entry| entry.id), Some(parent));
+        assert!(stack.entries().is_empty());
+    }
+
+    #[test]
+    fn overlay_routing_prefers_topmost_hit_and_modal_capture() {
+        let mut stack = OverlayStack::new();
+        stack.open(OverlayEntry::new(
+            OverlayId::from_raw(1),
+            OverlayKind::Popover,
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+        ));
+        stack.open(
+            OverlayEntry::new(
+                OverlayId::from_raw(2),
+                OverlayKind::Modal,
+                Rect::new(10.0, 10.0, 20.0, 20.0),
+            )
+            .modal(true),
+        );
+
+        assert_eq!(
+            stack.pointer_capture_target(Point::new(15.0, 15.0)),
+            Some(OverlayId::from_raw(2))
+        );
+        assert_eq!(
+            stack.pointer_capture_target(Point::new(90.0, 90.0)),
+            Some(OverlayId::from_raw(1))
+        );
+        assert_eq!(
+            stack.pointer_capture_target(Point::new(150.0, 150.0)),
+            Some(OverlayId::from_raw(2))
+        );
+        assert_eq!(stack.focus_target(), Some(OverlayId::from_raw(2)));
+    }
+
+    #[test]
+    fn dismissal_requests_cover_escape_and_outside_click() {
+        let mut stack = OverlayStack::new();
+        stack.open(
+            OverlayEntry::new(
+                OverlayId::from_raw(1),
+                OverlayKind::Menu,
+                Rect::new(0.0, 0.0, 50.0, 50.0),
+            )
+            .dismiss_on(OverlayDismissal::OutsideClick),
+        );
+        stack.open(
+            OverlayEntry::new(
+                OverlayId::from_raw(2),
+                OverlayKind::CommandPalette,
+                Rect::new(10.0, 10.0, 50.0, 50.0),
+            )
+            .dismiss_on(OverlayDismissal::OutsideClickOrEscape),
+        );
+
+        assert_eq!(
+            stack.dismissal_requests(Some(Point::new(80.0, 80.0)), false),
+            vec![OverlayId::from_raw(2), OverlayId::from_raw(1)]
+        );
+        assert_eq!(
+            stack.dismissal_requests(None, true),
+            vec![OverlayId::from_raw(2)]
+        );
+    }
+
+    #[test]
+    fn overlay_semantics_describe_surface_and_dismissal() {
+        let entry = OverlayEntry::new(
+            OverlayId::from_raw(7),
+            OverlayKind::CommandPalette,
+            Rect::new(0.0, 0.0, 100.0, 50.0),
+        )
+        .dismiss_on(OverlayDismissal::Escape);
+
+        let node = overlay_semantics(&entry, "Commands");
+
+        assert_eq!(node.role, SemanticRole::CommandPalette);
+        assert_eq!(node.label.as_deref(), Some("Commands"));
+        assert!(node.focusable);
+        assert!(
+            node.actions
+                .iter()
+                .any(|action| action.kind == SemanticActionKind::Dismiss)
+        );
     }
 
     #[test]
@@ -459,6 +905,16 @@ mod tests {
         palette.query = "wri".to_owned();
 
         assert_eq!(palette.matches()[0].action_id, ActionId::new("save"));
+    }
+
+    #[test]
+    fn command_palette_entries_preserve_checked_action_state() {
+        let mut grid = action("view.grid", "Grid");
+        grid.state.checked = Some(true);
+
+        let palette = CommandPalette::from_actions(&[grid]);
+
+        assert_eq!(palette.matches()[0].checked, Some(true));
     }
 
     #[test]

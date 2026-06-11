@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use crate::{Key, KeyState, KeyboardInput, Modifiers, WidgetId};
+use crate::{Key, KeyEvent, KeyState, KeyboardInput, Modifiers, PhysicalKey, WidgetId};
 
 /// Stable identity for an application-provided action.
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -55,8 +55,11 @@ pub struct ActionState {
     pub visible: bool,
     /// Whether the action can currently be invoked.
     pub enabled: bool,
-    /// Whether the action is currently checked/toggled.
-    pub checked: bool,
+    /// Checked/toggled state when the action is checkable.
+    ///
+    /// `None` means the action is not checkable. `Some(false)` means it is
+    /// checkable but currently off. `Some(true)` means it is checkable and on.
+    pub checked: Option<bool>,
 }
 
 impl Default for ActionState {
@@ -64,8 +67,22 @@ impl Default for ActionState {
         Self {
             visible: true,
             enabled: true,
-            checked: false,
+            checked: None,
         }
+    }
+}
+
+impl ActionState {
+    /// Returns true when this action exposes checked/toggled state.
+    #[must_use]
+    pub const fn is_checkable(self) -> bool {
+        self.checked.is_some()
+    }
+
+    /// Returns true when this action is checkable and currently checked.
+    #[must_use]
+    pub const fn is_checked(self) -> bool {
+        matches!(self.checked, Some(true))
     }
 }
 
@@ -117,27 +134,67 @@ pub struct Shortcut {
     pub modifiers: Modifiers,
     /// Required key.
     pub key: Key,
+    /// Optional required physical key.
+    ///
+    /// When set, matching uses physical key identity instead of layout-resolved
+    /// logical key identity.
+    pub physical_key: Option<PhysicalKey>,
 }
 
 impl Shortcut {
     /// Creates a shortcut.
     #[must_use]
     pub fn new(modifiers: Modifiers, key: Key) -> Self {
-        Self { modifiers, key }
+        Self {
+            modifiers,
+            key,
+            physical_key: None,
+        }
+    }
+
+    /// Creates a layout-independent physical-key shortcut.
+    #[must_use]
+    pub const fn physical(modifiers: Modifiers, physical_key: PhysicalKey) -> Self {
+        Self {
+            modifiers,
+            key: Key::Unidentified,
+            physical_key: Some(physical_key),
+        }
+    }
+
+    /// Returns this shortcut with a physical key requirement.
+    #[must_use]
+    pub fn with_physical_key(mut self, physical_key: PhysicalKey) -> Self {
+        self.physical_key = Some(physical_key);
+        self
     }
 
     /// Returns true when the shortcut matches a keyboard event.
     #[must_use]
     pub fn matches_event(&self, key: &Key, modifiers: Modifiers) -> bool {
-        self.modifiers == modifiers && key_matches(&self.key, key)
+        self.physical_key.is_none() && self.modifiers == modifiers && key_matches(&self.key, key)
+    }
+
+    /// Returns true when the shortcut matches a complete keyboard event.
+    #[must_use]
+    pub fn matches_key_event(&self, event: &KeyEvent) -> bool {
+        if event.state != KeyState::Pressed || self.modifiers != event.modifiers {
+            return false;
+        }
+
+        self.physical_key.map_or_else(
+            || key_matches(&self.key, &event.key),
+            |physical_key| event.physical_key == physical_key,
+        )
     }
 
     /// Returns true when the shortcut was pressed during this frame.
     #[must_use]
     pub fn matches_keyboard(&self, input: &KeyboardInput) -> bool {
-        input.events.iter().any(|event| {
-            event.state == KeyState::Pressed && self.matches_event(&event.key, event.modifiers)
-        })
+        input
+            .events
+            .iter()
+            .any(|event| self.matches_key_event(event))
     }
 }
 
@@ -271,6 +328,61 @@ pub struct ActionBinding {
     pub priority: ActionPriority,
 }
 
+/// Active context used when resolving shortcuts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ActionRoutingContext {
+    /// Active docked frame or document-like context.
+    pub frame: Option<WidgetId>,
+    /// Active passive panel context.
+    pub panel: Option<WidgetId>,
+    /// Focused widget context.
+    pub focused_widget: Option<WidgetId>,
+    /// Focused text input context.
+    pub text_input: Option<WidgetId>,
+}
+
+impl ActionRoutingContext {
+    /// Creates a routing context with no focused container or widget.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            frame: None,
+            panel: None,
+            focused_widget: None,
+            text_input: None,
+        }
+    }
+
+    /// Sets the active frame context.
+    #[must_use]
+    pub const fn with_frame(mut self, frame: WidgetId) -> Self {
+        self.frame = Some(frame);
+        self
+    }
+
+    /// Sets the active panel context.
+    #[must_use]
+    pub const fn with_panel(mut self, panel: WidgetId) -> Self {
+        self.panel = Some(panel);
+        self
+    }
+
+    /// Sets the focused widget context.
+    #[must_use]
+    pub const fn with_focused_widget(mut self, widget: WidgetId) -> Self {
+        self.focused_widget = Some(widget);
+        self
+    }
+
+    /// Sets the focused text-input context.
+    #[must_use]
+    pub const fn with_text_input(mut self, widget: WidgetId) -> Self {
+        self.text_input = Some(widget);
+        self.focused_widget = Some(widget);
+        self
+    }
+}
+
 impl ActionBinding {
     /// Creates an action binding.
     #[must_use]
@@ -305,19 +417,52 @@ impl ActionRouter {
         self.bindings.push(binding);
     }
 
-    /// Resolves the highest-priority enabled visible action for the keyboard input.
+    /// Resolves the highest-priority enabled visible global action for the keyboard input.
+    ///
+    /// Contextual bindings require [`Self::resolve_shortcut_in_context`] so
+    /// frame, panel, widget, and text-input shortcuts cannot fire without their
+    /// active owner.
     #[must_use]
     pub fn resolve_shortcut(&self, input: &KeyboardInput) -> Option<ActionInvocation> {
+        self.resolve_shortcut_in_context(input, ActionRoutingContext::new())
+    }
+
+    /// Resolves the highest-priority enabled visible action active in a routing context.
+    ///
+    /// Text inputs reserve editing shortcuts. Global/container/widget bindings do
+    /// not receive those shortcuts while a text input is focused unless the
+    /// matching binding is explicitly scoped to that text input.
+    #[must_use]
+    pub fn resolve_shortcut_in_context(
+        &self,
+        input: &KeyboardInput,
+        routing: ActionRoutingContext,
+    ) -> Option<ActionInvocation> {
+        self.resolve_shortcut_matching(input, |binding, event| {
+            let text_input_reserved =
+                routing.text_input.is_some() && text_input_reserves_event(event);
+            binding_context_is_active(&binding.context, routing)
+                && (!text_input_reserved
+                    || binding_context_is_text_input(&binding.context, routing))
+        })
+    }
+
+    fn resolve_shortcut_matching(
+        &self,
+        input: &KeyboardInput,
+        filter: impl Fn(&ActionBinding, &KeyEvent) -> bool,
+    ) -> Option<ActionInvocation> {
         self.bindings
             .iter()
             .enumerate()
-            .filter(|(_, binding)| {
-                binding.descriptor.can_invoke()
-                    && binding
-                        .descriptor
-                        .shortcut
-                        .as_ref()
-                        .is_some_and(|shortcut| shortcut.matches_keyboard(input))
+            .filter_map(|(index, binding)| {
+                let shortcut = binding.descriptor.shortcut.as_ref()?;
+                let event = input
+                    .events
+                    .iter()
+                    .find(|event| shortcut.matches_key_event(event))?;
+                (filter(binding, event) && binding.descriptor.can_invoke())
+                    .then_some((index, binding))
             })
             .max_by(|(left_index, left), (right_index, right)| {
                 left.priority
@@ -334,6 +479,50 @@ impl ActionRouter {
     }
 }
 
+fn binding_context_is_active(context: &ActionContext, routing: ActionRoutingContext) -> bool {
+    match context {
+        ActionContext::Global => true,
+        ActionContext::Frame(id) => routing.frame == Some(*id),
+        ActionContext::Panel(id) => routing.panel == Some(*id),
+        ActionContext::Widget(id) => routing.focused_widget == Some(*id),
+        ActionContext::TextInput(id) => routing.text_input == Some(*id),
+    }
+}
+
+fn binding_context_is_text_input(context: &ActionContext, routing: ActionRoutingContext) -> bool {
+    matches!(context, ActionContext::TextInput(id) if routing.text_input == Some(*id))
+}
+
+fn text_input_reserves_event(event: &KeyEvent) -> bool {
+    match &event.key {
+        Key::Character(character) => {
+            if event.modifiers.ctrl || event.modifiers.super_key {
+                matches!(
+                    character.to_ascii_lowercase().as_str(),
+                    "a" | "c" | "v" | "x" | "y" | "z"
+                )
+            } else {
+                event.modifiers.is_empty()
+            }
+        }
+        Key::Enter
+        | Key::Tab
+        | Key::Backspace
+        | Key::Delete
+        | Key::Insert
+        | Key::Home
+        | Key::End
+        | Key::PageUp
+        | Key::PageDown
+        | Key::ArrowLeft
+        | Key::ArrowRight
+        | Key::ArrowUp
+        | Key::ArrowDown => true,
+        Key::Space => event.modifiers.is_empty(),
+        Key::Escape | Key::Function(_) | Key::Unidentified => false,
+    }
+}
+
 impl Hash for ActionDescriptor {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
@@ -344,9 +533,10 @@ impl Hash for ActionDescriptor {
 mod tests {
     use super::{
         ActionBinding, ActionContext, ActionDescriptor, ActionIcon, ActionId, ActionInvocation,
-        ActionPriority, ActionQueue, ActionRouter, ActionSource, ActionState, Shortcut,
+        ActionPriority, ActionQueue, ActionRouter, ActionRoutingContext, ActionSource, ActionState,
+        Shortcut,
     };
-    use crate::{Key, KeyEvent, KeyState, KeyboardInput, Modifiers, WidgetId};
+    use crate::{Key, KeyEvent, KeyState, KeyboardInput, Modifiers, PhysicalKey, WidgetId};
 
     fn ctrl_key(character: &str) -> Shortcut {
         Shortcut::new(
@@ -367,8 +557,42 @@ mod tests {
         }
     }
 
+    fn key_input(key: Key, modifiers: Modifiers) -> KeyboardInput {
+        KeyboardInput {
+            modifiers,
+            events: vec![KeyEvent::new(key, KeyState::Pressed, modifiers, false)],
+        }
+    }
+
+    fn mixed_keyboard(events: Vec<(Key, Modifiers)>) -> KeyboardInput {
+        KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: events
+                .into_iter()
+                .map(|(key, modifiers)| KeyEvent::new(key, KeyState::Pressed, modifiers, false))
+                .collect(),
+        }
+    }
+
+    fn physical_keyboard(
+        character: &str,
+        physical_key: PhysicalKey,
+        modifiers: Modifiers,
+    ) -> KeyboardInput {
+        KeyboardInput {
+            modifiers,
+            events: vec![KeyEvent::with_physical_key(
+                Key::Character(character.to_owned()),
+                physical_key,
+                KeyState::Pressed,
+                modifiers,
+                false,
+            )],
+        }
+    }
+
     #[test]
-    fn descriptor_defaults_to_visible_enabled_unchecked() {
+    fn descriptor_defaults_to_visible_enabled_not_checkable() {
         let mut descriptor = ActionDescriptor::new("file.save", "Save");
         descriptor.icon = Some(ActionIcon::new("save"));
         descriptor.tooltip = Some("Save current project".to_owned());
@@ -426,7 +650,16 @@ mod tests {
     }
 
     #[test]
-    fn router_uses_highest_priority_context_for_same_shortcut() {
+    fn physical_shortcut_matches_layout_independent_key() {
+        let modifiers = Modifiers::new(false, true, false, false);
+        let shortcut = Shortcut::physical(modifiers, PhysicalKey::KeyY);
+
+        assert!(shortcut.matches_keyboard(&physical_keyboard("z", PhysicalKey::KeyY, modifiers,)));
+        assert!(!shortcut.matches_keyboard(&keyboard("y")));
+    }
+
+    #[test]
+    fn contextual_router_uses_highest_priority_active_context_for_same_shortcut() {
         let shortcut = ctrl_key("a");
         let widget = WidgetId::from_key("field");
         let mut global = ActionDescriptor::new("select.all.global", "Select All");
@@ -447,11 +680,175 @@ mod tests {
         ));
 
         let invocation = router
-            .resolve_shortcut(&keyboard("a"))
+            .resolve_shortcut_in_context(
+                &keyboard("a"),
+                ActionRoutingContext::new().with_text_input(widget),
+            )
             .expect("shortcut invocation");
 
         assert_eq!(invocation.action_id, ActionId::new("select.all.text"));
         assert_eq!(invocation.context, ActionContext::TextInput(widget));
+    }
+
+    #[test]
+    fn contextless_router_ignores_inactive_contextual_bindings() {
+        let widget = WidgetId::from_key("field");
+        let mut text = ActionDescriptor::new("select.all.text", "Select All In Field");
+        text.shortcut = Some(ctrl_key("a"));
+        let mut router = ActionRouter::new();
+        router.bind(ActionBinding::new(
+            text,
+            ActionContext::TextInput(widget),
+            ActionPriority::TextInput,
+        ));
+
+        assert_eq!(router.resolve_shortcut(&keyboard("a")), None);
+    }
+
+    #[test]
+    fn contextual_router_blocks_global_text_editing_shortcuts() {
+        let widget = WidgetId::from_key("field");
+        let mut global = ActionDescriptor::new("select.all.global", "Select All");
+        global.shortcut = Some(ctrl_key("a"));
+        let mut router = ActionRouter::new();
+        router.bind(ActionBinding::new(
+            global,
+            ActionContext::Global,
+            ActionPriority::Global,
+        ));
+
+        let routing = ActionRoutingContext::new().with_text_input(widget);
+
+        assert_eq!(
+            router.resolve_shortcut_in_context(&keyboard("a"), routing),
+            None
+        );
+    }
+
+    #[test]
+    fn contextual_router_blocks_global_space_while_text_input_is_focused() {
+        let widget = WidgetId::from_key("field");
+        let mut global = ActionDescriptor::new("play.pause", "Play/Pause");
+        global.shortcut = Some(Shortcut::new(Modifiers::default(), Key::Space));
+        let mut router = ActionRouter::new();
+        router.bind(ActionBinding::new(
+            global,
+            ActionContext::Global,
+            ActionPriority::Global,
+        ));
+
+        assert_eq!(
+            router.resolve_shortcut_in_context(
+                &key_input(Key::Space, Modifiers::default()),
+                ActionRoutingContext::new().with_text_input(widget),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn contextual_router_allows_unrelated_global_shortcut_in_mixed_text_frame() {
+        let widget = WidgetId::from_key("field");
+        let ctrl = Modifiers::new(false, true, false, false);
+        let mut save = ActionDescriptor::new("file.save", "Save");
+        save.shortcut = Some(ctrl_key("s"));
+        let mut router = ActionRouter::new();
+        router.bind(ActionBinding::new(
+            save,
+            ActionContext::Global,
+            ActionPriority::Global,
+        ));
+        let input = mixed_keyboard(vec![
+            (Key::Character("x".to_owned()), Modifiers::default()),
+            (Key::Character("s".to_owned()), ctrl),
+        ]);
+
+        let invocation = router
+            .resolve_shortcut_in_context(
+                &input,
+                ActionRoutingContext::new().with_text_input(widget),
+            )
+            .expect("global shortcut");
+
+        assert_eq!(invocation.action_id, ActionId::new("file.save"));
+        assert_eq!(invocation.context, ActionContext::Global);
+    }
+
+    #[test]
+    fn contextual_router_still_blocks_global_binding_for_reserved_text_event() {
+        let widget = WidgetId::from_key("field");
+        let mut type_x = ActionDescriptor::new("global.x", "Global X");
+        type_x.shortcut = Some(Shortcut::new(
+            Modifiers::default(),
+            Key::Character("x".to_owned()),
+        ));
+        let mut router = ActionRouter::new();
+        router.bind(ActionBinding::new(
+            type_x,
+            ActionContext::Global,
+            ActionPriority::Global,
+        ));
+        let input = mixed_keyboard(vec![(Key::Character("x".to_owned()), Modifiers::default())]);
+
+        assert_eq!(
+            router.resolve_shortcut_in_context(
+                &input,
+                ActionRoutingContext::new().with_text_input(widget),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn contextual_router_allows_text_input_scoped_editing_action() {
+        let widget = WidgetId::from_key("field");
+        let mut global = ActionDescriptor::new("select.all.global", "Select All");
+        global.shortcut = Some(ctrl_key("a"));
+        let mut text = ActionDescriptor::new("select.all.text", "Select All In Field");
+        text.shortcut = Some(ctrl_key("a"));
+        let mut router = ActionRouter::new();
+        router.bind(ActionBinding::new(
+            global,
+            ActionContext::Global,
+            ActionPriority::Global,
+        ));
+        router.bind(ActionBinding::new(
+            text,
+            ActionContext::TextInput(widget),
+            ActionPriority::TextInput,
+        ));
+
+        let invocation = router
+            .resolve_shortcut_in_context(
+                &keyboard("a"),
+                ActionRoutingContext::new().with_text_input(widget),
+            )
+            .expect("text action");
+
+        assert_eq!(invocation.action_id, ActionId::new("select.all.text"));
+        assert_eq!(invocation.context, ActionContext::TextInput(widget));
+    }
+
+    #[test]
+    fn contextual_router_ignores_inactive_widget_binding() {
+        let focused = WidgetId::from_key("focused");
+        let other = WidgetId::from_key("other");
+        let mut widget_action = ActionDescriptor::new("widget.run", "Run");
+        widget_action.shortcut = Some(ctrl_key("r"));
+        let mut router = ActionRouter::new();
+        router.bind(ActionBinding::new(
+            widget_action,
+            ActionContext::Widget(other),
+            ActionPriority::FocusedWidget,
+        ));
+
+        assert_eq!(
+            router.resolve_shortcut_in_context(
+                &keyboard("r"),
+                ActionRoutingContext::new().with_focused_widget(focused),
+            ),
+            None
+        );
     }
 
     #[test]
@@ -473,9 +870,10 @@ mod tests {
     #[test]
     fn checked_action_state_is_available_to_surfaces() {
         let mut descriptor = ActionDescriptor::new("view.grid", "Grid");
-        descriptor.state.checked = true;
+        descriptor.state.checked = Some(true);
 
-        assert!(descriptor.state.checked);
+        assert!(descriptor.state.is_checkable());
+        assert!(descriptor.state.is_checked());
         assert!(descriptor.can_invoke());
     }
 

@@ -23,7 +23,7 @@ Widgets / Components
   render primitives, and semantic nodes.
 
 Renderer Backend
-  Backend-independent primitive rendering and texture compositing.
+  Backend-independent render contracts, primitive rendering, and texture compositing.
 
 Platform Adapter
   Window events, input, DPI, cursor, clipboard, and redraw scheduling.
@@ -76,7 +76,7 @@ kinetik-ui-widgets
   Components and editor patterns built on core primitives.
 
 kinetik-ui-render
-  Renderer traits, render primitives, and resource handles.
+  Renderer backend traits, frame contracts, diagnostics, resource payloads, and handles.
 
 kinetik-ui-vello
   Vello renderer backend.
@@ -107,7 +107,7 @@ Repository checks are expected to include:
 
 ```text
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo build --workspace --all-features
 cargo check --workspace --examples --all-features

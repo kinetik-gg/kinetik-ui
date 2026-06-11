@@ -1,5 +1,7 @@
 //! `DockArea`, `Frame`, and `Panel` models for editor layouts.
 
+use std::collections::BTreeSet;
+
 use kinetik_ui_core::{Axis, Rect};
 
 /// Stable panel identity.
@@ -30,6 +32,12 @@ impl FrameId {
     pub const fn from_raw(raw: u64) -> Self {
         Self(raw)
     }
+
+    /// Returns raw ID bits.
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
 }
 
 /// Passive panel metadata.
@@ -39,8 +47,6 @@ pub struct Panel {
     pub id: PanelId,
     /// Display title used by frame tabs.
     pub title: String,
-    /// Whether the panel can be dismissed.
-    pub dismissible: bool,
 }
 
 impl Panel {
@@ -50,7 +56,6 @@ impl Panel {
         Self {
             id,
             title: title.into(),
-            dismissible: true,
         }
     }
 }
@@ -64,16 +69,20 @@ pub struct Frame {
     pub panels: Vec<Panel>,
     /// Active panel index.
     pub active: usize,
+    /// Panels whose frame tabs expose close/dismiss affordances.
+    dismissible_panels: BTreeSet<PanelId>,
 }
 
 impl Frame {
     /// Creates a frame with panels.
     #[must_use]
     pub fn new(id: FrameId, panels: Vec<Panel>) -> Self {
+        let dismissible_panels = panels.iter().map(|panel| panel.id).collect();
         Self {
             id,
             panels,
             active: 0,
+            dismissible_panels,
         }
     }
 
@@ -94,15 +103,48 @@ impl Frame {
 
     /// Removes a panel by ID.
     pub fn remove_panel(&mut self, panel: PanelId) -> Option<Panel> {
+        let (removed, _) = self.remove_panel_with_policy(panel)?;
+        Some(removed)
+    }
+
+    fn remove_panel_with_policy(&mut self, panel: PanelId) -> Option<(Panel, bool)> {
         let index = self.panels.iter().position(|item| item.id == panel)?;
+        let dismissible = self.dismissible_panels.remove(&panel);
         let removed = self.panels.remove(index);
         self.active = self.active.min(self.panels.len().saturating_sub(1));
-        Some(removed)
+        Some((removed, dismissible))
     }
 
     /// Adds a panel at the end.
     pub fn push_panel(&mut self, panel: Panel) {
+        self.push_panel_with_policy(panel, true);
+    }
+
+    fn push_panel_with_policy(&mut self, panel: Panel, dismissible: bool) {
+        let id = panel.id;
         self.panels.push(panel);
+        self.set_panel_dismissible(id, dismissible);
+    }
+
+    /// Sets whether a frame tab can expose close/dismiss affordances.
+    ///
+    /// Returns `false` when the panel is not in this frame.
+    pub fn set_panel_dismissible(&mut self, panel: PanelId, dismissible: bool) -> bool {
+        if !self.panels.iter().any(|item| item.id == panel) {
+            return false;
+        }
+        if dismissible {
+            self.dismissible_panels.insert(panel);
+        } else {
+            self.dismissible_panels.remove(&panel);
+        }
+        true
+    }
+
+    /// Returns true when a frame tab can expose close/dismiss affordances.
+    #[must_use]
+    pub fn panel_dismissible(&self, panel: PanelId) -> bool {
+        self.dismissible_panels.contains(&panel)
     }
 }
 
@@ -150,6 +192,12 @@ impl DockArea {
         frames
     }
 
+    /// Finds an immutable frame.
+    #[must_use]
+    pub fn frame(&self, frame: FrameId) -> Option<&Frame> {
+        find_frame(&self.root, frame)
+    }
+
     /// Finds a mutable frame.
     pub fn frame_mut(&mut self, frame: FrameId) -> Option<&mut Frame> {
         find_frame_mut(&mut self.root, frame)
@@ -163,28 +211,35 @@ impl DockArea {
 
     /// Moves a panel between frames.
     pub fn move_panel(&mut self, from: FrameId, to: FrameId, panel: PanelId) -> bool {
-        let Some(panel) = self
+        if from == to || self.frame(to).is_none() {
+            return false;
+        }
+        let Some((panel, dismissible)) = self
             .frame_mut(from)
-            .and_then(|frame| frame.remove_panel(panel))
+            .and_then(|frame| frame.remove_panel_with_policy(panel))
         else {
             return false;
         };
         let Some(target) = self.frame_mut(to) else {
             return false;
         };
-        target.push_panel(panel);
+        target.push_panel_with_policy(panel, dismissible);
         target.active = target.panels.len().saturating_sub(1);
+        prune_empty_frames(&mut self.root);
         true
     }
 
     /// Merges all source frame panels into target frame.
     pub fn merge_frames(&mut self, source: FrameId, target: FrameId) -> bool {
-        if source == target {
+        if source == target || self.frame(source).is_none() || self.frame(target).is_none() {
             return false;
         }
-        let Some(source_panels) = self.frame_mut(source).map(|frame| {
+        let Some((source_panels, dismissible_panels)) = self.frame_mut(source).map(|frame| {
             frame.active = 0;
-            core::mem::take(&mut frame.panels)
+            (
+                core::mem::take(&mut frame.panels),
+                core::mem::take(&mut frame.dismissible_panels),
+            )
         }) else {
             return false;
         };
@@ -192,7 +247,9 @@ impl DockArea {
             return false;
         };
         target_frame.panels.extend(source_panels);
+        target_frame.dismissible_panels.extend(dismissible_panels);
         target_frame.active = target_frame.panels.len().saturating_sub(1);
+        prune_empty_frames(&mut self.root);
         true
     }
 
@@ -208,10 +265,11 @@ impl DockArea {
     ///
     /// # Errors
     ///
-    /// Returns [`DockRestoreError`] when a frame is empty or its active tab
-    /// index does not point at an existing panel.
+    /// Returns [`DockRestoreError`] when persisted dock data is structurally
+    /// invalid, contains duplicate identities, or stores invalid split values.
     pub fn restore(snapshot: DockSnapshot) -> Result<Self, DockRestoreError> {
-        validate_snapshot_node(&snapshot.root)?;
+        let mut validation = DockSnapshotValidation::default();
+        validate_snapshot_node(&snapshot.root, &mut validation)?;
         Ok(Self {
             root: restore_node(snapshot.root),
         })
@@ -234,6 +292,38 @@ fn find_frame_mut(node: &mut DockNode, id: FrameId) -> Option<&mut Frame> {
         DockNode::Frame(_) => None,
         DockNode::Split { first, second, .. } => {
             find_frame_mut(first, id).or_else(|| find_frame_mut(second, id))
+        }
+    }
+}
+
+fn find_frame(node: &DockNode, id: FrameId) -> Option<&Frame> {
+    match node {
+        DockNode::Frame(frame) if frame.id == id => Some(frame),
+        DockNode::Frame(_) => None,
+        DockNode::Split { first, second, .. } => {
+            find_frame(first, id).or_else(|| find_frame(second, id))
+        }
+    }
+}
+
+fn prune_empty_frames(node: &mut DockNode) -> bool {
+    match node {
+        DockNode::Frame(frame) => !frame.panels.is_empty(),
+        DockNode::Split { first, second, .. } => {
+            let first_has_panels = prune_empty_frames(first);
+            let second_has_panels = prune_empty_frames(second);
+            match (first_has_panels, second_has_panels) {
+                (true, true) => true,
+                (true, false) => {
+                    *node = (**first).clone();
+                    true
+                }
+                (false, true) => {
+                    *node = (**second).clone();
+                    true
+                }
+                (false, false) => false,
+            }
         }
     }
 }
@@ -273,9 +363,15 @@ fn solve_node(node: &DockNode, bounds: Rect, frames: &mut Vec<FrameLayout>) {
                 Axis::Horizontal => bounds.width,
                 Axis::Vertical => bounds.height,
             };
-            let first_size = (total * ratio.clamp(0.0, 1.0))
-                .max(*min_first)
-                .min(total - *min_second);
+            let total = finite_non_negative(total);
+            let min_first = finite_non_negative(*min_first);
+            let min_second = finite_non_negative(*min_second);
+            let desired = total * finite_ratio(*ratio);
+            let first_size = if total >= min_first + min_second {
+                desired.clamp(min_first, total - min_second)
+            } else {
+                desired.max(min_first.min(total)).min(total)
+            };
             let second_size = (total - first_size).max(0.0);
             let (first_rect, second_rect) = match axis {
                 Axis::Horizontal => (
@@ -290,6 +386,22 @@ fn solve_node(node: &DockNode, bounds: Rect, frames: &mut Vec<FrameLayout>) {
             solve_node(first, first_rect, frames);
             solve_node(second, second_rect, frames);
         }
+    }
+}
+
+fn finite_ratio(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.5
+    }
+}
+
+fn finite_non_negative(value: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
     }
 }
 
@@ -319,7 +431,7 @@ pub fn frame_tabs(frame: &Frame) -> Vec<FrameTab> {
             panel: panel.id,
             title: panel.title.clone(),
             active: index == frame.active,
-            close_visible: panel.dismissible,
+            close_visible: frame.panel_dismissible(panel.id),
             draggable: true,
         })
         .collect()
@@ -343,6 +455,8 @@ pub enum DockSnapshotNode {
         panels: Vec<Panel>,
         /// Active panel index.
         active: usize,
+        /// Panels whose frame tabs expose close/dismiss affordances.
+        dismissible_panels: Vec<PanelId>,
     },
     /// Split snapshot.
     Split {
@@ -368,6 +482,18 @@ pub enum DockRestoreError {
     EmptyFrame,
     /// Active tab index is outside the panel list.
     InvalidActiveIndex,
+    /// Two frames use the same stable frame identity.
+    DuplicateFrameId,
+    /// Two panels use the same stable panel identity.
+    DuplicatePanelId,
+    /// Dismissible panel policy references a panel missing from the frame.
+    InvalidDismissiblePanel,
+    /// Dismissible panel policy contains the same panel more than once.
+    DuplicateDismissiblePanel,
+    /// Split ratio is not finite or is outside the inclusive 0.0..=1.0 range.
+    InvalidSplitRatio,
+    /// Split minimum is not finite or is negative.
+    InvalidSplitMinimum,
 }
 
 fn snapshot_node(node: &DockNode) -> DockSnapshotNode {
@@ -376,6 +502,7 @@ fn snapshot_node(node: &DockNode) -> DockSnapshotNode {
             id: frame.id,
             panels: frame.panels.clone(),
             active: frame.active,
+            dismissible_panels: frame.dismissible_panels.iter().copied().collect(),
         },
         DockNode::Split {
             axis,
@@ -397,9 +524,17 @@ fn snapshot_node(node: &DockNode) -> DockSnapshotNode {
 
 fn restore_node(snapshot: DockSnapshotNode) -> DockNode {
     match snapshot {
-        DockSnapshotNode::Frame { id, panels, active } => {
-            DockNode::Frame(Frame { id, panels, active })
-        }
+        DockSnapshotNode::Frame {
+            id,
+            panels,
+            active,
+            dismissible_panels,
+        } => DockNode::Frame(Frame {
+            id,
+            panels,
+            active,
+            dismissible_panels: dismissible_panels.into_iter().collect(),
+        }),
         DockSnapshotNode::Split {
             axis,
             ratio,
@@ -418,20 +553,71 @@ fn restore_node(snapshot: DockSnapshotNode) -> DockNode {
     }
 }
 
-fn validate_snapshot_node(snapshot: &DockSnapshotNode) -> Result<(), DockRestoreError> {
+#[derive(Default)]
+struct DockSnapshotValidation {
+    frame_ids: BTreeSet<FrameId>,
+    panel_ids: BTreeSet<PanelId>,
+}
+
+fn validate_snapshot_node(
+    snapshot: &DockSnapshotNode,
+    validation: &mut DockSnapshotValidation,
+) -> Result<(), DockRestoreError> {
     match snapshot {
-        DockSnapshotNode::Frame { panels, active, .. } => {
+        DockSnapshotNode::Frame {
+            id,
+            panels,
+            active,
+            dismissible_panels,
+        } => {
+            if !validation.frame_ids.insert(*id) {
+                return Err(DockRestoreError::DuplicateFrameId);
+            }
             if panels.is_empty() {
                 return Err(DockRestoreError::EmptyFrame);
             }
             if *active >= panels.len() {
                 return Err(DockRestoreError::InvalidActiveIndex);
             }
+
+            let mut frame_panel_ids = BTreeSet::new();
+            for panel in panels {
+                if !frame_panel_ids.insert(panel.id) || !validation.panel_ids.insert(panel.id) {
+                    return Err(DockRestoreError::DuplicatePanelId);
+                }
+            }
+
+            let mut frame_dismissible_ids = BTreeSet::new();
+            for id in dismissible_panels {
+                if !frame_dismissible_ids.insert(*id) {
+                    return Err(DockRestoreError::DuplicateDismissiblePanel);
+                }
+                if !frame_panel_ids.contains(id) {
+                    return Err(DockRestoreError::InvalidDismissiblePanel);
+                }
+            }
             Ok(())
         }
-        DockSnapshotNode::Split { first, second, .. } => {
-            validate_snapshot_node(first)?;
-            validate_snapshot_node(second)
+        DockSnapshotNode::Split {
+            ratio,
+            min_first,
+            min_second,
+            first,
+            second,
+            ..
+        } => {
+            if !ratio.is_finite() || !(0.0..=1.0).contains(ratio) {
+                return Err(DockRestoreError::InvalidSplitRatio);
+            }
+            if !min_first.is_finite()
+                || !min_second.is_finite()
+                || *min_first < 0.0
+                || *min_second < 0.0
+            {
+                return Err(DockRestoreError::InvalidSplitMinimum);
+            }
+            validate_snapshot_node(first, validation)?;
+            validate_snapshot_node(second, validation)
         }
     }
 }
@@ -514,6 +700,68 @@ mod tests {
     }
 
     #[test]
+    fn moving_panels_preserves_frame_owned_dismissal_policy() {
+        let mut area = dock_area();
+        area.frame_mut(FrameId::from_raw(2))
+            .expect("source")
+            .set_panel_dismissible(PanelId::from_raw(3), false);
+
+        assert!(area.move_panel(
+            FrameId::from_raw(2),
+            FrameId::from_raw(1),
+            PanelId::from_raw(3)
+        ));
+
+        assert!(
+            !area
+                .frame(FrameId::from_raw(1))
+                .expect("target")
+                .panel_dismissible(PanelId::from_raw(3))
+        );
+    }
+
+    #[test]
+    fn moving_panel_to_missing_target_does_not_remove_it() {
+        let mut area = dock_area();
+
+        assert!(!area.move_panel(
+            FrameId::from_raw(2),
+            FrameId::from_raw(99),
+            PanelId::from_raw(3)
+        ));
+
+        let source = area.frame(FrameId::from_raw(2)).expect("source");
+        assert_eq!(source.panels.len(), 2);
+        assert!(
+            source
+                .panels
+                .iter()
+                .any(|panel| panel.id == PanelId::from_raw(3))
+        );
+    }
+
+    #[test]
+    fn moving_last_panel_prunes_empty_source_frame() {
+        let mut area = dock_area();
+
+        assert!(area.move_panel(
+            FrameId::from_raw(1),
+            FrameId::from_raw(2),
+            PanelId::from_raw(1)
+        ));
+
+        assert_eq!(area.frames().len(), 1);
+        assert!(area.frame(FrameId::from_raw(1)).is_none());
+        assert_eq!(
+            area.frame(FrameId::from_raw(2))
+                .expect("target")
+                .panels
+                .len(),
+            3
+        );
+    }
+
+    #[test]
     fn merges_frames_into_target() {
         let mut area = dock_area();
 
@@ -526,11 +774,22 @@ mod tests {
                 .len(),
             3
         );
-        assert!(
-            area.frame_mut(FrameId::from_raw(1))
+        assert_eq!(area.frames().len(), 1);
+        assert!(area.frame(FrameId::from_raw(1)).is_none());
+    }
+
+    #[test]
+    fn merging_missing_target_does_not_remove_source_panels() {
+        let mut area = dock_area();
+
+        assert!(!area.merge_frames(FrameId::from_raw(1), FrameId::from_raw(99)));
+
+        assert_eq!(
+            area.frame(FrameId::from_raw(1))
                 .expect("source")
                 .panels
-                .is_empty()
+                .len(),
+            1
         );
     }
 
@@ -560,13 +819,51 @@ mod tests {
     }
 
     #[test]
+    fn split_layout_never_emits_negative_sizes_when_minimums_exceed_bounds() {
+        let area = DockArea::new(DockNode::Split {
+            axis: Axis::Horizontal,
+            ratio: 0.5,
+            min_first: 100.0,
+            min_second: 100.0,
+            first: Box::new(DockNode::Frame(frame(1, vec![panel(1, "A")]))),
+            second: Box::new(DockNode::Frame(frame(2, vec![panel(2, "B")]))),
+        });
+        let layout = solve_dock_layout(&area, Rect::new(0.0, 0.0, 120.0, 200.0));
+
+        assert_eq!(layout.len(), 2);
+        assert!(layout[0].rect.width >= 0.0);
+        assert!(layout[1].rect.width >= 0.0);
+        assert!((layout[0].rect.width + layout[1].rect.width - 120.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn split_layout_sanitizes_direct_non_finite_values() {
+        let area = DockArea::new(DockNode::Split {
+            axis: Axis::Horizontal,
+            ratio: f32::NAN,
+            min_first: f32::INFINITY,
+            min_second: -100.0,
+            first: Box::new(DockNode::Frame(frame(1, vec![panel(1, "A")]))),
+            second: Box::new(DockNode::Frame(frame(2, vec![panel(2, "B")]))),
+        });
+        let layout = solve_dock_layout(&area, Rect::new(0.0, 0.0, 120.0, 200.0));
+
+        assert_eq!(layout.len(), 2);
+        assert!(layout[0].rect.width.is_finite());
+        assert!(layout[1].rect.width.is_finite());
+        assert!((layout[0].rect.width + layout[1].rect.width - 120.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn frame_tabs_expose_presentation_state() {
         let mut frame = frame(1, vec![panel(1, "A"), panel(2, "B")]);
         frame.select_panel(PanelId::from_raw(2));
+        assert!(frame.set_panel_dismissible(PanelId::from_raw(1), false));
 
         let tabs = frame_tabs(&frame);
 
         assert!(!tabs[0].active);
+        assert!(!tabs[0].close_visible);
         assert!(tabs[1].active);
         assert!(tabs[1].close_visible);
         assert!(tabs[1].draggable);
@@ -588,12 +885,176 @@ mod tests {
                 id: FrameId::from_raw(1),
                 panels: vec![],
                 active: 0,
+                dismissible_panels: vec![],
             },
         };
 
         assert_eq!(
             DockArea::restore(snapshot).expect_err("error"),
             DockRestoreError::EmptyFrame
+        );
+    }
+
+    #[test]
+    fn invalid_snapshot_rejects_invalid_active_panel() {
+        let snapshot = DockSnapshot {
+            root: DockSnapshotNode::Frame {
+                id: FrameId::from_raw(1),
+                panels: vec![panel(1, "A")],
+                active: 1,
+                dismissible_panels: vec![PanelId::from_raw(1)],
+            },
+        };
+
+        assert_eq!(
+            DockArea::restore(snapshot).expect_err("error"),
+            DockRestoreError::InvalidActiveIndex
+        );
+    }
+
+    #[test]
+    fn invalid_snapshot_rejects_unknown_dismissible_panel() {
+        let snapshot = DockSnapshot {
+            root: DockSnapshotNode::Frame {
+                id: FrameId::from_raw(1),
+                panels: vec![panel(1, "A")],
+                active: 0,
+                dismissible_panels: vec![PanelId::from_raw(2)],
+            },
+        };
+
+        assert_eq!(
+            DockArea::restore(snapshot).expect_err("error"),
+            DockRestoreError::InvalidDismissiblePanel
+        );
+    }
+
+    #[test]
+    fn invalid_snapshot_rejects_duplicate_frame_ids() {
+        let snapshot = DockSnapshot {
+            root: DockSnapshotNode::Split {
+                axis: Axis::Horizontal,
+                ratio: 0.5,
+                min_first: 0.0,
+                min_second: 0.0,
+                first: Box::new(DockSnapshotNode::Frame {
+                    id: FrameId::from_raw(1),
+                    panels: vec![panel(1, "A")],
+                    active: 0,
+                    dismissible_panels: vec![PanelId::from_raw(1)],
+                }),
+                second: Box::new(DockSnapshotNode::Frame {
+                    id: FrameId::from_raw(1),
+                    panels: vec![panel(2, "B")],
+                    active: 0,
+                    dismissible_panels: vec![PanelId::from_raw(2)],
+                }),
+            },
+        };
+
+        assert_eq!(
+            DockArea::restore(snapshot).expect_err("error"),
+            DockRestoreError::DuplicateFrameId
+        );
+    }
+
+    #[test]
+    fn invalid_snapshot_rejects_duplicate_panel_ids() {
+        let snapshot = DockSnapshot {
+            root: DockSnapshotNode::Split {
+                axis: Axis::Horizontal,
+                ratio: 0.5,
+                min_first: 0.0,
+                min_second: 0.0,
+                first: Box::new(DockSnapshotNode::Frame {
+                    id: FrameId::from_raw(1),
+                    panels: vec![panel(1, "A")],
+                    active: 0,
+                    dismissible_panels: vec![PanelId::from_raw(1)],
+                }),
+                second: Box::new(DockSnapshotNode::Frame {
+                    id: FrameId::from_raw(2),
+                    panels: vec![panel(1, "B")],
+                    active: 0,
+                    dismissible_panels: vec![PanelId::from_raw(1)],
+                }),
+            },
+        };
+
+        assert_eq!(
+            DockArea::restore(snapshot).expect_err("error"),
+            DockRestoreError::DuplicatePanelId
+        );
+    }
+
+    #[test]
+    fn invalid_snapshot_rejects_duplicate_dismissible_policy_entries() {
+        let snapshot = DockSnapshot {
+            root: DockSnapshotNode::Frame {
+                id: FrameId::from_raw(1),
+                panels: vec![panel(1, "A")],
+                active: 0,
+                dismissible_panels: vec![PanelId::from_raw(1), PanelId::from_raw(1)],
+            },
+        };
+
+        assert_eq!(
+            DockArea::restore(snapshot).expect_err("error"),
+            DockRestoreError::DuplicateDismissiblePanel
+        );
+    }
+
+    #[test]
+    fn invalid_snapshot_rejects_invalid_split_numbers() {
+        let invalid_ratio = DockSnapshot {
+            root: DockSnapshotNode::Split {
+                axis: Axis::Horizontal,
+                ratio: f32::NAN,
+                min_first: 0.0,
+                min_second: 0.0,
+                first: Box::new(DockSnapshotNode::Frame {
+                    id: FrameId::from_raw(1),
+                    panels: vec![panel(1, "A")],
+                    active: 0,
+                    dismissible_panels: vec![PanelId::from_raw(1)],
+                }),
+                second: Box::new(DockSnapshotNode::Frame {
+                    id: FrameId::from_raw(2),
+                    panels: vec![panel(2, "B")],
+                    active: 0,
+                    dismissible_panels: vec![PanelId::from_raw(2)],
+                }),
+            },
+        };
+        assert_eq!(
+            DockArea::restore(invalid_ratio).expect_err("error"),
+            DockRestoreError::InvalidSplitRatio
+        );
+
+        let invalid_minimum = DockSnapshot {
+            root: DockSnapshotNode::Split {
+                axis: Axis::Horizontal,
+                ratio: 0.5,
+                min_first: -1.0,
+                min_second: 0.0,
+                first: Box::new(DockSnapshotNode::Frame {
+                    id: FrameId::from_raw(1),
+                    panels: vec![panel(1, "A")],
+                    active: 0,
+                    dismissible_panels: vec![PanelId::from_raw(1)],
+                }),
+                second: Box::new(DockSnapshotNode::Frame {
+                    id: FrameId::from_raw(2),
+                    panels: vec![panel(2, "B")],
+                    active: 0,
+                    dismissible_panels: vec![PanelId::from_raw(2)],
+                }),
+            },
+        };
+
+        assert_eq!(
+            DockArea::restore(invalid_minimum).expect_err("error"),
+            DockRestoreError::InvalidSplitMinimum
         );
     }
 }

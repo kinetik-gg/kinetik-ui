@@ -96,6 +96,7 @@ impl IdStack {
     /// Pushes a scope and returns its ID.
     pub fn push(&mut self, key: impl Hash) -> WidgetId {
         let id = self.make_id(key);
+        self.register(id);
         self.stack.push(id);
         id
     }
@@ -189,6 +190,18 @@ mod tests {
         let id = stack.register_key("search");
         stack.register(id);
 
+        assert_eq!(stack.duplicates().len(), 1);
+        assert_eq!(stack.duplicates()[0].id, id);
+    }
+
+    #[test]
+    fn detects_duplicate_scope_ids() {
+        let mut stack = IdStack::new();
+        let id = stack.push("panel");
+        stack.pop();
+        let duplicate = stack.push("panel");
+
+        assert_eq!(duplicate, id);
         assert_eq!(stack.duplicates().len(), 1);
         assert_eq!(stack.duplicates()[0].id, id);
     }

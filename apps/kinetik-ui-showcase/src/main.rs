@@ -1,14 +1,14 @@
 //! Windowed Kinetik UI showcase entry point.
 
-use kinetik_ui_core::Point;
+use kinetik_ui_core::{Point, Size};
 use kinetik_ui_showcase::{
     app::{ShowcaseApp, ShowcaseInput},
     raster::{rasterize, write_bmp},
 };
-use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
 
-const WIDTH: usize = 1440;
-const HEIGHT: usize = 900;
+const DEFAULT_WIDTH: usize = 1440;
+const DEFAULT_HEIGHT: usize = 900;
 
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
@@ -24,29 +24,41 @@ fn main() {
     }
 
     if let Some(path) = render_once_path(&args) {
-        let app = ShowcaseApp::new();
-        let frame = rasterize(&app.primitives(), WIDTH, HEIGHT);
+        let width = usize_arg(&args, "--width").unwrap_or(DEFAULT_WIDTH);
+        let height = usize_arg(&args, "--height").unwrap_or(DEFAULT_HEIGHT);
+        let mut app = ShowcaseApp::new();
+        app.set_viewport_size(size_from_pixels(width, height));
+        if let Some(page) = page_arg(&args).and_then(ShowcaseApp::page_from_name) {
+            app.set_page(page);
+        }
+        let frame = rasterize(&app.primitives(), width, height);
         write_bmp(&frame, path).expect("write showcase bmp");
         return;
     }
     let mut window = Window::new(
         "Kinetik UI Showcase",
-        WIDTH,
-        HEIGHT,
+        DEFAULT_WIDTH,
+        DEFAULT_HEIGHT,
         WindowOptions {
             resize: true,
+            scale: Scale::X1,
+            scale_mode: ScaleMode::UpperLeft,
             ..WindowOptions::default()
         },
     )
     .expect("create showcase window");
+    window.set_background_color(12, 12, 13);
     window.set_target_fps(60);
     let mut app = ShowcaseApp::new();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        let input = window_input(&window);
+        let (width, height) = window.get_size();
+        let width = width.max(1);
+        let height = height.max(1);
+        let input = window_input(&window, width, height);
         app.update(&input);
         let primitives = app.primitives();
-        let frame = rasterize(&primitives, WIDTH, HEIGHT);
+        let frame = rasterize(&primitives, width, height);
         window
             .update_with_buffer(&frame.pixels, frame.width, frame.height)
             .expect("present showcase frame");
@@ -58,18 +70,39 @@ fn render_once_path(args: &[String]) -> Option<&str> {
         .find_map(|window| (window[0] == "--render-once").then_some(window[1].as_str()))
 }
 
-fn window_input(window: &Window) -> ShowcaseInput {
+fn page_arg(args: &[String]) -> Option<&str> {
+    args.windows(2)
+        .find_map(|window| (window[0] == "--page").then_some(window[1].as_str()))
+}
+
+fn usize_arg(args: &[String], name: &str) -> Option<usize> {
+    args.windows(2)
+        .find_map(|window| (window[0] == name).then(|| window[1].parse().ok()))
+        .flatten()
+}
+
+fn window_input(window: &Window, width: usize, height: usize) -> ShowcaseInput {
     let mouse = window
         .get_mouse_pos(MouseMode::Clamp)
         .map(|(x, y)| Point::new(x, y));
     let keys = window.get_keys_pressed(KeyRepeat::Yes);
     ShowcaseInput {
         mouse,
+        viewport_size: Some(size_from_pixels(width, height)),
         mouse_down: window.get_mouse_down(MouseButton::Left),
         typed: keys.iter().filter_map(|key| key_to_char(*key)).collect(),
         backspace: keys.contains(&Key::Backspace),
         enter: keys.contains(&Key::Enter),
     }
+}
+
+fn size_from_pixels(width: usize, height: usize) -> Size {
+    Size::new(pixel_to_f32(width), pixel_to_f32(height))
+}
+
+fn pixel_to_f32(value: usize) -> f32 {
+    let value = u16::try_from(value).unwrap_or(u16::MAX);
+    f32::from(value)
 }
 
 fn key_to_char(key: Key) -> Option<char> {

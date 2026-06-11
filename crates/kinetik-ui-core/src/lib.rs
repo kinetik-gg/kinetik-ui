@@ -20,11 +20,12 @@ pub mod units;
 
 pub use accessibility::{
     AccessibilityAdapter, FocusTraversal, SemanticAction, SemanticActionKind, SemanticNode,
-    SemanticRole, SemanticState, SemanticTree, SemanticValue,
+    SemanticRole, SemanticState, SemanticTree, SemanticTreeError, SemanticValue,
 };
 pub use actions::{
     ActionBinding, ActionContext, ActionDescriptor, ActionIcon, ActionId, ActionInvocation,
-    ActionPriority, ActionQueue, ActionRouter, ActionSource, ActionState, Shortcut,
+    ActionPriority, ActionQueue, ActionRouter, ActionRoutingContext, ActionSource, ActionState,
+    Shortcut,
 };
 pub use debug::{
     DebugOverlay, PrimitiveInspection, PrimitiveKind, inspect_primitives, primitive_bounds,
@@ -33,11 +34,13 @@ pub use debug::{
 pub use geometry::{Point, Rect, Size, Vec2};
 pub use identity::{DuplicateWidgetId, IdStack, WidgetId};
 pub use input::{
-    Key, KeyEvent, KeyState, KeyboardInput, Modifiers, MouseButton, PointerButtonState,
-    PointerInput, TextInputEvent, UiInput,
+    Key, KeyEvent, KeyState, KeyboardInput, Modifiers, MouseButton, PhysicalKey,
+    PointerButtonState, PointerInput, TextInputEvent, TextRange, UiInput,
 };
 pub use interaction::{
-    InteractionState, Response, draggable, focusable, hit_test, pressable, selectable,
+    DropTargetResponse, InteractionState, Response, ScrollResponse, clamp_scroll_offset,
+    context_menu_trigger, draggable, drop_target, focusable, hit_test, max_scroll_offset,
+    pressable, scrollable, selectable, tooltip_trigger,
 };
 pub use layout::{
     Alignment, Axis, Insets, LayoutItem, Measurement, SeparatorKind, SizeRule, column_layout,
@@ -48,13 +51,20 @@ pub use perf::{
     AllocationBudget, AllocationUsage, BudgetStatus, FrameCounters, FrameMetrics, FrameTimings,
 };
 pub use render::{
-    Brush, ClipId, Color, CornerRadius, ImageId, ImagePrimitive, LayerId, LinePrimitive, Primitive,
-    RectPrimitive, Stroke, TextPrimitive, TextureId, TexturePrimitive, Transform,
+    Brush, ClipId, Color, CornerRadius, GradientBuildError, GradientStop, IconId, ImageId,
+    ImagePrimitive, LayerId, LinePrimitive, LinearGradient, MAX_GRADIENT_STOPS, PathElement,
+    PathPrimitive, Primitive, RectPrimitive, ShadowPrimitive, Stroke, TextLayoutId, TextPrimitive,
+    TextureId, TexturePrimitive, Transform,
 };
-pub use runtime::{FrameContext, FrameOutput, RepaintRequest, TimeInfo, ViewportInfo};
+pub use runtime::{
+    CursorShape, FrameContext, FrameOutput, FrameWarning, PlatformRequest, RepaintRequest,
+    TimeInfo, Ui, ViewportInfo,
+};
 pub use theme::{
-    ButtonRecipe, ComponentState, SemanticColor, SpacingScale, Theme, ThemeColors,
-    default_dark_theme,
+    ButtonRecipe, ButtonVariant, CheckRecipe, ComponentState, ControlMetrics, DurationScale,
+    ElevationScale, FontToken, OpacityScale, PanelRecipe, RadiusScale, RowRecipe, SemanticColor,
+    SeparatorRecipe, ShadowRecipe, SliderRecipe, SpacingScale, TabRecipe, TextFieldRecipe,
+    TextRecipe, TextRole, Theme, ThemeColors, ToggleRecipe, TypographyScale, default_dark_theme,
 };
 pub use units::{PhysicalPoint, PhysicalSize, ScaleFactor};
 

@@ -47,6 +47,144 @@ impl Color {
 pub enum Brush {
     /// Solid color brush.
     Solid(Color),
+    /// Linear gradient brush.
+    LinearGradient(LinearGradient),
+}
+
+/// Maximum color stops stored inline by a gradient brush.
+pub const MAX_GRADIENT_STOPS: usize = 8;
+
+/// Error returned when a gradient cannot be constructed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GradientBuildError {
+    /// A gradient needs at least two color stops.
+    TooFewStops,
+    /// The gradient exceeded [`MAX_GRADIENT_STOPS`].
+    TooManyStops,
+}
+
+/// One color stop in a gradient ramp.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GradientStop {
+    /// Normalized stop offset, where 0 is the start and 1 is the end.
+    pub offset: f32,
+    /// Stop color.
+    pub color: Color,
+}
+
+impl GradientStop {
+    /// Creates a gradient stop.
+    #[must_use]
+    pub const fn new(offset: f32, color: Color) -> Self {
+        Self { offset, color }
+    }
+}
+
+/// Inline linear gradient brush.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinearGradient {
+    start: Point,
+    end: Point,
+    stops: [GradientStop; MAX_GRADIENT_STOPS],
+    stop_count: usize,
+}
+
+impl LinearGradient {
+    /// Creates a two-color linear gradient.
+    #[must_use]
+    pub const fn between(start: Point, end: Point, start_color: Color, end_color: Color) -> Self {
+        let mut stops = [GradientStop::new(0.0, Color::TRANSPARENT); MAX_GRADIENT_STOPS];
+        stops[0] = GradientStop::new(0.0, start_color);
+        stops[1] = GradientStop::new(1.0, end_color);
+        Self {
+            start,
+            end,
+            stops,
+            stop_count: 2,
+        }
+    }
+
+    /// Creates a linear gradient from explicit stops.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GradientBuildError::TooFewStops`] when fewer than two stops are provided and
+    /// [`GradientBuildError::TooManyStops`] when the stop count exceeds [`MAX_GRADIENT_STOPS`].
+    pub fn new(
+        start: Point,
+        end: Point,
+        stops: &[GradientStop],
+    ) -> Result<Self, GradientBuildError> {
+        if stops.len() < 2 {
+            return Err(GradientBuildError::TooFewStops);
+        }
+        if stops.len() > MAX_GRADIENT_STOPS {
+            return Err(GradientBuildError::TooManyStops);
+        }
+        let mut storage = [GradientStop::new(0.0, Color::TRANSPARENT); MAX_GRADIENT_STOPS];
+        storage[..stops.len()].copy_from_slice(stops);
+        Ok(Self {
+            start,
+            end,
+            stops: storage,
+            stop_count: stops.len(),
+        })
+    }
+
+    /// Creates a linear gradient with evenly spaced colors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GradientBuildError::TooFewStops`] when fewer than two colors are provided and
+    /// [`GradientBuildError::TooManyStops`] when the color count exceeds [`MAX_GRADIENT_STOPS`].
+    pub fn from_colors(
+        start: Point,
+        end: Point,
+        colors: &[Color],
+    ) -> Result<Self, GradientBuildError> {
+        if colors.len() < 2 {
+            return Err(GradientBuildError::TooFewStops);
+        }
+        if colors.len() > MAX_GRADIENT_STOPS {
+            return Err(GradientBuildError::TooManyStops);
+        }
+        let denom = f32::from(u16::try_from(colors.len() - 1).unwrap_or(1));
+        let mut stops = [GradientStop::new(0.0, Color::TRANSPARENT); MAX_GRADIENT_STOPS];
+        for (index, color) in colors.iter().copied().enumerate() {
+            let offset = f32::from(u16::try_from(index).unwrap_or(u16::MAX)) / denom;
+            stops[index] = GradientStop::new(offset, color);
+        }
+        Ok(Self {
+            start,
+            end,
+            stops,
+            stop_count: colors.len(),
+        })
+    }
+
+    /// Returns the gradient start point.
+    #[must_use]
+    pub const fn start(self) -> Point {
+        self.start
+    }
+
+    /// Returns the gradient end point.
+    #[must_use]
+    pub const fn end(self) -> Point {
+        self.end
+    }
+
+    /// Returns the active color stops.
+    #[must_use]
+    pub fn stops(&self) -> &[GradientStop] {
+        &self.stops[..self.stop_count]
+    }
+
+    /// Returns the number of active stops.
+    #[must_use]
+    pub const fn stop_count(self) -> usize {
+        self.stop_count
+    }
 }
 
 /// Stroke style.
@@ -96,6 +234,24 @@ impl CornerRadius {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ImageId(u64);
 
+/// Symbolic icon resource handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct IconId(u64);
+
+impl IconId {
+    /// Creates an icon ID from raw bits.
+    #[must_use]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// Returns raw ID bits.
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 impl ImageId {
     /// Creates an image ID from raw bits.
     #[must_use]
@@ -116,6 +272,24 @@ pub struct TextureId(u64);
 
 impl TextureId {
     /// Creates a texture ID from raw bits.
+    #[must_use]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// Returns raw ID bits.
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+/// Shaped text layout resource handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TextLayoutId(u64);
+
+impl TextLayoutId {
+    /// Creates a text layout ID from raw bits.
     #[must_use]
     pub const fn from_raw(raw: u64) -> Self {
         Self(raw)
@@ -215,9 +389,104 @@ pub struct LinePrimitive {
     pub stroke: Stroke,
 }
 
+/// Box shadow draw command for elevated surfaces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadowPrimitive {
+    /// Source rectangle that casts the shadow.
+    pub rect: Rect,
+    /// Shadow offset in logical units.
+    pub offset: Vec2,
+    /// Gaussian blur radius in logical units.
+    pub blur_radius: f32,
+    /// Amount to expand or shrink the source rectangle before blurring.
+    pub spread: f32,
+    /// Uniform corner radius for the shadow shape.
+    pub radius: f32,
+    /// Shadow color.
+    pub color: Color,
+}
+
+impl ShadowPrimitive {
+    /// Creates a box shadow primitive.
+    #[must_use]
+    pub const fn new(
+        rect: Rect,
+        offset: Vec2,
+        blur_radius: f32,
+        spread: f32,
+        radius: f32,
+        color: Color,
+    ) -> Self {
+        Self {
+            rect,
+            offset,
+            blur_radius,
+            spread,
+            radius,
+            color,
+        }
+    }
+}
+
+/// One element in a vector path.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PathElement {
+    /// Move the current point without drawing.
+    MoveTo(Point),
+    /// Draw a straight segment to a point.
+    LineTo(Point),
+    /// Draw a quadratic Bezier segment.
+    QuadTo {
+        /// Control point.
+        ctrl: Point,
+        /// Segment end point.
+        to: Point,
+    },
+    /// Draw a cubic Bezier segment.
+    CubicTo {
+        /// First control point.
+        ctrl1: Point,
+        /// Second control point.
+        ctrl2: Point,
+        /// Segment end point.
+        to: Point,
+    },
+    /// Close the current subpath.
+    Close,
+}
+
+/// Vector path draw command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathPrimitive {
+    /// Path elements in drawing order.
+    pub elements: Vec<PathElement>,
+    /// Fill brush.
+    pub fill: Option<Brush>,
+    /// Stroke style.
+    pub stroke: Option<Stroke>,
+}
+
+impl PathPrimitive {
+    /// Creates a path primitive.
+    #[must_use]
+    pub fn new(
+        elements: impl Into<Vec<PathElement>>,
+        fill: Option<Brush>,
+        stroke: Option<Stroke>,
+    ) -> Self {
+        Self {
+            elements: elements.into(),
+            fill,
+            stroke,
+        }
+    }
+}
+
 /// Text draw command.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextPrimitive {
+    /// Optional shaped text layout resource.
+    pub layout: Option<TextLayoutId>,
     /// Text baseline origin.
     pub origin: Point,
     /// Text content.
@@ -255,6 +524,10 @@ pub enum Primitive {
     Rect(RectPrimitive),
     /// Straight line.
     Line(LinePrimitive),
+    /// Box shadow.
+    Shadow(ShadowPrimitive),
+    /// Vector path.
+    Path(PathPrimitive),
     /// Text.
     Text(TextPrimitive),
     /// Static image.
@@ -293,8 +566,10 @@ pub enum Primitive {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::{
-        Brush, ClipId, Color, CornerRadius, ImageId, ImagePrimitive, LayerId, LinePrimitive,
-        Primitive, RectPrimitive, Stroke, TextPrimitive, TextureId, TexturePrimitive, Transform,
+        Brush, ClipId, Color, CornerRadius, GradientBuildError, GradientStop, IconId, ImageId,
+        ImagePrimitive, LayerId, LinePrimitive, LinearGradient, MAX_GRADIENT_STOPS, PathElement,
+        PathPrimitive, Primitive, RectPrimitive, ShadowPrimitive, Stroke, TextLayoutId,
+        TextPrimitive, TextureId, TexturePrimitive, Transform,
     };
     use crate::{Point, Rect, Size, Vec2};
 
@@ -307,6 +582,54 @@ mod tests {
     }
 
     #[test]
+    fn constructs_linear_gradient_brushes() {
+        let gradient = LinearGradient::between(
+            Point::new(0.0, 1.0),
+            Point::new(10.0, 11.0),
+            Color::BLACK,
+            Color::WHITE,
+        );
+
+        assert_eq!(gradient.start(), Point::new(0.0, 1.0));
+        assert_eq!(gradient.end(), Point::new(10.0, 11.0));
+        assert_eq!(gradient.stop_count(), 2);
+        assert_eq!(gradient.stops()[0], GradientStop::new(0.0, Color::BLACK));
+        assert_eq!(gradient.stops()[1], GradientStop::new(1.0, Color::WHITE));
+        assert_eq!(
+            Brush::LinearGradient(gradient),
+            Brush::LinearGradient(gradient)
+        );
+    }
+
+    #[test]
+    fn builds_linear_gradient_from_evenly_spaced_colors() {
+        let gradient = LinearGradient::from_colors(
+            Point::new(0.0, 0.0),
+            Point::new(20.0, 0.0),
+            &[Color::BLACK, Color::rgb(0.5, 0.5, 0.5), Color::WHITE],
+        )
+        .expect("valid gradient");
+
+        assert_eq!(gradient.stops()[0].offset, 0.0);
+        assert_eq!(gradient.stops()[1].offset, 0.5);
+        assert_eq!(gradient.stops()[2].offset, 1.0);
+    }
+
+    #[test]
+    fn rejects_invalid_linear_gradient_stop_counts() {
+        assert_eq!(
+            LinearGradient::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &[]),
+            Err(GradientBuildError::TooFewStops)
+        );
+
+        let stops = [GradientStop::new(0.0, Color::BLACK); MAX_GRADIENT_STOPS + 1];
+        assert_eq!(
+            LinearGradient::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0), &stops),
+            Err(GradientBuildError::TooManyStops)
+        );
+    }
+
+    #[test]
     fn constructs_stroke_and_radius_values() {
         let stroke = Stroke::new(1.5, Brush::Solid(Color::WHITE));
 
@@ -315,9 +638,29 @@ mod tests {
     }
 
     #[test]
+    fn constructs_shadow_primitives() {
+        let shadow = ShadowPrimitive::new(
+            Rect::new(1.0, 2.0, 30.0, 40.0),
+            Vec2::new(3.0, 4.0),
+            12.0,
+            2.0,
+            6.0,
+            Color::rgba(0.0, 0.0, 0.0, 0.35),
+        );
+
+        assert_eq!(shadow.rect, Rect::new(1.0, 2.0, 30.0, 40.0));
+        assert_eq!(shadow.offset, Vec2::new(3.0, 4.0));
+        assert_eq!(shadow.blur_radius, 12.0);
+        assert_eq!(shadow.spread, 2.0);
+        assert_eq!(shadow.radius, 6.0);
+    }
+
+    #[test]
     fn resource_handles_are_stable() {
+        assert_eq!(IconId::from_raw(5).raw(), 5);
         assert_eq!(ImageId::from_raw(7).raw(), 7);
         assert_eq!(TextureId::from_raw(9).raw(), 9);
+        assert_eq!(TextLayoutId::from_raw(11).raw(), 11);
         assert_ne!(ImageId::from_raw(7).raw(), TextureId::from_raw(9).raw());
     }
 
@@ -362,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_text_image_texture_and_line_primitives() {
+    fn creates_text_image_texture_line_path_and_shadow_primitives() {
         let stroke = Stroke::new(1.0, Brush::Solid(Color::WHITE));
 
         let line = Primitive::Line(LinePrimitive {
@@ -370,12 +713,39 @@ mod tests {
             to: Point::new(1.0, 1.0),
             stroke,
         });
+        let shadow = Primitive::Shadow(ShadowPrimitive::new(
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Vec2::new(0.0, 2.0),
+            6.0,
+            1.0,
+            4.0,
+            Color::rgba(0.0, 0.0, 0.0, 0.3),
+        ));
         let text = Primitive::Text(TextPrimitive {
+            layout: Some(TextLayoutId::from_raw(3)),
             origin: Point::new(1.0, 2.0),
             text: "Label".to_owned(),
             size: 12.0,
             brush: Brush::Solid(Color::WHITE),
         });
+        let path = Primitive::Path(PathPrimitive::new(
+            vec![
+                PathElement::MoveTo(Point::new(0.0, 0.0)),
+                PathElement::LineTo(Point::new(10.0, 0.0)),
+                PathElement::QuadTo {
+                    ctrl: Point::new(12.0, 4.0),
+                    to: Point::new(10.0, 8.0),
+                },
+                PathElement::CubicTo {
+                    ctrl1: Point::new(8.0, 10.0),
+                    ctrl2: Point::new(2.0, 10.0),
+                    to: Point::new(0.0, 8.0),
+                },
+                PathElement::Close,
+            ],
+            Some(Brush::Solid(Color::BLACK)),
+            Some(stroke),
+        ));
         let image = Primitive::Image(ImagePrimitive {
             image: ImageId::from_raw(1),
             rect: Rect::new(0.0, 0.0, 10.0, 10.0),
@@ -387,7 +757,9 @@ mod tests {
         });
 
         assert!(matches!(line, Primitive::Line(_)));
+        assert!(matches!(shadow, Primitive::Shadow(_)));
         assert!(matches!(text, Primitive::Text(_)));
+        assert!(matches!(path, Primitive::Path(_)));
         assert!(matches!(image, Primitive::Image(_)));
         assert!(matches!(texture, Primitive::Texture(_)));
     }

@@ -9,6 +9,10 @@ pub enum PrimitiveKind {
     Rect,
     /// Line primitive.
     Line,
+    /// Shadow primitive.
+    Shadow,
+    /// Path primitive.
+    Path,
     /// Text primitive.
     Text,
     /// Image primitive.
@@ -48,6 +52,8 @@ pub const fn primitive_kind(primitive: &Primitive) -> PrimitiveKind {
     match primitive {
         Primitive::Rect(_) => PrimitiveKind::Rect,
         Primitive::Line(_) => PrimitiveKind::Line,
+        Primitive::Shadow(_) => PrimitiveKind::Shadow,
+        Primitive::Path(_) => PrimitiveKind::Path,
         Primitive::Text(_) => PrimitiveKind::Text,
         Primitive::Image(_) => PrimitiveKind::Image,
         Primitive::Texture(_) => PrimitiveKind::Texture,
@@ -69,6 +75,8 @@ pub fn primitive_bounds(primitive: &Primitive) -> Option<Rect> {
         Primitive::Texture(primitive) => Some(primitive.rect),
         Primitive::ClipBegin { rect, .. } => Some(*rect),
         Primitive::Line(primitive) => Some(line_bounds(primitive.from, primitive.to)),
+        Primitive::Shadow(primitive) => Some(shadow_bounds(primitive)),
+        Primitive::Path(primitive) => path_bounds(&primitive.elements),
         Primitive::Text(_)
         | Primitive::ClipEnd { .. }
         | Primitive::LayerBegin { .. }
@@ -78,10 +86,43 @@ pub fn primitive_bounds(primitive: &Primitive) -> Option<Rect> {
     }
 }
 
+fn shadow_bounds(primitive: &crate::ShadowPrimitive) -> Rect {
+    primitive
+        .rect
+        .translate(primitive.offset)
+        .outset(primitive.spread + primitive.blur_radius.max(0.0) * 2.5)
+        .max_zero()
+}
+
 fn line_bounds(from: Point, to: Point) -> Rect {
     let x = from.x.min(to.x);
     let y = from.y.min(to.y);
     Rect::new(x, y, from.x.max(to.x) - x, from.y.max(to.y) - y)
+}
+
+fn path_bounds(elements: &[crate::PathElement]) -> Option<Rect> {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    let mut saw_point = false;
+    for point in elements.iter().flat_map(path_element_points) {
+        saw_point = true;
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+    saw_point.then_some(Rect::new(min_x, min_y, max_x - min_x, max_y - min_y))
+}
+
+fn path_element_points(element: &crate::PathElement) -> Vec<Point> {
+    match *element {
+        crate::PathElement::MoveTo(point) | crate::PathElement::LineTo(point) => vec![point],
+        crate::PathElement::QuadTo { ctrl, to } => vec![ctrl, to],
+        crate::PathElement::CubicTo { ctrl1, ctrl2, to } => vec![ctrl1, ctrl2, to],
+        crate::PathElement::Close => Vec::new(),
+    }
 }
 
 /// Builds primitive inspection rows.
@@ -103,6 +144,8 @@ fn primitive_summary(primitive: &Primitive) -> String {
     match primitive {
         Primitive::Rect(primitive) => format!("rect {:?}", primitive.rect),
         Primitive::Line(primitive) => format!("line {:?} -> {:?}", primitive.from, primitive.to),
+        Primitive::Shadow(primitive) => format!("shadow {:?}", primitive.rect),
+        Primitive::Path(primitive) => format!("path {} elements", primitive.elements.len()),
         Primitive::Text(primitive) => format!("text {:?}", primitive.text),
         Primitive::Image(primitive) => format!("image {}", primitive.image.raw()),
         Primitive::Texture(primitive) => format!("texture {}", primitive.texture.raw()),
@@ -171,7 +214,8 @@ mod tests {
     use super::{DebugOverlay, PrimitiveKind, inspect_primitives, primitive_bounds};
     use crate::{
         Brush, Color, CornerRadius, FrameCounters, FrameMetrics, FrameTimings, LinePrimitive,
-        Point, Primitive, Rect, RectPrimitive, Stroke,
+        PathElement, PathPrimitive, Point, Primitive, Rect, RectPrimitive, ShadowPrimitive, Stroke,
+        Vec2,
     };
 
     #[test]
@@ -188,6 +232,26 @@ mod tests {
                 to: Point::new(8.0, 12.0),
                 stroke: Stroke::new(1.0, Brush::Solid(Color::WHITE)),
             }),
+            Primitive::Shadow(ShadowPrimitive::new(
+                Rect::new(10.0, 10.0, 20.0, 20.0),
+                Vec2::new(1.0, 2.0),
+                4.0,
+                2.0,
+                5.0,
+                Color::rgba(0.0, 0.0, 0.0, 0.25),
+            )),
+            Primitive::Path(PathPrimitive::new(
+                vec![
+                    PathElement::MoveTo(Point::new(1.0, 2.0)),
+                    PathElement::LineTo(Point::new(5.0, 2.0)),
+                    PathElement::QuadTo {
+                        ctrl: Point::new(7.0, 4.0),
+                        to: Point::new(5.0, 6.0),
+                    },
+                ],
+                None,
+                Some(Stroke::new(1.0, Brush::Solid(Color::WHITE))),
+            )),
         ];
 
         let rows = inspect_primitives(&primitives);
@@ -198,7 +262,19 @@ mod tests {
             primitive_bounds(&primitives[1]),
             Some(Rect::new(2.0, 4.0, 6.0, 8.0))
         );
+        assert_eq!(rows[2].kind, PrimitiveKind::Shadow);
+        assert_eq!(
+            primitive_bounds(&primitives[2]),
+            Some(Rect::new(-1.0, 0.0, 44.0, 44.0))
+        );
+        assert_eq!(rows[3].kind, PrimitiveKind::Path);
+        assert_eq!(
+            primitive_bounds(&primitives[3]),
+            Some(Rect::new(1.0, 2.0, 6.0, 4.0))
+        );
         assert!(rows[1].summary.contains("line"));
+        assert!(rows[2].summary.contains("shadow"));
+        assert!(rows[3].summary.contains("path"));
     }
 
     #[test]

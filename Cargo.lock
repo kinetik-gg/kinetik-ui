@@ -921,29 +921,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "kinetik-ui"
+version = "0.1.0"
+dependencies = [
+ "kinetik-ui-core",
+ "kinetik-ui-render",
+ "kinetik-ui-text",
+ "kinetik-ui-vello",
+ "kinetik-ui-widgets",
+ "kinetik-ui-winit",
+]
+
+[[package]]
 name = "kinetik-ui-core"
 version = "0.1.0"
 
 [[package]]
-name = "kinetik-ui-platform-winit"
+name = "kinetik-ui-render"
 version = "0.1.0"
 dependencies = [
  "kinetik-ui-core",
- "winit",
-]
-
-[[package]]
-name = "kinetik-ui-render-vello"
-version = "0.1.0"
-dependencies = [
- "kinetik-ui-core",
- "vello",
+ "kinetik-ui-text",
 ]
 
 [[package]]
 name = "kinetik-ui-showcase"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "kinetik-ui-core",
  "kinetik-ui-text",
  "kinetik-ui-widgets",
@@ -959,11 +964,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "kinetik-ui-vello"
+version = "0.1.0"
+dependencies = [
+ "kinetik-ui-core",
+ "kinetik-ui-render",
+ "kinetik-ui-text",
+ "vello",
+]
+
+[[package]]
 name = "kinetik-ui-widgets"
 version = "0.1.0"
 dependencies = [
  "kinetik-ui-core",
  "kinetik-ui-text",
+]
+
+[[package]]
+name = "kinetik-ui-winit"
+version = "0.1.0"
+dependencies = [
+ "kinetik-ui-core",
+ "winit",
 ]
 
 [[package]]

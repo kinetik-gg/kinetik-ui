@@ -37,15 +37,27 @@ impl SizeRule {
     /// Resolves this rule against available and measured sizes.
     #[must_use]
     pub fn resolve(self, available: f32, measured: f32, cross: f32) -> f32 {
-        match self {
+        sanitize_size(match self {
             Self::Fixed(value) => value,
             Self::Fit => measured,
             Self::Fill => available,
-            Self::Percent(value) => available * value,
-            Self::MinMax { min, max } => measured.clamp(min, max),
-            Self::AspectRatio(ratio) => cross * ratio,
-        }
-        .max(0.0)
+            Self::Percent(value) => sanitize_size(available) * sanitize_size(value),
+            Self::MinMax { min, max } => {
+                let min = sanitize_size(min);
+                let max = sanitize_size(max);
+                let (min, max) = if min <= max { (min, max) } else { (max, min) };
+                sanitize_size(measured).clamp(min, max)
+            }
+            Self::AspectRatio(ratio) => sanitize_size(cross) * sanitize_size(ratio),
+        })
+    }
+}
+
+fn sanitize_size(value: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
     }
 }
 
@@ -264,11 +276,8 @@ fn linear_layout(axis: Axis, rect: Rect, items: &[LayoutItem], spacing: f32) -> 
         .iter()
         .filter(|item| item.main_rule(axis) != SizeRule::Fill)
         .map(|item| {
-            item.main_rule(axis).resolve(
-                available_without_spacing,
-                item.measured_main(axis),
-                cross_available,
-            )
+            item.main_rule(axis)
+                .resolve(main_available, item.measured_main(axis), cross_available)
         })
         .sum::<f32>();
 
@@ -285,11 +294,8 @@ fn linear_layout(axis: Axis, rect: Rect, items: &[LayoutItem], spacing: f32) -> 
         let main = if item.main_rule(axis) == SizeRule::Fill {
             fill_size
         } else {
-            item.main_rule(axis).resolve(
-                available_without_spacing,
-                item.measured_main(axis),
-                cross_available,
-            )
+            item.main_rule(axis)
+                .resolve(main_available, item.measured_main(axis), cross_available)
         };
         let cross = item
             .cross_rule(axis)
@@ -360,6 +366,24 @@ mod tests {
             30.0
         );
         assert_eq!(SizeRule::AspectRatio(2.0).resolve(100.0, 20.0, 30.0), 60.0);
+    }
+
+    #[test]
+    fn size_rules_sanitize_invalid_constraints() {
+        assert_eq!(
+            SizeRule::MinMax {
+                min: 30.0,
+                max: 10.0
+            }
+            .resolve(100.0, 20.0, 30.0),
+            20.0
+        );
+        assert_eq!(SizeRule::Fixed(f32::NAN).resolve(100.0, 20.0, 30.0), 0.0);
+        assert_eq!(SizeRule::Percent(f32::NAN).resolve(100.0, 20.0, 30.0), 0.0);
+        assert_eq!(
+            SizeRule::AspectRatio(f32::NAN).resolve(100.0, 20.0, 30.0),
+            0.0
+        );
     }
 
     #[test]
@@ -440,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn percent_layout_uses_available_space_after_spacing() {
+    fn percent_layout_uses_parent_available_space() {
         let rect = Rect::new(0.0, 0.0, 100.0, 10.0);
         let items = [
             item(SizeRule::Percent(0.5), SizeRule::Fill, Size::ZERO),
@@ -450,8 +474,8 @@ mod tests {
         assert_eq!(
             row_layout(rect, &items, 10.0),
             vec![
-                Rect::new(0.0, 0.0, 45.0, 10.0),
-                Rect::new(55.0, 0.0, 45.0, 10.0),
+                Rect::new(0.0, 0.0, 50.0, 10.0),
+                Rect::new(60.0, 0.0, 40.0, 10.0),
             ]
         );
     }

@@ -6,21 +6,38 @@
 )]
 
 use kinetik_ui_core::{
-    Brush, Color, CornerRadius, ImageId, ImagePrimitive, LinePrimitive, Point, Primitive, Rect,
-    RectPrimitive, Stroke, TextPrimitive, TextureId, TexturePrimitive,
+    ActionContext, ActionDescriptor, ActionQueue, ActionSource, Axis, Brush, ClipId, Color,
+    CornerRadius, ImageId, Key, KeyEvent, KeyState, LayoutItem, LinePrimitive, LinearGradient,
+    Measurement, Modifiers, PathElement, Point, PointerButtonState, PointerInput, Primitive, Rect,
+    RectPrimitive, ShadowPrimitive, Size, SizeRule, Stroke, TextInputEvent, TextPrimitive,
+    TextureId, TexturePrimitive, Transform, UiInput, UiMemory, Vec2, column_layout,
+    default_dark_theme, inspect_primitives, row_layout,
 };
+use kinetik_ui_text::TextEditState;
+use kinetik_ui_widgets::{
+    CommandPalette, Crosshair, DockArea, DockNode, Frame, FrameId, GridColumns, GridLayout, Guide,
+    IconId, ItemId, ListLayout, Menu, OverlayDismissal, OverlayEntry, OverlayId, OverlayKind,
+    OverlayStack, PanZoom, Panel, PanelId, PopoverPlacement, PopoverRequest, TableColumn,
+    TableLayout, Ui, ViewportComposition, ViewportSurface, frame_tabs, place_popover,
+    solve_dock_layout,
+};
+
+const BASE_WIDTH: f32 = 1440.0;
+const BASE_HEIGHT: f32 = 900.0;
+const MIN_VIEWPORT_WIDTH: f32 = 1.0;
+const MIN_VIEWPORT_HEIGHT: f32 = 1.0;
 
 /// Available showcase pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShowcasePage {
     /// Component gallery and controls.
     Components,
-    /// Layout and collection primitives.
+    /// Layout, docking, and collection primitives.
     Layout,
     /// Viewport/media surface primitives.
     Viewport,
-    /// Editor-style integration demo.
-    EditorDemo,
+    /// Actions, overlays, diagnostics, and stress.
+    Systems,
 }
 
 impl ShowcasePage {
@@ -29,20 +46,9 @@ impl ShowcasePage {
             Self::Components => "Components",
             Self::Layout => "Layout",
             Self::Viewport => "Viewport",
-            Self::EditorDemo => "Editor demo",
+            Self::Systems => "Systems",
         }
     }
-}
-
-/// Text field focus target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FocusField {
-    /// Search box.
-    Search,
-    /// Single-line text field.
-    Name,
-    /// Numeric field.
-    Number,
 }
 
 /// Window/input snapshot consumed by the showcase.
@@ -50,6 +56,8 @@ pub enum FocusField {
 pub struct ShowcaseInput {
     /// Mouse position in logical pixels.
     pub mouse: Option<Point>,
+    /// Current window or render target size in physical pixels.
+    pub viewport_size: Option<Size>,
     /// Whether the primary button is down.
     pub mouse_down: bool,
     /// Characters typed this frame.
@@ -64,9 +72,10 @@ pub struct ShowcaseInput {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShowcaseApp {
     page: ShowcasePage,
+    memory: UiMemory,
     previous_mouse_down: bool,
-    active_slider: Option<&'static str>,
-    focus: Option<FocusField>,
+    previous_mouse: Option<Point>,
+    viewport_size: Size,
     action_count: u32,
     selected_row: usize,
     selected_tab: usize,
@@ -75,19 +84,23 @@ pub struct ShowcaseApp {
     radio: usize,
     strength: f32,
     zoom: f32,
-    name: String,
-    number: String,
-    search: String,
+    stress: usize,
+    name: TextEditState,
+    number: TextEditState,
+    search: TextEditState,
+    notes: TextEditState,
     status: String,
+    primitives: Vec<Primitive>,
 }
 
 impl Default for ShowcaseApp {
     fn default() -> Self {
-        Self {
+        let mut app = Self {
             page: ShowcasePage::Components,
+            memory: UiMemory::new(),
             previous_mouse_down: false,
-            active_slider: None,
-            focus: None,
+            previous_mouse: None,
+            viewport_size: Size::new(BASE_WIDTH, BASE_HEIGHT),
             action_count: 0,
             selected_row: 1,
             selected_tab: 0,
@@ -96,11 +109,16 @@ impl Default for ShowcaseApp {
             radio: 0,
             strength: 0.62,
             zoom: 0.48,
-            name: "Project".to_owned(),
-            number: "42".to_owned(),
-            search: "media".to_owned(),
+            stress: 128,
+            name: TextEditState::new("Workspace"),
+            number: TextEditState::new("42"),
+            search: TextEditState::new("layout"),
+            notes: TextEditState::new("First line\nSecond line"),
             status: "Ready".to_owned(),
-        }
+            primitives: Vec::new(),
+        };
+        app.redraw_idle();
+        app
     }
 }
 
@@ -117,6 +135,25 @@ impl ShowcaseApp {
         self.page
     }
 
+    /// Selects a page and redraws without input.
+    pub fn set_page(&mut self, page: ShowcasePage) {
+        self.page = page;
+        self.status = format!("Page: {}", page.label());
+        self.redraw_idle();
+    }
+
+    /// Parses a page name used by showcase tooling.
+    #[must_use]
+    pub fn page_from_name(name: &str) -> Option<ShowcasePage> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "components" | "component" => Some(ShowcasePage::Components),
+            "layout" | "layouts" => Some(ShowcasePage::Layout),
+            "viewport" | "viewports" => Some(ShowcasePage::Viewport),
+            "systems" | "system" => Some(ShowcasePage::Systems),
+            _ => None,
+        }
+    }
+
     /// Action invocation count.
     #[must_use]
     pub const fn action_count(&self) -> u32 {
@@ -129,524 +166,1077 @@ impl ShowcaseApp {
         self.strength
     }
 
+    /// Viewport zoom slider value.
+    #[must_use]
+    pub const fn zoom(&self) -> f32 {
+        self.zoom
+    }
+
+    /// Current viewport size.
+    #[must_use]
+    pub const fn viewport_size(&self) -> Size {
+        self.viewport_size
+    }
+
+    /// Sets the viewport size used for primitive scaling and input mapping.
+    pub fn set_viewport_size(&mut self, size: Size) {
+        let size = sanitize_viewport_size(size);
+        if self.viewport_size == size {
+            return;
+        }
+        self.viewport_size = size;
+        self.previous_mouse = None;
+        self.redraw_idle();
+    }
+
     /// Current search query.
     #[must_use]
     pub fn search(&self) -> &str {
-        &self.search
+        &self.search.text
     }
 
-    /// Applies input and updates state.
+    /// Current multi-line notes text.
+    #[must_use]
+    pub fn notes(&self) -> &str {
+        &self.notes.text
+    }
+
+    /// Applies input and updates the cached primitive stream.
     pub fn update(&mut self, input: &ShowcaseInput) {
-        let clicked = input.mouse_down && !self.previous_mouse_down;
-        if clicked {
-            self.focus = None;
+        let viewport_changed = input.viewport_size.is_some_and(|size| {
+            let size = sanitize_viewport_size(size);
+            size != self.viewport_size
+        });
+        if let Some(size) = input.viewport_size {
+            self.viewport_size = sanitize_viewport_size(size);
         }
 
-        if let Some(mouse) = input.mouse {
-            self.handle_pointer(mouse, input.mouse_down, clicked);
+        let ui_input = self.to_ui_input(input, viewport_changed);
+
+        if input.enter {
+            self.invoke_action("keyboard.enter", ActionSource::Shortcut);
         }
-        if !input.mouse_down {
-            self.active_slider = None;
-        }
-        self.handle_keyboard(input);
+
+        self.memory.begin_frame();
+        let primitives = self.frame(&ui_input);
+        self.primitives = self.scale_primitives(primitives);
         self.previous_mouse_down = input.mouse_down;
+        self.previous_mouse = self.pointer_to_design(input.mouse);
     }
 
     /// Builds the current primitive stream.
     #[must_use]
     pub fn primitives(&self) -> Vec<Primitive> {
-        let mut primitives = Vec::new();
-        self.chrome(&mut primitives);
-        match self.page {
-            ShowcasePage::Components => self.components_page(&mut primitives),
-            ShowcasePage::Layout => Self::layout_page(&mut primitives),
-            ShowcasePage::Viewport => self.viewport_page(&mut primitives),
-            ShowcasePage::EditorDemo => Self::editor_demo_page(&mut primitives),
-        }
+        self.primitives.clone()
+    }
+
+    fn redraw_idle(&mut self) {
+        let input = UiInput::default();
+        self.memory.begin_frame();
+        let primitives = self.frame(&input);
+        self.primitives = self.scale_primitives(primitives);
+    }
+
+    fn frame(&mut self, input: &UiInput) -> Vec<Primitive> {
+        let theme = default_dark_theme();
+        let mut memory = std::mem::take(&mut self.memory);
+        let primitives = {
+            let mut ui = Ui::new(input, &mut memory, &theme);
+
+            Self::app_background(&mut ui);
+            self.chrome(&mut ui);
+            match self.page {
+                ShowcasePage::Components => self.components_page(&mut ui),
+                ShowcasePage::Layout => Self::layout_page(&mut ui),
+                ShowcasePage::Viewport => self.viewport_page(&mut ui),
+                ShowcasePage::Systems => self.systems_page(&mut ui),
+            }
+
+            ui.finish()
+        };
+        self.memory = memory;
         primitives
     }
 
-    fn handle_pointer(&mut self, mouse: Point, down: bool, clicked: bool) {
-        for (page, rect) in nav_items() {
-            if clicked && rect.contains_point(mouse) {
-                self.page = page;
-                self.status = format!("Page: {}", page.label());
+    fn to_ui_input(&self, input: &ShowcaseInput, viewport_changed: bool) -> UiInput {
+        let mouse = self.pointer_to_design(input.mouse);
+        let pressed = input.mouse_down && !self.previous_mouse_down;
+        let released = !input.mouse_down && self.previous_mouse_down;
+        let delta = match (mouse, self.previous_mouse) {
+            _ if viewport_changed => Vec2::ZERO,
+            (Some(current), Some(previous)) => {
+                Vec2::new(current.x - previous.x, current.y - previous.y)
             }
-        }
-
-        if clicked && Rect::new(40.0, 144.0, 128.0, 30.0).contains_point(mouse) {
-            self.action_count += 1;
-            self.status = format!("Analyze clicked {}", self.action_count);
-        }
-        if clicked && Rect::new(188.0, 144.0, 30.0, 30.0).contains_point(mouse) {
-            self.checkbox = !self.checkbox;
-            self.status = format!("Checkbox: {}", self.checkbox);
-        }
-        if clicked && Rect::new(238.0, 148.0, 54.0, 24.0).contains_point(mouse) {
-            self.toggle = !self.toggle;
-            self.status = format!("Toggle: {}", self.toggle);
-        }
-        for (index, rect) in [
-            Rect::new(320.0, 146.0, 22.0, 22.0),
-            Rect::new(410.0, 146.0, 22.0, 22.0),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            if clicked && rect.contains_point(mouse) {
-                self.radio = index;
-                self.status = format!("Radio option {}", index + 1);
-            }
-        }
-        for (field, rect) in [
-            (FocusField::Search, Rect::new(40.0, 90.0, 260.0, 30.0)),
-            (FocusField::Name, Rect::new(40.0, 232.0, 220.0, 30.0)),
-            (FocusField::Number, Rect::new(280.0, 232.0, 120.0, 30.0)),
-        ] {
-            if clicked && rect.contains_point(mouse) {
-                self.focus = Some(field);
-                self.status = format!("Focused {field:?}");
-            }
-        }
-        self.slider(
-            mouse,
-            down,
-            clicked,
-            "strength",
-            Rect::new(40.0, 196.0, 260.0, 18.0),
-        );
-        self.slider(
-            mouse,
-            down,
-            clicked,
-            "zoom",
-            Rect::new(940.0, 634.0, 260.0, 18.0),
-        );
-
-        for (index, y) in [356.0, 384.0, 412.0, 440.0].into_iter().enumerate() {
-            if clicked && Rect::new(40.0, y, 300.0, 24.0).contains_point(mouse) {
-                self.selected_row = index;
-                self.status = format!("Selected row {}", index + 1);
-            }
-        }
-        for (index, x) in [740.0, 850.0, 960.0].into_iter().enumerate() {
-            if clicked && Rect::new(x, 92.0, 100.0, 28.0).contains_point(mouse) {
-                self.selected_tab = index;
-                self.status = format!("Tab {}", index + 1);
-            }
-        }
-    }
-
-    fn slider(&mut self, mouse: Point, down: bool, clicked: bool, id: &'static str, rect: Rect) {
-        if clicked && rect.contains_point(mouse) {
-            self.active_slider = Some(id);
-        }
-        if down && self.active_slider == Some(id) {
-            let value = ((mouse.x - rect.x) / rect.width).clamp(0.0, 1.0);
-            match id {
-                "strength" => self.strength = value,
-                "zoom" => self.zoom = value,
-                _ => {}
-            }
-            self.status = format!("{id}: {value:.2}");
-        }
-    }
-
-    fn handle_keyboard(&mut self, input: &ShowcaseInput) {
-        if input.enter {
-            self.action_count += 1;
-            self.status = format!("Enter action {}", self.action_count);
-        }
-        let Some(field) = self.focus else {
-            return;
+            _ => Vec2::ZERO,
         };
-        let target = match field {
-            FocusField::Search => &mut self.search,
-            FocusField::Name => &mut self.name,
-            FocusField::Number => &mut self.number,
-        };
+        let mut events = Vec::new();
         if input.backspace {
-            target.pop();
+            events.push(KeyEvent::new(
+                Key::Backspace,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            ));
         }
-        for character in &input.typed {
-            if field == FocusField::Number && !character.is_ascii_digit() && *character != '.' {
-                continue;
-            }
-            target.push(*character);
+        if input.enter {
+            events.push(KeyEvent::new(
+                Key::Enter,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            ));
+        }
+        let committed = input.typed.iter().collect::<String>();
+        let text_events = if committed.is_empty() {
+            Vec::new()
+        } else {
+            vec![TextInputEvent::Commit(committed)]
+        };
+
+        UiInput {
+            pointer: PointerInput {
+                position: mouse,
+                delta,
+                primary: PointerButtonState::new(input.mouse_down, pressed, released),
+                ..PointerInput::default()
+            },
+            keyboard: kinetik_ui_core::KeyboardInput {
+                modifiers: Modifiers::default(),
+                events,
+            },
+            text_events,
+            window_focused: true,
         }
     }
 
-    fn chrome(&self, primitives: &mut Vec<Primitive>) {
+    fn pointer_to_design(&self, point: Option<Point>) -> Option<Point> {
+        let scale_x = self.viewport_size.width / BASE_WIDTH;
+        let scale_y = self.viewport_size.height / BASE_HEIGHT;
+
+        point.map(|point| Point::new(point.x / scale_x, point.y / scale_y))
+    }
+
+    fn scale_primitives(&self, primitives: Vec<Primitive>) -> Vec<Primitive> {
+        let scale_x = self.viewport_size.width / BASE_WIDTH;
+        let scale_y = self.viewport_size.height / BASE_HEIGHT;
+        let text_scale = ((scale_x + scale_y) * 0.5).max(0.25);
+
+        primitives
+            .into_iter()
+            .map(|primitive| scale_primitive(primitive, scale_x, scale_y, text_scale))
+            .collect()
+    }
+
+    fn invoke_action(&mut self, id: &str, source: ActionSource) {
+        self.action_count += 1;
+        self.status = format!("{id} via {source:?} ({})", self.action_count);
+    }
+
+    fn app_background(ui: &mut Ui<'_>) {
         rect(
-            primitives,
-            Rect::new(0.0, 0.0, 1440.0, 900.0),
+            ui,
+            Rect::new(0.0, 0.0, BASE_WIDTH, BASE_HEIGHT),
             rgb(12, 12, 13),
             None,
         );
+    }
+
+    fn chrome(&mut self, ui: &mut Ui<'_>) {
         rect(
-            primitives,
-            Rect::new(0.0, 0.0, 1440.0, 52.0),
+            ui,
+            Rect::new(0.0, 0.0, BASE_WIDTH, 52.0),
             rgb(20, 20, 22),
             Some(rgb(58, 58, 62)),
         );
         text(
-            primitives,
+            ui,
             20.0,
             32.0,
             "Kinetik UI Showcase",
             14.0,
             rgb(238, 238, 238),
         );
-        text(
-            primitives,
-            1110.0,
-            32.0,
-            &self.status,
-            11.0,
-            rgb(160, 160, 164),
-        );
+        text(ui, 1080.0, 32.0, &self.status, 11.0, rgb(160, 160, 164));
+
         for (page, item) in nav_items() {
-            let active = self.page == page;
-            rect(
-                primitives,
+            let response = ui.tab_button(
+                ("nav", page as u8),
                 item,
-                if active {
-                    rgb(42, 96, 224)
-                } else {
-                    rgb(30, 30, 33)
-                },
-                Some(rgb(72, 72, 76)),
-            );
-            text(
-                primitives,
-                item.x + 12.0,
-                item.y + 19.0,
                 page.label(),
-                11.0,
-                rgb(236, 236, 236),
+                self.page == page,
+                false,
             );
+            if response.clicked {
+                self.page = page;
+                self.status = format!("Page: {}", page.label());
+            }
         }
     }
 
-    fn components_page(&self, primitives: &mut Vec<Primitive>) {
-        text(
-            primitives,
-            40.0,
-            86.0,
-            "Interactive controls",
-            18.0,
-            rgb(242, 242, 244),
+    fn components_page(&mut self, ui: &mut Ui<'_>) {
+        section_title(ui, 40.0, 86.0, "Component Gallery");
+        self.component_controls(ui);
+        self.component_text_inputs(ui);
+        self.collection_preview(ui);
+        self.tabs_preview(ui);
+        Self::primitive_preview(ui);
+    }
+
+    fn component_controls(&mut self, ui: &mut Ui<'_>) {
+        panel_title(ui, Rect::new(40.0, 104.0, 620.0, 218.0), "Controls");
+
+        let run = ui.button(
+            "components.run-action",
+            Rect::new(60.0, 144.0, 128.0, 30.0),
+            "Run Action",
+            false,
         );
-        input_box(
-            primitives,
-            Rect::new(40.0, 90.0, 260.0, 30.0),
-            &self.search,
-            self.focus == Some(FocusField::Search),
-            "Search",
-        );
-        button(
-            primitives,
-            Rect::new(40.0, 144.0, 128.0, 30.0),
-            "Analyze",
+        if run.clicked {
+            self.invoke_action("components.run", ActionSource::Button);
+        }
+
+        let disabled = ui.button(
+            "components.disabled",
+            Rect::new(204.0, 144.0, 128.0, 30.0),
+            "Disabled",
             true,
         );
-        checkbox(
-            primitives,
-            Rect::new(188.0, 144.0, 30.0, 30.0),
+        if disabled.clicked {
+            "Disabled button should not invoke".clone_into(&mut self.status);
+        }
+
+        let checkbox = ui.checkbox(
+            "components.checkbox",
+            Rect::new(60.0, 192.0, 22.0, 22.0),
             self.checkbox,
-            "Check",
+            false,
         );
-        toggle(primitives, Rect::new(238.0, 148.0, 54.0, 24.0), self.toggle);
-        radio(
-            primitives,
-            Rect::new(320.0, 146.0, 22.0, 22.0),
-            self.radio == 0,
-            "Radio A",
-        );
-        radio(
-            primitives,
-            Rect::new(410.0, 146.0, 22.0, 22.0),
-            self.radio == 1,
-            "Radio B",
-        );
-        slider(
-            primitives,
-            Rect::new(40.0, 196.0, 260.0, 18.0),
-            self.strength,
-            "Slider",
-        );
-        input_box(
-            primitives,
-            Rect::new(40.0, 232.0, 220.0, 30.0),
-            &self.name,
-            self.focus == Some(FocusField::Name),
-            "Text field",
-        );
-        input_box(
-            primitives,
-            Rect::new(280.0, 232.0, 120.0, 30.0),
-            &self.number,
-            self.focus == Some(FocusField::Number),
-            "Numeric",
-        );
-        self.collection_demo(primitives);
-        Self::primitive_demo(primitives);
-        self.tab_demo(primitives);
-    }
+        if checkbox.clicked {
+            self.checkbox = !self.checkbox;
+            self.status = format!("Checkbox: {}", self.checkbox);
+        }
+        ui.label(Rect::new(92.0, 190.0, 90.0, 20.0), "Checkbox");
 
-    fn collection_demo(&self, primitives: &mut Vec<Primitive>) {
-        text(
-            primitives,
-            40.0,
-            332.0,
-            "List, grid, and table",
-            16.0,
-            rgb(230, 230, 232),
+        let toggle = ui.toggle(
+            "components.toggle",
+            Rect::new(204.0, 192.0, 54.0, 24.0),
+            self.toggle,
+            false,
         );
-        for (index, y, label) in [
-            (0, 356.0, "Asset: plate.mov"),
-            (1, 384.0, "Asset: foreground.exr"),
-            (2, 412.0, "Asset: mask.png"),
-            (3, 440.0, "Asset: output.mp4"),
-        ] {
-            rect(
-                primitives,
-                Rect::new(40.0, y, 300.0, 24.0),
-                if self.selected_row == index {
-                    rgb(42, 96, 224)
-                } else {
-                    rgb(26, 26, 29)
-                },
-                Some(rgb(58, 58, 62)),
+        if toggle.clicked {
+            self.toggle = !self.toggle;
+            self.status = format!("Toggle: {}", self.toggle);
+        }
+        ui.label(Rect::new(270.0, 190.0, 70.0, 20.0), "Toggle");
+
+        for (index, x, label) in [(0, 60.0, "Radio A"), (1, 160.0, "Radio B")] {
+            let response = ui.radio_button(
+                ("components.radio", index),
+                Rect::new(x, 238.0, 20.0, 20.0),
+                self.radio == index,
+                false,
             );
-            text(primitives, 52.0, y + 17.0, label, 10.0, rgb(232, 232, 232));
-        }
-        for row in 0..3 {
-            for col in 0..4 {
-                let x = 380.0 + col as f32 * 54.0;
-                let y = 356.0 + row as f32 * 42.0;
-                rect(
-                    primitives,
-                    Rect::new(x, y, 42.0, 30.0),
-                    rgb(36, 38, 42),
-                    Some(rgb(70, 70, 74)),
-                );
+            if response.clicked {
+                self.radio = index;
+                self.status = format!("Radio: {label}");
             }
+            ui.label(Rect::new(x + 30.0, 236.0, 70.0, 20.0), label);
         }
-        for row in 0..4 {
-            for col in 0..3 {
-                let x = 620.0 + col as f32 * 120.0;
-                let y = 348.0 + row as f32 * 28.0;
-                rect(
-                    primitives,
-                    Rect::new(x, y, 118.0, 26.0),
-                    rgb(24, 24, 27),
-                    Some(rgb(58, 58, 62)),
-                );
-                text(
-                    primitives,
-                    x + 8.0,
-                    y + 17.0,
-                    &format!("R{row} C{col}"),
-                    9.0,
-                    rgb(206, 206, 210),
-                );
-            }
-        }
-    }
 
-    fn primitive_demo(primitives: &mut Vec<Primitive>) {
+        let before = self.strength;
+        ui.slider(
+            "components.slider",
+            Rect::new(360.0, 152.0, 240.0, 16.0),
+            &mut self.strength,
+            0.0..=1.0,
+            false,
+        );
         text(
-            primitives,
-            40.0,
-            540.0,
-            "Primitives",
-            16.0,
-            rgb(230, 230, 232),
+            ui,
+            360.0,
+            142.0,
+            &format!("Slider: {:.2}", self.strength),
+            10.0,
+            rgb(210, 210, 214),
         );
-        rect(
-            primitives,
-            Rect::new(40.0, 560.0, 120.0, 72.0),
-            rgb(46, 48, 54),
-            Some(rgb(120, 120, 126)),
+        if (before - self.strength).abs() > f32::EPSILON {
+            self.status = format!("Slider: {:.2}", self.strength);
+        }
+
+        ui.icon_button(
+            "components.icon",
+            Rect::new(360.0, 196.0, 32.0, 32.0),
+            IconId::from_raw(1),
+            false,
         );
-        primitives.push(Primitive::Line(LinePrimitive {
-            from: Point::new(180.0, 560.0),
-            to: Point::new(300.0, 632.0),
-            stroke: Stroke::new(2.0, Brush::Solid(color(rgb(230, 230, 230)))),
-        }));
-        primitives.push(Primitive::Image(ImagePrimitive {
-            image: ImageId::from_raw(11),
-            rect: Rect::new(320.0, 560.0, 96.0, 72.0),
-        }));
-        text(
-            primitives,
-            440.0,
-            595.0,
-            "Text primitive",
-            13.0,
-            rgb(238, 238, 238),
-        );
-        border(
-            primitives,
-            Rect::new(600.0, 560.0, 140.0, 72.0),
-            rgb(92, 132, 240),
+        ui.label(Rect::new(404.0, 202.0, 90.0, 20.0), "Icon button");
+        ui.image(Rect::new(512.0, 190.0, 54.0, 42.0), ImageId::from_raw(7));
+        ui.label(Rect::new(512.0, 246.0, 120.0, 20.0), "Image primitive");
+
+        Self::state_strip(
+            ui,
+            Rect::new(60.0, 276.0, 540.0, 24.0),
+            &format!(
+                "checkbox={} toggle={} radio={} selected_row={}",
+                self.checkbox,
+                self.toggle,
+                self.radio + 1,
+                self.selected_row + 1
+            ),
         );
     }
 
-    fn tab_demo(&self, primitives: &mut Vec<Primitive>) {
-        text(
-            primitives,
-            740.0,
-            86.0,
-            "Tabs and reusable panels",
-            16.0,
-            rgb(230, 230, 232),
+    fn component_text_inputs(&mut self, ui: &mut Ui<'_>) {
+        panel_title(ui, Rect::new(700.0, 104.0, 500.0, 218.0), "Text Input");
+
+        text(ui, 720.0, 142.0, "Search", 10.0, rgb(190, 190, 194));
+        let search = ui.search_field(
+            "components.search",
+            Rect::new(720.0, 150.0, 230.0, 30.0),
+            &mut self.search,
+            false,
         );
+        if search.field.changed {
+            self.status = format!("Search: {}", search.query);
+        }
+
+        text(ui, 720.0, 206.0, "Text field", 10.0, rgb(190, 190, 194));
+        let name = ui.text_field(
+            "components.name",
+            Rect::new(720.0, 214.0, 190.0, 30.0),
+            &mut self.name,
+            false,
+        );
+        if name.changed {
+            self.status = format!("Name: {}", self.name.text);
+        }
+
+        text(ui, 960.0, 206.0, "Numeric", 10.0, rgb(190, 190, 194));
+        let number = ui.numeric_input(
+            "components.number",
+            Rect::new(960.0, 214.0, 120.0, 30.0),
+            &mut self.number,
+            false,
+        );
+        if number.field.changed {
+            self.status = if number.valid {
+                format!("Number: {}", self.number.text)
+            } else {
+                "Number field is invalid".to_owned()
+            };
+        }
+
+        text(ui, 720.0, 270.0, "Multi-line", 10.0, rgb(190, 190, 194));
+        let notes = ui.multi_line_text_field(
+            "components.notes",
+            Rect::new(720.0, 278.0, 360.0, 38.0),
+            &mut self.notes,
+            false,
+        );
+        if notes.changed {
+            self.status = format!("Notes: {} lines", self.notes.text.lines().count());
+        }
+
+        text(
+            ui,
+            1092.0,
+            306.0,
+            "Local undo state",
+            10.0,
+            rgb(160, 160, 164),
+        );
+    }
+
+    fn collection_preview(&mut self, ui: &mut Ui<'_>) {
+        panel_title(
+            ui,
+            Rect::new(40.0, 350.0, 560.0, 190.0),
+            "Lists, Grids, Tables",
+        );
+
+        let list = ListLayout::new(28.0);
+        let labels = [
+            "Row: primary surface",
+            "Row: selected state",
+            "Row: cached resource",
+            "Row: async result",
+        ];
+        for row in list.row_rects(Rect::new(60.0, 390.0, 260.0, 112.0), labels.len(), 0..4) {
+            let response = ui.list_row(
+                ("components.list-row", row.index),
+                row.rect,
+                labels[row.index],
+                self.selected_row == row.index,
+                false,
+            );
+            if response.clicked {
+                self.selected_row = row.index;
+                self.status = format!("Selected row {}", row.index + 1);
+            }
+        }
+
+        let grid = GridLayout {
+            columns: GridColumns::Fixed(4),
+            item_size: Size::new(42.0, 30.0),
+            gap: 12.0,
+        };
+        for item in grid.item_rects(Rect::new(350.0, 390.0, 220.0, 120.0), 12, 0..12) {
+            rect(ui, item.rect, rgb(36, 38, 42), Some(rgb(70, 70, 74)));
+        }
+    }
+
+    fn tabs_preview(&mut self, ui: &mut Ui<'_>) {
+        panel_title(
+            ui,
+            Rect::new(640.0, 350.0, 560.0, 190.0),
+            "Reusable Panel States",
+        );
+
         for (index, x, label) in [
-            (0, 740.0, "Theme"),
-            (1, 850.0, "State"),
-            (2, 960.0, "Actions"),
+            (0, 660.0, "Theme"),
+            (1, 780.0, "State"),
+            (2, 900.0, "Actions"),
         ] {
-            rect(
-                primitives,
-                Rect::new(x, 92.0, 100.0, 28.0),
-                if self.selected_tab == index {
-                    rgb(42, 96, 224)
-                } else {
-                    rgb(28, 28, 31)
-                },
-                Some(rgb(70, 70, 74)),
+            let response = ui.tab_button(
+                ("components.tab", index),
+                Rect::new(x, 390.0, 108.0, 30.0),
+                label,
+                self.selected_tab == index,
+                false,
             );
-            text(primitives, x + 18.0, 111.0, label, 10.0, rgb(238, 238, 238));
+            if response.clicked {
+                self.selected_tab = index;
+                self.status = format!("Tab: {label}");
+            }
         }
+
+        let body = match self.selected_tab {
+            0 => "Theme tokens drive controls, panels, borders, text, and selection colors.",
+            1 => "Every visible control mutates showcase state through widget responses.",
+            _ => "Actions should resolve from buttons, shortcuts, menus, and palettes.",
+        };
         rect(
-            primitives,
-            Rect::new(740.0, 120.0, 420.0, 140.0),
+            ui,
+            Rect::new(660.0, 430.0, 500.0, 82.0),
             rgb(22, 22, 25),
             Some(rgb(62, 62, 66)),
         );
-        let body = match self.selected_tab {
-            0 => "Theme tokens drive controls, panels, borders, and text.",
-            1 => "Every control here mutates app state and redraws.",
-            _ => "Actions can be invoked from buttons, keys, and menus.",
-        };
-        text(primitives, 760.0, 156.0, body, 11.0, rgb(224, 224, 226));
+        text(ui, 680.0, 462.0, body, 11.0, rgb(224, 224, 226));
         text(
-            primitives,
-            760.0,
-            190.0,
+            ui,
+            680.0,
+            492.0,
             &format!("Actions: {}", self.action_count),
             12.0,
             rgb(144, 184, 255),
         );
     }
 
-    fn layout_page(primitives: &mut Vec<Primitive>) {
-        text(
-            primitives,
-            40.0,
-            90.0,
-            "Layout primitives",
-            18.0,
-            rgb(242, 242, 244),
+    fn primitive_preview(ui: &mut Ui<'_>) {
+        panel_title(
+            ui,
+            Rect::new(40.0, 570.0, 1160.0, 230.0),
+            "Primitive Stream",
         );
-        for (index, width) in [180.0, 260.0, 120.0].into_iter().enumerate() {
-            rect(
-                primitives,
-                Rect::new(40.0, 130.0 + index as f32 * 58.0, width, 42.0),
-                rgb(36, 42, 50),
-                Some(rgb(90, 110, 140)),
-            );
+        rect(
+            ui,
+            Rect::new(64.0, 618.0, 120.0, 72.0),
+            rgb(46, 48, 54),
+            Some(rgb(120, 120, 126)),
+        );
+        line(
+            ui,
+            Point::new(210.0, 618.0),
+            Point::new(330.0, 690.0),
+            rgb(230, 230, 230),
+            2.0,
+        );
+        ui.image(Rect::new(360.0, 618.0, 96.0, 72.0), ImageId::from_raw(11));
+        text(ui, 500.0, 660.0, "Text primitive", 13.0, rgb(238, 238, 238));
+        rect(
+            ui,
+            Rect::new(700.0, 618.0, 140.0, 72.0),
+            rgb(12, 12, 13),
+            Some(rgb(92, 132, 240)),
+        );
+        ui.separator(Rect::new(880.0, 650.0, 220.0, 12.0));
+    }
+
+    fn state_strip(ui: &mut Ui<'_>, bounds: Rect, value: &str) {
+        rect(ui, bounds, rgb(22, 22, 25), Some(rgb(58, 58, 62)));
+        text(
+            ui,
+            bounds.x + 10.0,
+            bounds.y + 16.0,
+            value,
+            10.0,
+            rgb(190, 190, 194),
+        );
+    }
+
+    fn layout_page(ui: &mut Ui<'_>) {
+        section_title(ui, 40.0, 86.0, "Layout, Docking, and Data Surfaces");
+        Self::layout_solver_preview(ui);
+        Self::dock_preview(ui);
+        Self::table_preview(ui);
+    }
+
+    fn layout_solver_preview(ui: &mut Ui<'_>) {
+        panel_title(
+            ui,
+            Rect::new(40.0, 104.0, 560.0, 250.0),
+            "Measurement-Aware Layout",
+        );
+
+        let items = [
+            LayoutItem::new(
+                SizeRule::Fixed(140.0),
+                SizeRule::Fixed(42.0),
+                Measurement::new(Size::new(140.0, 42.0)),
+            ),
+            LayoutItem::new(
+                SizeRule::Fill,
+                SizeRule::Fixed(42.0),
+                Measurement::new(Size::new(180.0, 42.0)),
+            ),
+            LayoutItem::new(
+                SizeRule::Fit,
+                SizeRule::Fixed(42.0),
+                Measurement::new(Size::new(96.0, 42.0)),
+            ),
+        ];
+        for (index, rect_value) in row_layout(Rect::new(64.0, 150.0, 500.0, 42.0), &items, 8.0)
+            .into_iter()
+            .enumerate()
+        {
+            rect(ui, rect_value, rgb(36, 42, 50), Some(rgb(90, 110, 140)));
             text(
-                primitives,
-                54.0,
-                156.0 + index as f32 * 58.0,
-                "Row item",
+                ui,
+                rect_value.x + 12.0,
+                rect_value.y + 26.0,
+                &format!("Row {index}"),
                 11.0,
                 rgb(236, 236, 236),
             );
         }
-        for col in 0..4 {
-            for row in 0..3 {
+
+        let column_items = [
+            LayoutItem::new(
+                SizeRule::Fill,
+                SizeRule::Fixed(34.0),
+                Measurement::new(Size::new(80.0, 34.0)),
+            ),
+            LayoutItem::new(
+                SizeRule::Fill,
+                SizeRule::Fixed(54.0),
+                Measurement::new(Size::new(80.0, 54.0)),
+            ),
+            LayoutItem::new(
+                SizeRule::Fill,
+                SizeRule::Fixed(34.0),
+                Measurement::new(Size::new(80.0, 34.0)),
+            ),
+        ];
+        for rect_value in column_layout(Rect::new(64.0, 220.0, 220.0, 122.0), &column_items, 8.0) {
+            rect(ui, rect_value, rgb(44, 38, 52), Some(rgb(120, 94, 150)));
+        }
+
+        let adaptive = GridLayout {
+            columns: GridColumns::Adaptive { min_width: 64.0 },
+            item_size: Size::new(58.0, 32.0),
+            gap: 8.0,
+        };
+        for item in adaptive.item_rects(Rect::new(320.0, 220.0, 240.0, 120.0), 12, 0..12) {
+            rect(ui, item.rect, rgb(38, 45, 44), Some(rgb(84, 122, 110)));
+        }
+    }
+
+    fn dock_preview(ui: &mut Ui<'_>) {
+        panel_title(
+            ui,
+            Rect::new(640.0, 104.0, 560.0, 250.0),
+            "DockArea -> Frames -> Panels",
+        );
+        let area = DockArea::new(DockNode::Split {
+            axis: Axis::Horizontal,
+            ratio: 0.42,
+            min_first: 140.0,
+            min_second: 220.0,
+            first: Box::new(DockNode::Frame(Frame::new(
+                FrameId::from_raw(1),
+                vec![
+                    Panel::new(PanelId::from_raw(1), "Inspector"),
+                    Panel::new(PanelId::from_raw(2), "Assets"),
+                ],
+            ))),
+            second: Box::new(DockNode::Split {
+                axis: Axis::Vertical,
+                ratio: 0.62,
+                min_first: 120.0,
+                min_second: 80.0,
+                first: Box::new(DockNode::Frame(Frame::new(
+                    FrameId::from_raw(2),
+                    vec![Panel::new(PanelId::from_raw(3), "Viewport")],
+                ))),
+                second: Box::new(DockNode::Frame(Frame::new(
+                    FrameId::from_raw(3),
+                    vec![
+                        Panel::new(PanelId::from_raw(4), "Console"),
+                        Panel::new(PanelId::from_raw(5), "Jobs"),
+                    ],
+                ))),
+            }),
+        });
+        for frame in solve_dock_layout(&area, Rect::new(660.0, 150.0, 500.0, 180.0)) {
+            rect(ui, frame.rect, rgb(22, 22, 25), Some(rgb(70, 70, 76)));
+            text(
+                ui,
+                frame.rect.x + 10.0,
+                frame.rect.y + 24.0,
+                &format!("Frame {}", frame.frame.raw()),
+                10.0,
+                rgb(180, 180, 184),
+            );
+        }
+        for frame in area.frames() {
+            let tabs = frame_tabs(frame);
+            let mut x = 672.0;
+            let y = 302.0 + frame.id.raw() as f32 * 0.0;
+            for tab in tabs {
+                let width = 74.0;
                 rect(
-                    primitives,
-                    Rect::new(
-                        420.0 + col as f32 * 120.0,
-                        130.0 + row as f32 * 88.0,
-                        100.0,
-                        68.0,
-                    ),
-                    rgb(44, 38, 52),
-                    Some(rgb(120, 94, 150)),
+                    ui,
+                    Rect::new(x, y, width, 22.0),
+                    if tab.active {
+                        rgb(42, 96, 224)
+                    } else {
+                        rgb(30, 30, 33)
+                    },
+                    Some(rgb(72, 72, 76)),
                 );
+                text(ui, x + 8.0, y + 15.0, &tab.title, 9.0, rgb(236, 236, 238));
+                x += width + 4.0;
             }
         }
     }
 
-    fn viewport_page(&self, primitives: &mut Vec<Primitive>) {
-        text(
-            primitives,
-            40.0,
-            90.0,
-            "Viewport and media surfaces",
-            18.0,
-            rgb(242, 242, 244),
+    fn table_preview(ui: &mut Ui<'_>) {
+        panel_title(
+            ui,
+            Rect::new(40.0, 390.0, 1160.0, 300.0),
+            "Virtualized Table Model",
         );
-        primitives.push(Primitive::Texture(TexturePrimitive {
-            texture: TextureId::from_raw(99),
-            rect: Rect::new(80.0, 140.0, 760.0, 430.0),
-            source_size: kinetik_ui_core::Size::new(1920.0, 1080.0),
-        }));
-        primitives.push(Primitive::Line(LinePrimitive {
-            from: Point::new(80.0, 355.0),
-            to: Point::new(840.0, 355.0),
-            stroke: Stroke::new(1.0, Brush::Solid(color(rgb(240, 240, 240)))),
-        }));
-        primitives.push(Primitive::Line(LinePrimitive {
-            from: Point::new(460.0, 140.0),
-            to: Point::new(460.0, 570.0),
-            stroke: Stroke::new(1.0, Brush::Solid(color(rgb(240, 240, 240)))),
-        }));
-        slider(
-            primitives,
-            Rect::new(940.0, 634.0, 260.0, 18.0),
-            self.zoom,
-            "Viewport zoom",
-        );
+        let table = TableLayout {
+            columns: vec![
+                TableColumn {
+                    id: ItemId::from_raw(1),
+                    header: "Name".to_owned(),
+                    width: 220.0,
+                },
+                TableColumn {
+                    id: ItemId::from_raw(2),
+                    header: "State".to_owned(),
+                    width: 160.0,
+                },
+                TableColumn {
+                    id: ItemId::from_raw(3),
+                    header: "Latency".to_owned(),
+                    width: 120.0,
+                },
+                TableColumn {
+                    id: ItemId::from_raw(4),
+                    header: "Owner".to_owned(),
+                    width: 180.0,
+                },
+            ],
+            header_height: 30.0,
+            row_height: 28.0,
+            sort: None,
+        };
+        let bounds = Rect::new(64.0, 440.0, 680.0, 210.0);
+        for header in table.header_rects(bounds) {
+            rect(ui, header.rect, rgb(34, 34, 38), Some(rgb(72, 72, 76)));
+            let column = &table.columns[header.index];
+            text(
+                ui,
+                header.rect.x + 10.0,
+                header.rect.y + 20.0,
+                &column.header,
+                10.0,
+                rgb(236, 236, 238),
+            );
+        }
+        for cell in table.cell_rects(bounds, 7, 0..7) {
+            rect(ui, cell.rect, rgb(22, 22, 25), Some(rgb(52, 52, 58)));
+            let row = cell.index / table.columns.len();
+            let column = cell.index % table.columns.len();
+            let value = match column {
+                0 => format!("Item {row:02}"),
+                1 => {
+                    if row.is_multiple_of(2) {
+                        "Ready".to_owned()
+                    } else {
+                        "Queued".to_owned()
+                    }
+                }
+                2 => format!("{} ms", 12 + row * 7),
+                _ => format!("Team {}", row % 3 + 1),
+            };
+            text(
+                ui,
+                cell.rect.x + 10.0,
+                cell.rect.y + 18.0,
+                &value,
+                9.0,
+                rgb(210, 210, 214),
+            );
+        }
+
         text(
-            primitives,
-            940.0,
-            600.0,
-            &format!("Zoom: {:.0}%", 25.0 + self.zoom * 375.0),
-            13.0,
-            rgb(230, 230, 232),
+            ui,
+            800.0,
+            470.0,
+            "This page uses layout, docking, list, grid, and table models from the toolkit.",
+            11.0,
+            rgb(190, 190, 194),
         );
     }
 
-    fn editor_demo_page(primitives: &mut Vec<Primitive>) {
-        text(
-            primitives,
-            40.0,
-            90.0,
-            "Editor integration demo",
-            18.0,
-            rgb(242, 242, 244),
+    fn viewport_page(&mut self, ui: &mut Ui<'_>) {
+        section_title(ui, 40.0, 86.0, "Viewport, Texture, and Overlay Surface");
+        panel_title(
+            ui,
+            Rect::new(40.0, 104.0, 960.0, 620.0),
+            "Pan/Zoom Texture Surface",
         );
+
+        let mut pan_zoom = PanZoom::default();
+        pan_zoom.set_zoom(0.25 + self.zoom * 3.75);
+        let composition = ViewportComposition {
+            surface: ViewportSurface {
+                texture: TextureId::from_raw(99),
+                source_size: Size::new(1920.0, 1080.0),
+                bounds: Rect::new(80.0, 150.0, 860.0, 486.0),
+                pan_zoom,
+            },
+            guides: vec![
+                Guide::Horizontal(540.0),
+                Guide::Vertical(960.0),
+                Guide::Horizontal(360.0),
+            ],
+            crosshair: Some(Crosshair {
+                visible: true,
+                position: Point::new(960.0, 540.0),
+                label: Some("960, 540".to_owned()),
+                color: rgb(240, 240, 240),
+            }),
+            clip: ClipId::from_raw(99),
+        };
+        ui.extend(composition.primitives());
+
         text(
-            primitives,
-            40.0,
-            116.0,
-            "This page demonstrates dense editor composition, not the default app.",
+            ui,
+            80.0,
+            672.0,
+            "Texture primitives are UI-adjacent surfaces: video/3D upload belongs to renderer/runtime resources.",
             11.0,
-            rgb(180, 180, 184),
+            rgb(190, 190, 194),
         );
-        let mut demo = crate::editor_shell().primitives;
-        for primitive in &mut demo {
-            translate_primitive(primitive, Point::new(0.0, 40.0));
+
+        panel_title(
+            ui,
+            Rect::new(1040.0, 104.0, 300.0, 250.0),
+            "Viewport Controls",
+        );
+        let before = self.zoom;
+        ui.slider(
+            "viewport.zoom",
+            Rect::new(1080.0, 190.0, 220.0, 16.0),
+            &mut self.zoom,
+            0.0..=1.0,
+            false,
+        );
+        if (before - self.zoom).abs() > f32::EPSILON {
+            self.status = format!("Viewport zoom {:.0}%", 25.0 + self.zoom * 375.0);
         }
-        primitives.extend(demo);
+        text(
+            ui,
+            1080.0,
+            180.0,
+            &format!("Zoom: {:.0}%", 25.0 + self.zoom * 375.0),
+            11.0,
+            rgb(220, 220, 224),
+        );
+        let fit = ui.button(
+            "viewport.fit",
+            Rect::new(1080.0, 230.0, 90.0, 28.0),
+            "Fit",
+            false,
+        );
+        if fit.clicked {
+            self.zoom = 0.0;
+            "Viewport fit".clone_into(&mut self.status);
+        }
+        let actual = ui.button(
+            "viewport.actual",
+            Rect::new(1184.0, 230.0, 116.0, 28.0),
+            "Actual Size",
+            false,
+        );
+        if actual.clicked {
+            self.zoom = 0.2;
+            "Viewport actual size".clone_into(&mut self.status);
+        }
+
+        panel_title(
+            ui,
+            Rect::new(1040.0, 390.0, 300.0, 230.0),
+            "3D/Video Boundary",
+        );
+        ui.primitive(Primitive::Texture(TexturePrimitive {
+            texture: TextureId::from_raw(101),
+            rect: Rect::new(1080.0, 438.0, 220.0, 124.0),
+            source_size: Size::new(1280.0, 720.0),
+        }));
+        text(
+            ui,
+            1080.0,
+            594.0,
+            "Dynamic frame placeholder",
+            11.0,
+            rgb(220, 220, 224),
+        );
     }
+
+    #[allow(clippy::too_many_lines)]
+    fn systems_page(&mut self, ui: &mut Ui<'_>) {
+        section_title(ui, 40.0, 86.0, "Actions, Overlays, Diagnostics, Stress");
+
+        panel_title(ui, Rect::new(40.0, 104.0, 360.0, 240.0), "Action Router");
+        let actions = showcase_actions();
+        let menu = Menu::from_actions(actions.clone());
+        let mut queue = ActionQueue::new();
+        let dispatch = ui.button(
+            "systems.dispatch",
+            Rect::new(60.0, 144.0, 140.0, 30.0),
+            "Dispatch",
+            false,
+        );
+        if dispatch.clicked {
+            self.invoke_action("systems.dispatch", ActionSource::Button);
+        }
+        let menu_item = ui.button(
+            "systems.menu-save",
+            Rect::new(60.0, 188.0, 140.0, 28.0),
+            "Menu Save",
+            false,
+        );
+        if menu_item.clicked && menu.invoke_visible(0, &mut queue, ActionContext::Global) {
+            self.invoke_action("workspace.save", ActionSource::Menu);
+        }
+        text(
+            ui,
+            220.0,
+            164.0,
+            &format!("Invocations: {}", self.action_count),
+            11.0,
+            rgb(144, 184, 255),
+        );
+        for invocation in queue.drain() {
+            text(
+                ui,
+                60.0,
+                256.0,
+                invocation.action_id.as_str(),
+                10.0,
+                rgb(220, 220, 224),
+            );
+        }
+
+        panel_title(ui, Rect::new(440.0, 104.0, 420.0, 240.0), "Overlay Stack");
+        let mut stack = OverlayStack::new();
+        stack.open(OverlayEntry {
+            id: OverlayId::from_raw(1),
+            parent: None,
+            kind: OverlayKind::Menu,
+            rect: Rect::new(470.0, 160.0, 220.0, 54.0),
+            modal: false,
+            dismissal: OverlayDismissal::OutsideClick,
+        });
+        stack.open(OverlayEntry {
+            id: OverlayId::from_raw(2),
+            parent: Some(OverlayId::from_raw(1)),
+            kind: OverlayKind::Popover,
+            rect: place_popover(
+                PopoverRequest {
+                    anchor: Rect::new(500.0, 186.0, 120.0, 28.0),
+                    size: Size::new(230.0, 58.0),
+                    placement: PopoverPlacement::Below,
+                    offset: 8.0,
+                    fit_viewport: true,
+                },
+                Rect::new(440.0, 104.0, 420.0, 240.0),
+            ),
+            modal: false,
+            dismissal: OverlayDismissal::OutsideClick,
+        });
+        stack.open(OverlayEntry {
+            id: OverlayId::from_raw(3),
+            parent: None,
+            kind: OverlayKind::CommandPalette,
+            rect: Rect::new(540.0, 238.0, 260.0, 64.0),
+            modal: true,
+            dismissal: OverlayDismissal::Manual,
+        });
+        for (index, entry) in stack.entries().iter().enumerate() {
+            rect(
+                ui,
+                entry.rect,
+                rgb(30 + index as u8 * 10, 32, 38),
+                Some(rgb(90, 90, 98)),
+            );
+            let label = match entry.kind {
+                OverlayKind::Popover => "Popover",
+                OverlayKind::Dropdown => "Dropdown",
+                OverlayKind::ContextMenu => "Context Menu",
+                OverlayKind::Menu => "Menu",
+                OverlayKind::CommandPalette => "Command Palette",
+                OverlayKind::Tooltip => "Tooltip",
+                OverlayKind::Modal => "Modal",
+                OverlayKind::DragPreview => "Drag Preview",
+            };
+            text(
+                ui,
+                entry.rect.x + 14.0,
+                entry.rect.y + 32.0,
+                label,
+                11.0,
+                rgb(236, 236, 238),
+            );
+        }
+
+        panel_title(ui, Rect::new(900.0, 104.0, 360.0, 240.0), "Command Palette");
+        let mut palette = CommandPalette::from_actions(&actions);
+        palette.query = String::new();
+        for (index, entry) in palette.matches().into_iter().take(4).enumerate() {
+            let y = 150.0 + index as f32 * 32.0;
+            let response = ui.list_row(
+                ("systems.palette", index),
+                Rect::new(920.0, y, 300.0, 28.0),
+                &entry.label,
+                false,
+                false,
+            );
+            if response.clicked {
+                self.invoke_action(entry.action_id.as_str(), ActionSource::CommandPalette);
+            }
+        }
+
+        panel_title(
+            ui,
+            Rect::new(40.0, 390.0, 1220.0, 330.0),
+            "Primitive Stress",
+        );
+        let before = self.stress;
+        let mut stress_value = (self.stress as f32 - 32.0) / 768.0;
+        ui.slider(
+            "systems.stress",
+            Rect::new(76.0, 452.0, 260.0, 16.0),
+            &mut stress_value,
+            0.0..=1.0,
+            false,
+        );
+        self.stress = (32.0 + stress_value * 768.0).round() as usize;
+        if before != self.stress {
+            self.status = format!("Generated tiles: {}", self.stress);
+        }
+        text(
+            ui,
+            76.0,
+            440.0,
+            &format!("Generated tiles: {}", self.stress),
+            11.0,
+            rgb(220, 220, 224),
+        );
+
+        let cols = 54;
+        for index in 0..self.stress {
+            let col = index % cols;
+            let row = index / cols;
+            let x = 76.0 + col as f32 * 21.0;
+            let y = 500.0 + row as f32 * 16.0;
+            let shade = 30 + (index % 80) as u8;
+            rect(
+                ui,
+                Rect::new(x, y, 16.0, 10.0),
+                rgb(shade, 48, 70),
+                Some(rgb(60, 70, 90)),
+            );
+        }
+
+        rect(
+            ui,
+            Rect::new(900.0, 452.0, 320.0, 188.0),
+            rgb(18, 18, 20),
+            Some(rgb(58, 58, 62)),
+        );
+        text(
+            ui,
+            920.0,
+            480.0,
+            "Runtime Snapshot",
+            13.0,
+            rgb(238, 238, 240),
+        );
+        text(
+            ui,
+            920.0,
+            510.0,
+            &format!("Primitive count: {}", self.primitives.len()),
+            10.0,
+            rgb(190, 190, 194),
+        );
+        text(
+            ui,
+            920.0,
+            530.0,
+            &format!("Stress tiles: {}", self.stress),
+            10.0,
+            rgb(190, 190, 194),
+        );
+        text(
+            ui,
+            920.0,
+            550.0,
+            &format!("Action invocations: {}", self.action_count),
+            10.0,
+            rgb(190, 190, 194),
+        );
+        for (row, primitive) in inspect_primitives(&self.primitives)
+            .into_iter()
+            .take(4)
+            .enumerate()
+        {
+            text(
+                ui,
+                920.0,
+                584.0 + row as f32 * 18.0,
+                &format!("#{} {:?}", primitive.index, primitive.kind),
+                10.0,
+                rgb(144, 184, 255),
+            );
+        }
+    }
+}
+
+fn showcase_actions() -> Vec<ActionDescriptor> {
+    let mut save = ActionDescriptor::new("workspace.save", "Save Workspace");
+    save.keywords = vec!["write".to_owned(), "persist".to_owned()];
+    let mut palette = ActionDescriptor::new("command.palette", "Open Command Palette");
+    palette.keywords = vec!["search".to_owned(), "actions".to_owned()];
+    let mut toggle_grid = ActionDescriptor::new("viewport.grid", "Toggle Viewport Grid");
+    toggle_grid.keywords = vec!["guides".to_owned(), "overlay".to_owned()];
+    vec![save, palette, toggle_grid]
 }
 
 fn nav_items() -> [(ShowcasePage, Rect); 4] {
@@ -657,276 +1247,237 @@ fn nav_items() -> [(ShowcasePage, Rect); 4] {
         ),
         (ShowcasePage::Layout, Rect::new(502.0, 12.0, 92.0, 28.0)),
         (ShowcasePage::Viewport, Rect::new(604.0, 12.0, 112.0, 28.0)),
-        (
-            ShowcasePage::EditorDemo,
-            Rect::new(726.0, 12.0, 132.0, 28.0),
-        ),
+        (ShowcasePage::Systems, Rect::new(726.0, 12.0, 112.0, 28.0)),
     ]
 }
 
-fn rect(primitives: &mut Vec<Primitive>, rect: Rect, fill: u32, stroke: Option<u32>) {
-    primitives.push(Primitive::Rect(RectPrimitive {
+fn section_title(ui: &mut Ui<'_>, x: f32, baseline: f32, value: &str) {
+    text(ui, x, baseline, value, 18.0, rgb(242, 242, 244));
+}
+
+fn panel_title(ui: &mut Ui<'_>, rect_value: Rect, value: &str) {
+    ui.panel(rect_value);
+    text(
+        ui,
+        rect_value.x + 20.0,
+        rect_value.y + 30.0,
+        value,
+        14.0,
+        rgb(238, 238, 240),
+    );
+}
+
+fn rect(ui: &mut Ui<'_>, rect: Rect, fill: Color, stroke: Option<Color>) {
+    ui.primitive(Primitive::Rect(RectPrimitive {
         rect,
-        fill: Some(Brush::Solid(color(fill))),
-        stroke: stroke.map(|stroke| Stroke::new(1.0, Brush::Solid(color(stroke)))),
+        fill: Some(Brush::Solid(fill)),
+        stroke: stroke.map(|stroke| Stroke::new(1.0, Brush::Solid(stroke))),
         radius: CornerRadius::all(0.0),
     }));
 }
 
-fn border(primitives: &mut Vec<Primitive>, rect: Rect, stroke: u32) {
-    primitives.push(Primitive::Rect(RectPrimitive {
-        rect,
-        fill: None,
-        stroke: Some(Stroke::new(1.0, Brush::Solid(color(stroke)))),
-        radius: CornerRadius::all(0.0),
+fn line(ui: &mut Ui<'_>, from: Point, to: Point, color: Color, width: f32) {
+    ui.primitive(Primitive::Line(LinePrimitive {
+        from,
+        to,
+        stroke: Stroke::new(width, Brush::Solid(color)),
     }));
 }
 
-fn text(primitives: &mut Vec<Primitive>, x: f32, baseline: f32, value: &str, size: f32, fill: u32) {
-    primitives.push(Primitive::Text(TextPrimitive {
+fn text(ui: &mut Ui<'_>, x: f32, baseline: f32, value: &str, size: f32, fill: Color) {
+    ui.primitive(Primitive::Text(TextPrimitive {
+        layout: None,
         origin: Point::new(x, baseline),
         text: value.to_owned(),
         size,
-        brush: Brush::Solid(color(fill)),
+        brush: Brush::Solid(fill),
     }));
 }
 
-fn button(primitives: &mut Vec<Primitive>, rect_value: Rect, label: &str, enabled: bool) {
-    rect(
-        primitives,
-        rect_value,
-        if enabled {
-            rgb(50, 54, 62)
-        } else {
-            rgb(28, 28, 30)
-        },
-        Some(rgb(88, 88, 94)),
-    );
-    text(
-        primitives,
-        rect_value.x + 16.0,
-        rect_value.y + 20.0,
-        label,
-        11.0,
-        rgb(238, 238, 238),
-    );
+fn rgb(red: u8, green: u8, blue: u8) -> Color {
+    Color::rgb(
+        f32::from(red) / 255.0,
+        f32::from(green) / 255.0,
+        f32::from(blue) / 255.0,
+    )
 }
 
-fn checkbox(primitives: &mut Vec<Primitive>, rect_value: Rect, checked: bool, label: &str) {
-    rect(
-        primitives,
-        rect_value,
-        if checked {
-            rgb(42, 96, 224)
-        } else {
-            rgb(30, 30, 32)
-        },
-        Some(rgb(88, 88, 94)),
-    );
-    if checked {
-        text(
-            primitives,
-            rect_value.x + 8.0,
-            rect_value.y + 21.0,
-            "X",
-            12.0,
-            rgb(255, 255, 255),
-        );
-    }
-    text(
-        primitives,
-        rect_value.x + 40.0,
-        rect_value.y + 20.0,
-        label,
-        11.0,
-        rgb(232, 232, 234),
-    );
+fn sanitize_viewport_size(size: Size) -> Size {
+    Size::new(
+        size.width.max(MIN_VIEWPORT_WIDTH),
+        size.height.max(MIN_VIEWPORT_HEIGHT),
+    )
 }
 
-fn radio(primitives: &mut Vec<Primitive>, rect_value: Rect, selected: bool, label: &str) {
-    rect(
-        primitives,
-        rect_value,
-        rgb(28, 28, 31),
-        Some(rgb(88, 88, 94)),
-    );
-    if selected {
-        rect(
-            primitives,
-            Rect::new(rect_value.x + 6.0, rect_value.y + 6.0, 10.0, 10.0),
-            rgb(42, 96, 224),
-            None,
-        );
-    }
-    text(
-        primitives,
-        rect_value.x + 32.0,
-        rect_value.y + 17.0,
-        label,
-        10.0,
-        rgb(232, 232, 234),
-    );
-}
-
-fn toggle(primitives: &mut Vec<Primitive>, rect_value: Rect, on: bool) {
-    rect(
-        primitives,
-        rect_value,
-        if on {
-            rgb(42, 96, 224)
-        } else {
-            rgb(48, 48, 52)
-        },
-        Some(rgb(88, 88, 94)),
-    );
-    let knob_x = if on {
-        rect_value.x + rect_value.width - 21.0
-    } else {
-        rect_value.x + 3.0
-    };
-    rect(
-        primitives,
-        Rect::new(knob_x, rect_value.y + 3.0, 18.0, 18.0),
-        rgb(238, 238, 238),
-        None,
-    );
-}
-
-fn slider(primitives: &mut Vec<Primitive>, rect_value: Rect, value: f32, label: &str) {
-    text(
-        primitives,
-        rect_value.x,
-        rect_value.y - 8.0,
-        &format!("{label}: {value:.2}"),
-        10.0,
-        rgb(222, 222, 224),
-    );
-    rect(
-        primitives,
-        rect_value,
-        rgb(32, 32, 35),
-        Some(rgb(70, 70, 74)),
-    );
-    rect(
-        primitives,
-        Rect::new(
-            rect_value.x,
-            rect_value.y,
-            rect_value.width * value,
-            rect_value.height,
-        ),
-        rgb(42, 96, 224),
-        None,
-    );
-    rect(
-        primitives,
-        Rect::new(
-            rect_value.x + rect_value.width * value - 4.0,
-            rect_value.y - 4.0,
-            8.0,
-            rect_value.height + 8.0,
-        ),
-        rgb(238, 238, 238),
-        None,
-    );
-}
-
-fn input_box(
-    primitives: &mut Vec<Primitive>,
-    rect_value: Rect,
-    value: &str,
-    focused: bool,
-    label: &str,
-) {
-    text(
-        primitives,
-        rect_value.x,
-        rect_value.y - 8.0,
-        label,
-        10.0,
-        rgb(190, 190, 194),
-    );
-    rect(
-        primitives,
-        rect_value,
-        rgb(18, 18, 20),
-        Some(if focused {
-            rgb(42, 96, 224)
-        } else {
-            rgb(72, 72, 76)
-        }),
-    );
-    text(
-        primitives,
-        rect_value.x + 10.0,
-        rect_value.y + 20.0,
-        value,
-        11.0,
-        rgb(238, 238, 238),
-    );
-}
-
-const fn rgb(red: u8, green: u8, blue: u8) -> u32 {
-    ((red as u32) << 16) | ((green as u32) << 8) | blue as u32
-}
-
-fn color(pixel: u32) -> Color {
-    let red = ((pixel >> 16) & 0xff) as f32 / 255.0;
-    let green = ((pixel >> 8) & 0xff) as f32 / 255.0;
-    let blue = (pixel & 0xff) as f32 / 255.0;
-    Color::rgb(red, green, blue)
-}
-
-fn translate_primitive(primitive: &mut Primitive, offset: Point) {
+fn scale_primitive(primitive: Primitive, scale_x: f32, scale_y: f32, text_scale: f32) -> Primitive {
     match primitive {
-        Primitive::Rect(rect) => {
-            rect.rect.x += offset.x;
-            rect.rect.y += offset.y;
+        Primitive::Rect(mut rect) => {
+            rect.rect = scale_rect(rect.rect, scale_x, scale_y);
+            rect.fill = rect.fill.map(|brush| scale_brush(brush, scale_x, scale_y));
+            rect.stroke = rect
+                .stroke
+                .map(|stroke| scale_stroke(stroke, text_scale, scale_x, scale_y));
+            rect.radius = scale_radius(rect.radius, text_scale);
+            Primitive::Rect(rect)
         }
-        Primitive::Line(line) => {
-            line.from.x += offset.x;
-            line.from.y += offset.y;
-            line.to.x += offset.x;
-            line.to.y += offset.y;
+        Primitive::Line(mut line) => {
+            line.from = scale_point(line.from, scale_x, scale_y);
+            line.to = scale_point(line.to, scale_x, scale_y);
+            line.stroke = scale_stroke(line.stroke, text_scale, scale_x, scale_y);
+            Primitive::Line(line)
         }
-        Primitive::Text(text) => {
-            text.origin.x += offset.x;
-            text.origin.y += offset.y;
+        Primitive::Shadow(shadow) => Primitive::Shadow(scale_shadow(shadow, scale_x, scale_y)),
+        Primitive::Path(mut path) => {
+            for element in &mut path.elements {
+                *element = scale_path_element(*element, scale_x, scale_y);
+            }
+            path.fill = path.fill.map(|brush| scale_brush(brush, scale_x, scale_y));
+            path.stroke = path
+                .stroke
+                .map(|stroke| scale_stroke(stroke, text_scale, scale_x, scale_y));
+            Primitive::Path(path)
         }
-        Primitive::Image(image) => {
-            image.rect.x += offset.x;
-            image.rect.y += offset.y;
+        Primitive::Text(mut text) => {
+            text.origin = scale_point(text.origin, scale_x, scale_y);
+            text.size = (text.size * text_scale).round().max(6.0);
+            text.brush = scale_brush(text.brush, scale_x, scale_y);
+            Primitive::Text(text)
         }
-        Primitive::Texture(texture) => {
-            texture.rect.x += offset.x;
-            texture.rect.y += offset.y;
+        Primitive::Image(mut image) => {
+            image.rect = scale_rect(image.rect, scale_x, scale_y);
+            Primitive::Image(image)
         }
-        Primitive::ClipBegin { rect, .. } => {
-            rect.x += offset.x;
-            rect.y += offset.y;
+        Primitive::Texture(mut texture) => {
+            texture.rect = scale_rect(texture.rect, scale_x, scale_y);
+            Primitive::Texture(texture)
         }
-        Primitive::ClipEnd { .. }
-        | Primitive::LayerBegin { .. }
-        | Primitive::LayerEnd { .. }
-        | Primitive::TransformBegin(_)
-        | Primitive::TransformEnd => {}
+        Primitive::ClipBegin { id, rect } => Primitive::ClipBegin {
+            id,
+            rect: scale_rect(rect, scale_x, scale_y),
+        },
+        Primitive::ClipEnd { id } => Primitive::ClipEnd { id },
+        Primitive::LayerBegin { id } => Primitive::LayerBegin { id },
+        Primitive::LayerEnd { id } => Primitive::LayerEnd { id },
+        Primitive::TransformBegin(transform) => {
+            Primitive::TransformBegin(scale_transform(transform, scale_x, scale_y))
+        }
+        Primitive::TransformEnd => Primitive::TransformEnd,
+    }
+}
+
+fn scale_rect(rect: Rect, scale_x: f32, scale_y: f32) -> Rect {
+    let x0 = (rect.x * scale_x).round();
+    let y0 = (rect.y * scale_y).round();
+    let x1 = (rect.max_x() * scale_x).round();
+    let y1 = (rect.max_y() * scale_y).round();
+
+    Rect::new(x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0))
+}
+
+fn scale_point(point: Point, scale_x: f32, scale_y: f32) -> Point {
+    Point::new((point.x * scale_x).round(), (point.y * scale_y).round())
+}
+
+fn scale_path_element(element: PathElement, scale_x: f32, scale_y: f32) -> PathElement {
+    match element {
+        PathElement::MoveTo(point) => PathElement::MoveTo(scale_point(point, scale_x, scale_y)),
+        PathElement::LineTo(point) => PathElement::LineTo(scale_point(point, scale_x, scale_y)),
+        PathElement::QuadTo { ctrl, to } => PathElement::QuadTo {
+            ctrl: scale_point(ctrl, scale_x, scale_y),
+            to: scale_point(to, scale_x, scale_y),
+        },
+        PathElement::CubicTo { ctrl1, ctrl2, to } => PathElement::CubicTo {
+            ctrl1: scale_point(ctrl1, scale_x, scale_y),
+            ctrl2: scale_point(ctrl2, scale_x, scale_y),
+            to: scale_point(to, scale_x, scale_y),
+        },
+        PathElement::Close => PathElement::Close,
+    }
+}
+
+fn scale_stroke(stroke: Stroke, width_scale: f32, scale_x: f32, scale_y: f32) -> Stroke {
+    Stroke::new(
+        (stroke.width * width_scale).round().max(1.0),
+        scale_brush(stroke.brush, scale_x, scale_y),
+    )
+}
+
+fn scale_brush(brush: Brush, scale_x: f32, scale_y: f32) -> Brush {
+    match brush {
+        Brush::Solid(_) => brush,
+        Brush::LinearGradient(gradient) => {
+            Brush::LinearGradient(scale_linear_gradient(gradient, scale_x, scale_y))
+        }
+    }
+}
+
+fn scale_linear_gradient(gradient: LinearGradient, scale_x: f32, scale_y: f32) -> LinearGradient {
+    LinearGradient::new(
+        scale_point(gradient.start(), scale_x, scale_y),
+        scale_point(gradient.end(), scale_x, scale_y),
+        gradient.stops(),
+    )
+    .unwrap_or(gradient)
+}
+
+fn scale_shadow(shadow: ShadowPrimitive, scale_x: f32, scale_y: f32) -> ShadowPrimitive {
+    let radius_scale = scale_x.min(scale_y);
+    ShadowPrimitive::new(
+        scale_rect(shadow.rect, scale_x, scale_y),
+        Vec2::new(
+            (shadow.offset.x * scale_x).round(),
+            (shadow.offset.y * scale_y).round(),
+        ),
+        (shadow.blur_radius * radius_scale).round().max(0.0),
+        (shadow.spread * radius_scale).round(),
+        (shadow.radius * radius_scale).round().max(0.0),
+        shadow.color,
+    )
+}
+
+fn scale_radius(radius: CornerRadius, scale: f32) -> CornerRadius {
+    CornerRadius {
+        top_left: (radius.top_left * scale).round(),
+        top_right: (radius.top_right * scale).round(),
+        bottom_right: (radius.bottom_right * scale).round(),
+        bottom_left: (radius.bottom_left * scale).round(),
+    }
+}
+
+fn scale_transform(transform: Transform, scale_x: f32, scale_y: f32) -> Transform {
+    Transform {
+        m11: transform.m11,
+        m12: transform.m12,
+        m21: transform.m21,
+        m22: transform.m22,
+        dx: (transform.dx * scale_x).round(),
+        dy: (transform.dy * scale_y).round(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FocusField, ShowcaseApp, ShowcaseInput, ShowcasePage};
-    use kinetik_ui_core::Point;
+    use super::{ShowcaseApp, ShowcaseInput, ShowcasePage};
+    use kinetik_ui_core::{Point, Primitive, Rect, Size};
+
+    fn click(app: &mut ShowcaseApp, point: Point) {
+        app.update(&ShowcaseInput {
+            mouse: Some(point),
+            mouse_down: true,
+            ..ShowcaseInput::default()
+        });
+        app.update(&ShowcaseInput {
+            mouse: Some(point),
+            mouse_down: false,
+            ..ShowcaseInput::default()
+        });
+    }
 
     #[test]
     fn clicking_button_changes_action_state() {
         let mut app = ShowcaseApp::new();
 
-        app.update(&ShowcaseInput {
-            mouse: Some(Point::new(60.0, 150.0)),
-            mouse_down: true,
-            ..ShowcaseInput::default()
-        });
+        click(&mut app, Point::new(70.0, 154.0));
 
         assert_eq!(app.action_count(), 1);
     }
@@ -935,13 +1486,41 @@ mod tests {
     fn clicking_navigation_changes_page() {
         let mut app = ShowcaseApp::new();
 
-        app.update(&ShowcaseInput {
-            mouse: Some(Point::new(620.0, 20.0)),
-            mouse_down: true,
-            ..ShowcaseInput::default()
-        });
+        click(&mut app, Point::new(620.0, 20.0));
 
         assert_eq!(app.page(), ShowcasePage::Viewport);
+    }
+
+    #[test]
+    fn viewport_size_scales_output_primitives() {
+        let mut app = ShowcaseApp::new();
+
+        app.set_viewport_size(Size::new(720.0, 450.0));
+
+        assert_eq!(app.viewport_size(), Size::new(720.0, 450.0));
+        assert!(app.primitives().iter().any(|primitive| matches!(
+            primitive,
+            Primitive::Rect(rect) if rect.rect == Rect::new(0.0, 0.0, 720.0, 450.0)
+        )));
+    }
+
+    #[test]
+    fn resized_hit_testing_maps_pointer_to_design_space() {
+        let mut app = ShowcaseApp::new();
+        app.set_viewport_size(Size::new(720.0, 450.0));
+
+        click(&mut app, Point::new(35.0, 77.0));
+
+        assert_eq!(app.action_count(), 1);
+    }
+
+    #[test]
+    fn page_names_are_parseable_for_render_tools() {
+        assert_eq!(
+            ShowcaseApp::page_from_name("layout"),
+            Some(ShowcasePage::Layout)
+        );
+        assert_eq!(ShowcaseApp::page_from_name("unknown"), None);
     }
 
     #[test]
@@ -949,12 +1528,12 @@ mod tests {
         let mut app = ShowcaseApp::new();
 
         app.update(&ShowcaseInput {
-            mouse: Some(Point::new(40.0, 200.0)),
+            mouse: Some(Point::new(360.0, 160.0)),
             mouse_down: true,
             ..ShowcaseInput::default()
         });
         app.update(&ShowcaseInput {
-            mouse: Some(Point::new(300.0, 200.0)),
+            mouse: Some(Point::new(600.0, 160.0)),
             mouse_down: true,
             ..ShowcaseInput::default()
         });
@@ -966,18 +1545,65 @@ mod tests {
     fn focused_search_accepts_keyboard_input() {
         let mut app = ShowcaseApp::new();
 
-        app.update(&ShowcaseInput {
-            mouse: Some(Point::new(50.0, 100.0)),
-            mouse_down: true,
-            ..ShowcaseInput::default()
-        });
+        click(&mut app, Point::new(940.0, 160.0));
         app.update(&ShowcaseInput {
             typed: vec!['x'],
             ..ShowcaseInput::default()
         });
 
         assert!(app.search().ends_with('x'));
-        assert_eq!(app.focus, Some(FocusField::Search));
+    }
+
+    #[test]
+    fn focused_multi_line_field_accepts_text_and_enter() {
+        let mut app = ShowcaseApp::new();
+
+        click(&mut app, Point::new(1070.0, 306.0));
+        app.update(&ShowcaseInput {
+            typed: vec!['x'],
+            ..ShowcaseInput::default()
+        });
+        app.update(&ShowcaseInput {
+            enter: true,
+            ..ShowcaseInput::default()
+        });
+
+        assert!(app.notes().contains('x'));
+        assert!(app.notes().ends_with('\n'));
+    }
+
+    #[test]
+    fn viewport_buttons_change_zoom_state() {
+        let mut app = ShowcaseApp::new();
+        app.set_page(ShowcasePage::Viewport);
+
+        click(&mut app, Point::new(1090.0, 240.0));
+        assert!(app.zoom().abs() < f32::EPSILON);
+
+        click(&mut app, Point::new(1200.0, 240.0));
+        assert!((app.zoom() - 0.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn systems_palette_invokes_actions() {
+        let mut app = ShowcaseApp::new();
+        app.set_page(ShowcasePage::Systems);
+
+        click(&mut app, Point::new(930.0, 160.0));
+
+        assert_eq!(app.action_count(), 1);
+    }
+
+    #[test]
+    fn systems_page_exposes_runtime_diagnostics() {
+        let mut app = ShowcaseApp::new();
+        app.set_page(ShowcasePage::Systems);
+
+        let has_snapshot = app.primitives().iter().any(|primitive| {
+            matches!(primitive, Primitive::Text(text) if text.text == "Runtime Snapshot")
+        });
+
+        assert!(has_snapshot);
     }
 
     #[test]
@@ -985,13 +1611,41 @@ mod tests {
         let mut app = ShowcaseApp::new();
         let before = crate::raster::rasterize(&app.primitives(), 1440, 900);
 
-        app.update(&ShowcaseInput {
-            mouse: Some(Point::new(60.0, 150.0)),
-            mouse_down: true,
-            ..ShowcaseInput::default()
-        });
+        click(&mut app, Point::new(70.0, 154.0));
         let after = crate::raster::rasterize(&app.primitives(), 1440, 900);
 
         assert_ne!(before.pixels, after.pixels);
+    }
+
+    #[test]
+    fn showcase_uses_widget_generated_primitives() {
+        let app = ShowcaseApp::new();
+        let primitives = app.primitives();
+
+        assert!(
+            primitives
+                .iter()
+                .any(|item| matches!(item, Primitive::Image(_)))
+        );
+        assert!(
+            primitives
+                .iter()
+                .filter(|item| matches!(item, Primitive::Rect(_)))
+                .count()
+                > 20
+        );
+    }
+
+    #[test]
+    fn showcase_app_does_not_define_fake_control_helpers() {
+        let source = include_str!("app.rs");
+
+        for marker in [
+            ["fn ", "button", "("].concat(),
+            ["fn ", "slider", "("].concat(),
+            ["fn ", "input_box", "("].concat(),
+        ] {
+            assert!(!source.contains(&marker), "{marker}");
+        }
     }
 }

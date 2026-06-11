@@ -1,11 +1,13 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/kinetik-ui",
     "crates/kinetik-ui-core",
-    "crates/kinetik-ui-platform-winit",
-    "crates/kinetik-ui-render-vello",
+    "crates/kinetik-ui-render",
     "crates/kinetik-ui-text",
+    "crates/kinetik-ui-vello",
     "crates/kinetik-ui-widgets",
+    "crates/kinetik-ui-winit",
     "apps/kinetik-ui-showcase",
 ]
 

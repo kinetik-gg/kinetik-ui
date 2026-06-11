@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+ab_glyph = "0.2.32"
 kinetik-ui-core = { path = "../../crates/kinetik-ui-core" }
 kinetik-ui-text = { path = "../../crates/kinetik-ui-text" }
 kinetik-ui-widgets = { path = "../../crates/kinetik-ui-widgets" }

@@ -1,5 +1,7 @@
 //! Platform-independent accessibility semantics.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::{ActionDescriptor, ActionId, Rect, WidgetId};
 
 /// Semantic role exposed by a UI node.
@@ -252,6 +254,18 @@ impl SemanticTree {
         self.root = Some(root);
     }
 
+    /// Returns true when the tree contains no semantic nodes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Returns the number of semantic nodes in the tree.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
     /// Returns the root node ID.
     #[must_use]
     pub const fn root(&self) -> Option<WidgetId> {
@@ -278,15 +292,199 @@ impl SemanticTree {
         self.nodes.iter().find(|node| node.id == id)
     }
 
+    /// Returns the parent node ID for a child.
+    #[must_use]
+    pub fn parent_of(&self, child: WidgetId) -> Option<WidgetId> {
+        self.nodes
+            .iter()
+            .find(|node| node.children.contains(&child))
+            .map(|node| node.id)
+    }
+
+    /// Returns node IDs in semantic child order, appending unparented nodes in insertion order.
+    #[must_use]
+    pub fn traversal_order(&self) -> Vec<WidgetId> {
+        let mut order = Vec::new();
+        let mut visited = BTreeSet::new();
+        if let Some(root) = self.root.filter(|root| self.get(*root).is_some()) {
+            self.push_traversal(root, &mut visited, &mut order);
+        }
+        for node in &self.nodes {
+            self.push_traversal(node.id, &mut visited, &mut order);
+        }
+        order
+    }
+
     /// Returns focusable node IDs in traversal order.
     #[must_use]
     pub fn focus_order(&self) -> Vec<WidgetId> {
-        self.nodes
-            .iter()
-            .filter(|node| node.focusable && !node.state.disabled)
-            .map(|node| node.id)
+        self.traversal_order()
+            .into_iter()
+            .filter(|id| {
+                self.get(*id)
+                    .is_some_and(|node| node.focusable && !node.state.disabled)
+            })
             .collect()
     }
+
+    /// Validates structural semantic-tree invariants.
+    ///
+    /// Empty trees are valid. Non-empty trees must have a root that points at
+    /// an existing node, unique node IDs, children that point at existing
+    /// nodes, and no node may have multiple semantic parents.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SemanticTreeError`] for the first structural violation found.
+    pub fn validate(&self) -> Result<(), SemanticTreeError> {
+        if self.nodes.is_empty() {
+            return Ok(());
+        }
+
+        let mut ids = BTreeSet::new();
+        for node in &self.nodes {
+            if !ids.insert(node.id) {
+                return Err(SemanticTreeError::DuplicateNodeId { id: node.id });
+            }
+        }
+
+        let Some(root) = self.root else {
+            return Err(SemanticTreeError::MissingRoot);
+        };
+        if !ids.contains(&root) {
+            return Err(SemanticTreeError::UnknownRoot { id: root });
+        }
+
+        let mut parent_by_child = BTreeMap::new();
+        let mut children_by_parent = BTreeMap::new();
+        for node in &self.nodes {
+            let mut child_ids = BTreeSet::new();
+            for child in &node.children {
+                if *child == node.id {
+                    return Err(SemanticTreeError::SelfChild { id: node.id });
+                }
+                if !ids.contains(child) {
+                    return Err(SemanticTreeError::UnknownChild {
+                        parent: node.id,
+                        child: *child,
+                    });
+                }
+                if !child_ids.insert(*child) {
+                    return Err(SemanticTreeError::DuplicateChild {
+                        parent: node.id,
+                        child: *child,
+                    });
+                }
+                if let Some(first_parent) = parent_by_child.insert(*child, node.id) {
+                    return Err(SemanticTreeError::MultipleParents {
+                        child: *child,
+                        first_parent,
+                        second_parent: node.id,
+                    });
+                }
+            }
+            children_by_parent.insert(node.id, node.children.clone());
+        }
+
+        let mut visited = BTreeSet::new();
+        let mut visiting = BTreeSet::new();
+        validate_semantic_cycles(root, &children_by_parent, &mut visiting, &mut visited)?;
+        for node in &self.nodes {
+            validate_semantic_cycles(node.id, &children_by_parent, &mut visiting, &mut visited)?;
+        }
+
+        Ok(())
+    }
+
+    fn push_traversal(
+        &self,
+        id: WidgetId,
+        visited: &mut BTreeSet<WidgetId>,
+        order: &mut Vec<WidgetId>,
+    ) {
+        if !visited.insert(id) {
+            return;
+        }
+        let Some(node) = self.get(id) else {
+            return;
+        };
+        order.push(id);
+        for child in &node.children {
+            self.push_traversal(*child, visited, order);
+        }
+    }
+}
+
+/// Structural semantic tree validation error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticTreeError {
+    /// Non-empty tree has no root node.
+    MissingRoot,
+    /// Root points at a node that is not present in the tree.
+    UnknownRoot {
+        /// Unknown root node ID.
+        id: WidgetId,
+    },
+    /// Two nodes use the same stable node ID.
+    DuplicateNodeId {
+        /// Duplicate node ID.
+        id: WidgetId,
+    },
+    /// A child edge points at a node that is not present in the tree.
+    UnknownChild {
+        /// Parent node ID.
+        parent: WidgetId,
+        /// Unknown child node ID.
+        child: WidgetId,
+    },
+    /// A node lists the same child more than once.
+    DuplicateChild {
+        /// Parent node ID.
+        parent: WidgetId,
+        /// Duplicate child node ID.
+        child: WidgetId,
+    },
+    /// A node lists itself as a child.
+    SelfChild {
+        /// Self-referential node ID.
+        id: WidgetId,
+    },
+    /// A child has more than one semantic parent.
+    MultipleParents {
+        /// Child node ID.
+        child: WidgetId,
+        /// First parent encountered.
+        first_parent: WidgetId,
+        /// Second parent encountered.
+        second_parent: WidgetId,
+    },
+    /// A semantic child cycle was detected.
+    Cycle {
+        /// Node where the cycle was detected.
+        id: WidgetId,
+    },
+}
+
+fn validate_semantic_cycles(
+    id: WidgetId,
+    children_by_parent: &BTreeMap<WidgetId, Vec<WidgetId>>,
+    visiting: &mut BTreeSet<WidgetId>,
+    visited: &mut BTreeSet<WidgetId>,
+) -> Result<(), SemanticTreeError> {
+    if visited.contains(&id) {
+        return Ok(());
+    }
+    if !visiting.insert(id) {
+        return Err(SemanticTreeError::Cycle { id });
+    }
+    if let Some(children) = children_by_parent.get(&id) {
+        for child in children {
+            validate_semantic_cycles(*child, children_by_parent, visiting, visited)?;
+        }
+    }
+    visiting.remove(&id);
+    visited.insert(id);
+    Ok(())
 }
 
 /// Deterministic focus traversal snapshot.
@@ -382,7 +580,7 @@ pub trait AccessibilityAdapter {
 mod tests {
     use super::{
         FocusTraversal, SemanticAction, SemanticActionKind, SemanticNode, SemanticRole,
-        SemanticState, SemanticTree, SemanticValue,
+        SemanticState, SemanticTree, SemanticTreeError, SemanticValue,
     };
     use crate::{ActionDescriptor, Rect, WidgetId};
 
@@ -459,5 +657,133 @@ mod tests {
                 .any(|action| action.kind == SemanticActionKind::Focus)
         );
         assert_eq!(state.checked, Some(false));
+    }
+
+    #[test]
+    fn semantic_tree_traversal_uses_declared_child_order() {
+        let root = WidgetId::from_key("root");
+        let first = WidgetId::from_key("first");
+        let second = WidgetId::from_key("second");
+        let mut tree = SemanticTree::new();
+        tree.push(
+            SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([second, first]),
+        );
+        tree.push(SemanticNode::new(first, SemanticRole::Button, Rect::ZERO).focusable(true));
+        tree.push(SemanticNode::new(second, SemanticRole::Button, Rect::ZERO).focusable(true));
+
+        assert_eq!(tree.traversal_order(), vec![root, second, first]);
+        assert_eq!(tree.focus_order(), vec![second, first]);
+        assert_eq!(tree.parent_of(first), Some(root));
+        assert!(tree.validate().is_ok());
+    }
+
+    #[test]
+    fn semantic_tree_validation_accepts_empty_trees() {
+        let tree = SemanticTree::new();
+
+        assert!(tree.is_empty());
+        assert_eq!(tree.len(), 0);
+        assert!(tree.validate().is_ok());
+    }
+
+    #[test]
+    fn semantic_tree_validation_rejects_bad_roots_and_duplicate_nodes() {
+        let root = WidgetId::from_key("root");
+        let missing = WidgetId::from_key("missing");
+        let mut unknown_root = SemanticTree::new();
+        unknown_root.push(SemanticNode::new(root, SemanticRole::Root, Rect::ZERO));
+        unknown_root.set_root(missing);
+
+        assert_eq!(
+            unknown_root.validate().expect_err("error"),
+            SemanticTreeError::UnknownRoot { id: missing }
+        );
+
+        let mut missing_root = SemanticTree {
+            nodes: vec![SemanticNode::new(root, SemanticRole::Root, Rect::ZERO)],
+            root: None,
+        };
+        assert_eq!(
+            missing_root.validate().expect_err("error"),
+            SemanticTreeError::MissingRoot
+        );
+
+        missing_root.root = Some(root);
+        missing_root
+            .nodes
+            .push(SemanticNode::new(root, SemanticRole::Panel, Rect::ZERO));
+        assert_eq!(
+            missing_root.validate().expect_err("error"),
+            SemanticTreeError::DuplicateNodeId { id: root }
+        );
+    }
+
+    #[test]
+    fn semantic_tree_validation_rejects_bad_child_edges() {
+        let root = WidgetId::from_key("root");
+        let child = WidgetId::from_key("child");
+        let missing = WidgetId::from_key("missing");
+
+        let mut unknown_child = SemanticTree::new();
+        unknown_child
+            .push(SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([missing]));
+        assert_eq!(
+            unknown_child.validate().expect_err("error"),
+            SemanticTreeError::UnknownChild {
+                parent: root,
+                child: missing
+            }
+        );
+
+        let mut duplicate_child = SemanticTree::new();
+        duplicate_child.push(
+            SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([child, child]),
+        );
+        duplicate_child.push(SemanticNode::new(child, SemanticRole::Button, Rect::ZERO));
+        assert_eq!(
+            duplicate_child.validate().expect_err("error"),
+            SemanticTreeError::DuplicateChild {
+                parent: root,
+                child
+            }
+        );
+
+        let mut self_child = SemanticTree::new();
+        self_child
+            .push(SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([root]));
+        assert_eq!(
+            self_child.validate().expect_err("error"),
+            SemanticTreeError::SelfChild { id: root }
+        );
+    }
+
+    #[test]
+    fn semantic_tree_validation_rejects_ambiguous_parentage_and_cycles() {
+        let root = WidgetId::from_key("root");
+        let other = WidgetId::from_key("other");
+        let child = WidgetId::from_key("child");
+
+        let mut multiple_parents = SemanticTree::new();
+        multiple_parents
+            .push(SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([child]));
+        multiple_parents
+            .push(SemanticNode::new(other, SemanticRole::Panel, Rect::ZERO).with_children([child]));
+        multiple_parents.push(SemanticNode::new(child, SemanticRole::Button, Rect::ZERO));
+        assert_eq!(
+            multiple_parents.validate().expect_err("error"),
+            SemanticTreeError::MultipleParents {
+                child,
+                first_parent: root,
+                second_parent: other
+            }
+        );
+
+        let mut cycle = SemanticTree::new();
+        cycle.push(SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([child]));
+        cycle.push(SemanticNode::new(child, SemanticRole::Panel, Rect::ZERO).with_children([root]));
+        assert_eq!(
+            cycle.validate().expect_err("error"),
+            SemanticTreeError::Cycle { id: root }
+        );
     }
 }

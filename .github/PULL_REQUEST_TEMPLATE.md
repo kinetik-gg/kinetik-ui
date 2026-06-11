@@ -25,7 +25,7 @@ Not included:
 Commands run:
 
 - [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets --all-features`
+- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - [ ] `cargo test --workspace --all-features`
 - [ ] `cargo build --workspace --all-features`
 - [ ] `cargo check --workspace --examples --all-features`
@@ -47,4 +47,3 @@ Additional validation:
 - [ ] Shared APIs include examples or documentation when appropriate.
 - [ ] Any spec deviation is documented in this PR.
 - [ ] Commits follow Conventional Commits.
-
