@@ -1,5 +1,6 @@
 //! Deterministic showcase scenarios for Kinetik UI.
 
+pub mod app;
 pub mod raster;
 
 use kinetik_ui_core::{
