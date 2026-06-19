@@ -2022,6 +2022,13 @@ mod tests {
         assert!(app.primitives().iter().any(|primitive| {
             matches!(primitive, Primitive::Text(text) if text.text == "Toggle: true")
         }));
+        assert!(app.primitives().iter().any(|primitive| {
+            matches!(
+                primitive,
+                Primitive::Text(text)
+                    if text.text == "checkbox=true toggle=true radio=1 selected_row=2"
+            )
+        }));
     }
 
     #[test]

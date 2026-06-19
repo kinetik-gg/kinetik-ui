@@ -484,7 +484,7 @@ fn schedule_shell_repaint(
         RepaintSchedule::Immediate => {
             event_loop.set_control_flow(ControlFlow::Wait);
             window.request_redraw();
-            None
+            Some(Instant::now())
         }
         RepaintSchedule::At(deadline) => {
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
