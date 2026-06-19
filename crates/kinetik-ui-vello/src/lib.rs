@@ -1618,7 +1618,8 @@ fn encode_path(
     device_scale: f64,
 ) {
     if let Some(fill) = fill {
-        let path = bez_path(elements);
+        let snapped_elements = snap_filled_path_elements_to_device(elements, device_scale);
+        let path = bez_path(&snapped_elements);
         fill_shape(scene, transform, &fill, &path);
     }
     if let Some(stroke) = stroke {
@@ -1656,6 +1657,34 @@ fn bez_path(elements: &[PathElement]) -> BezPath {
         }
     }
     path
+}
+
+fn snap_filled_path_elements_to_device(
+    elements: &[PathElement],
+    device_scale: f64,
+) -> Vec<PathElement> {
+    if elements.iter().any(|element| {
+        matches!(
+            element,
+            PathElement::QuadTo { .. } | PathElement::CubicTo { .. }
+        )
+    }) {
+        return elements.to_vec();
+    }
+
+    elements
+        .iter()
+        .map(|element| match *element {
+            PathElement::MoveTo(point) => {
+                PathElement::MoveTo(snap_point_to_device(point, device_scale))
+            }
+            PathElement::LineTo(point) => {
+                PathElement::LineTo(snap_point_to_device(point, device_scale))
+            }
+            PathElement::Close => PathElement::Close,
+            PathElement::QuadTo { .. } | PathElement::CubicTo { .. } => unreachable!(),
+        })
+        .collect()
 }
 
 fn snap_stroked_path_elements_to_device(
@@ -2346,11 +2375,11 @@ mod tests {
         RendererBackend, ShapedTextCache, TextLayoutResource, TextureResource, VelloRenderer,
         image_quality, physical_text_layout, physical_text_layout_for_key,
         quantize_stroke_width_to_device, render_translation_snapshot, root_transform,
-        snap_axis_aligned_translation, snap_image_rect_to_device, snap_point_to_device,
-        snap_radius_to_device, snap_rect_to_device, snap_stroke_center_to_device,
-        snap_stroked_line_to_device, snap_stroked_path_elements_to_device,
-        snap_stroked_rect_to_device, snap_text_origin_to_device, translate_primitives,
-        viewport_device_scale,
+        snap_axis_aligned_translation, snap_filled_path_elements_to_device,
+        snap_image_rect_to_device, snap_point_to_device, snap_radius_to_device,
+        snap_rect_to_device, snap_stroke_center_to_device, snap_stroked_line_to_device,
+        snap_stroked_path_elements_to_device, snap_stroked_rect_to_device,
+        snap_text_origin_to_device, translate_primitives, viewport_device_scale,
     };
     use kinetik_ui_core::render::TexturePrimitive;
     use kinetik_ui_core::{
@@ -3409,6 +3438,52 @@ mod tests {
                 PathElement::LineTo(Point::new(20.0, 10.0)),
                 PathElement::MoveTo(Point::new(4.4, 1.6)),
                 PathElement::LineTo(Point::new(4.4, 11.2)),
+                PathElement::Close,
+            ]
+        );
+    }
+
+    #[test]
+    fn renderer_snaps_filled_line_based_paths_to_device_pixels() {
+        let elements = vec![
+            PathElement::MoveTo(Point::new(0.2, 10.3)),
+            PathElement::LineTo(Point::new(20.2, 10.3)),
+            PathElement::LineTo(Point::new(20.2, 30.3)),
+            PathElement::Close,
+        ];
+
+        let snapped = snap_filled_path_elements_to_device(&elements, 1.25);
+
+        assert_eq!(
+            snapped,
+            vec![
+                PathElement::MoveTo(Point::new(0.0, 10.4)),
+                PathElement::LineTo(Point::new(20.0, 10.4)),
+                PathElement::LineTo(Point::new(20.0, 30.4)),
+                PathElement::Close,
+            ]
+        );
+    }
+
+    #[test]
+    fn renderer_snaps_closed_stroked_polygon_vertices() {
+        let elements = vec![
+            PathElement::MoveTo(Point::new(10.2, 0.2)),
+            PathElement::LineTo(Point::new(20.2, 10.2)),
+            PathElement::LineTo(Point::new(10.2, 20.2)),
+            PathElement::LineTo(Point::new(0.2, 10.2)),
+            PathElement::Close,
+        ];
+
+        let snapped = snap_stroked_path_elements_to_device(&elements, 1.0, 1.25);
+
+        assert_eq!(
+            snapped,
+            vec![
+                PathElement::MoveTo(Point::new(10.4, 0.0)),
+                PathElement::LineTo(Point::new(20.0, 10.4)),
+                PathElement::LineTo(Point::new(10.4, 20.0)),
+                PathElement::LineTo(Point::new(0.0, 10.4)),
                 PathElement::Close,
             ]
         );
