@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use kinetik_ui_core::{ImageId, Primitive, Size, TextLayoutId, TextureId, ViewportInfo};
-use kinetik_ui_text::{ShapedTextLayout, StoredTextLayout};
+use kinetik_ui_text::{ShapedTextLayout, StoredTextLayout, TextLayoutKey};
 
 /// Static image resource known by a renderer.
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +139,8 @@ pub enum RenderImageAlpha {
 pub struct TextLayoutResource {
     /// Text layout handle from core primitives.
     pub id: TextLayoutId,
+    /// Layout request used to shape the text.
+    pub key: TextLayoutKey,
     /// Owned shaped text layout.
     pub layout: ShapedTextLayout,
 }
@@ -148,7 +150,7 @@ pub struct TextLayoutResource {
 pub struct RenderResources {
     images: HashMap<ImageId, ImageResource>,
     textures: HashMap<TextureId, TextureResource>,
-    text_layouts: HashMap<TextLayoutId, ShapedTextLayout>,
+    text_layouts: HashMap<TextLayoutId, TextLayoutResource>,
 }
 
 impl RenderResources {
@@ -170,12 +172,24 @@ impl RenderResources {
 
     /// Registers a shaped text layout resource.
     pub fn register_text_layout(&mut self, text: TextLayoutResource) {
-        self.text_layouts.insert(text.id, text.layout);
+        self.text_layouts.insert(text.id, text);
     }
 
     /// Registers a borrowed shaped text layout resource.
-    pub fn register_text_layout_ref(&mut self, id: TextLayoutId, layout: &ShapedTextLayout) {
-        self.text_layouts.insert(id, layout.clone());
+    pub fn register_text_layout_ref(
+        &mut self,
+        id: TextLayoutId,
+        key: &TextLayoutKey,
+        layout: &ShapedTextLayout,
+    ) {
+        self.text_layouts.insert(
+            id,
+            TextLayoutResource {
+                id,
+                key: key.clone(),
+                layout: layout.clone(),
+            },
+        );
     }
 
     /// Registers shaped text layouts exported by a text layout store.
@@ -184,7 +198,7 @@ impl RenderResources {
         layouts: impl IntoIterator<Item = StoredTextLayout<'a>>,
     ) {
         for layout in layouts {
-            self.register_text_layout_ref(layout.id, layout.layout);
+            self.register_text_layout_ref(layout.id, layout.key, layout.layout);
         }
     }
 
@@ -221,6 +235,13 @@ impl RenderResources {
     /// Returns a registered shaped text layout.
     #[must_use]
     pub fn text_layout(&self, layout: TextLayoutId) -> Option<&ShapedTextLayout> {
+        self.text_layout_resource(layout)
+            .map(|resource| &resource.layout)
+    }
+
+    /// Returns a registered shaped text layout resource.
+    #[must_use]
+    pub fn text_layout_resource(&self, layout: TextLayoutId) -> Option<&TextLayoutResource> {
         self.text_layouts.get(&layout)
     }
 
@@ -256,8 +277,8 @@ impl RenderResourceSnapshot {
             .collect::<Vec<_>>();
         let mut text_layouts = resources
             .text_layouts
-            .iter()
-            .map(|(id, layout)| TextLayoutResourceSnapshot::from_layout(*id, layout))
+            .values()
+            .map(TextLayoutResourceSnapshot::from_resource)
             .collect::<Vec<_>>();
 
         images.sort_by_key(|resource| resource.id);
@@ -372,13 +393,13 @@ pub struct TextLayoutResourceSnapshot {
 }
 
 impl TextLayoutResourceSnapshot {
-    fn from_layout(id: TextLayoutId, layout: &ShapedTextLayout) -> Self {
+    fn from_resource(resource: &TextLayoutResource) -> Self {
         Self {
-            id: id.raw(),
-            width: OrderedF32::new(layout.size.width),
-            height: OrderedF32::new(layout.size.height),
-            line_count: layout.line_count,
-            glyph_count: layout.glyph_count(),
+            id: resource.id.raw(),
+            width: OrderedF32::new(resource.layout.size.width),
+            height: OrderedF32::new(resource.layout.size.height),
+            line_count: resource.layout.line_count,
+            glyph_count: resource.layout.glyph_count(),
         }
     }
 }
@@ -541,12 +562,13 @@ mod tests {
         let texture = TextureId::from_raw(2);
         let text = TextLayoutId::from_raw(3);
         let mut engine = CosmicTextEngine::new();
-        let layout = engine.shape_text(&TextLayoutKey::new(
+        let key = TextLayoutKey::new(
             "Label",
             TextStyle::new("sans-serif", 12.0, 16.0),
             200.0,
             false,
-        ));
+        );
+        let layout = engine.shape_text(&key);
 
         resources.register_image(ImageResource {
             id: image,
@@ -560,7 +582,11 @@ mod tests {
             sampling: RenderImageSampling::default(),
             snapshot: None,
         });
-        resources.register_text_layout(TextLayoutResource { id: text, layout });
+        resources.register_text_layout(TextLayoutResource {
+            id: text,
+            key,
+            layout,
+        });
 
         assert!(resources.has_image(image));
         assert!(resources.has_texture(texture));
@@ -594,6 +620,12 @@ mod tests {
         });
         resources.register_text_layout(TextLayoutResource {
             id: TextLayoutId::from_raw(5),
+            key: TextLayoutKey::new(
+                "Label",
+                TextStyle::new("sans-serif", 12.0, 16.0),
+                200.0,
+                false,
+            ),
             layout,
         });
         resources.register_image(ImageResource {
