@@ -1949,7 +1949,7 @@ fn encode_shaped_text_device_space(
                 Fill::NonZero,
                 run.glyphs.iter().map(|glyph| Glyph {
                     id: glyph.id,
-                    x: origin.x + glyph.x * scale as f32,
+                    x: snap_text_glyph_position_to_device(origin.x + glyph.x * scale as f32),
                     y: snap_text_glyph_baseline_to_device(origin.y + glyph.y * scale as f32),
                 }),
             );
@@ -1961,6 +1961,10 @@ fn snap_text_origin_to_device(origin: Point) -> Point {
 }
 
 fn snap_text_glyph_baseline_to_device(position: f32) -> f32 {
+    position.round()
+}
+
+fn snap_text_glyph_position_to_device(position: f32) -> f32 {
     position.round()
 }
 
@@ -2419,8 +2423,8 @@ mod tests {
         snap_image_rect_to_device, snap_point_to_device, snap_radius_to_device,
         snap_rect_to_device, snap_stroke_center_to_device, snap_stroked_line_to_device,
         snap_stroked_path_elements_to_device, snap_stroked_rect_to_device,
-        snap_text_glyph_baseline_to_device, snap_text_origin_to_device, translate_primitives,
-        viewport_device_scale,
+        snap_text_glyph_baseline_to_device, snap_text_glyph_position_to_device,
+        snap_text_origin_to_device, translate_primitives, viewport_device_scale,
     };
     use kinetik_ui_core::render::TexturePrimitive;
     use kinetik_ui_core::{
@@ -3847,6 +3851,12 @@ mod tests {
     }
 
     #[test]
+    fn text_glyph_position_snapping_rounds_device_coordinates() {
+        assert_approx(snap_text_glyph_position_to_device(7.49), 7.0);
+        assert_approx(snap_text_glyph_position_to_device(7.5), 8.0);
+    }
+
+    #[test]
     fn physical_text_snaps_horizontal_origin_and_baseline() {
         let mut renderer = VelloRenderer::new();
         let resources = RenderResources::new();
@@ -3883,7 +3893,7 @@ mod tests {
     }
 
     #[test]
-    fn physical_text_preserves_horizontal_glyph_spacing() {
+    fn physical_text_snaps_horizontal_glyph_positions() {
         let mut renderer = VelloRenderer::new();
         let resources = RenderResources::new();
         let primitives = vec![Primitive::Text(TextPrimitive {
@@ -3910,8 +3920,10 @@ mod tests {
         assert!(output.diagnostics.is_empty());
         assert!(glyphs.len() > 1);
         assert!(
-            glyphs.iter().any(|glyph| glyph.x.fract().abs() > 0.001),
-            "horizontal glyph advances should keep shaped fractional spacing"
+            glyphs
+                .iter()
+                .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
+            "horizontal glyph positions should stay snapped to physical pixels"
         );
         assert!(
             glyphs
@@ -3965,9 +3977,8 @@ mod tests {
             assert!(
                 glyphs
                     .iter()
-                    .skip(1)
-                    .any(|glyph| glyph.x.fract().abs() > 0.001),
-                "scale {scale} should keep shaped fractional advances"
+                    .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
+                "scale {scale} should snap glyph x positions"
             );
             assert!(
                 glyphs
@@ -3976,6 +3987,55 @@ mod tests {
                 "scale {scale} should snap glyph baselines"
             );
         }
+    }
+
+    #[test]
+    fn translated_physical_text_stays_snapped_at_fractional_dpi() {
+        let mut renderer = VelloRenderer::new();
+        let resources = RenderResources::new();
+        let primitives = vec![
+            Primitive::TransformBegin(Transform::translation(Vec2::new(2.2, 3.4))),
+            Primitive::Text(TextPrimitive {
+                layout: None,
+                origin: Point::new(4.3, 16.4),
+                text: "Kinetik".to_owned(),
+                family: "sans-serif".to_owned(),
+                size: 13.0,
+                line_height: 18.0,
+                brush: Brush::Solid(Color::WHITE),
+            }),
+            Primitive::TransformEnd,
+        ];
+
+        let output = renderer.submit_frame(RenderFrameInput {
+            viewport: ViewportInfo::new(
+                Size::new(100.0, 100.0),
+                kinetik_ui_core::PhysicalSize::new(150, 150),
+                ScaleFactor::new(1.5),
+            ),
+            primitives: &primitives,
+            resources: &resources,
+        });
+        let encoding = renderer.scene().encoding();
+        let glyph_run = encoding.resources.glyph_runs.first().expect("glyph run");
+        let glyphs = &encoding.resources.glyphs;
+
+        assert!(output.diagnostics.is_empty());
+        assert_approx(glyph_run.font_size, 20.0);
+        assert!(glyph_run.hint);
+        assert!(glyphs.len() > 1);
+        assert!(
+            glyphs
+                .iter()
+                .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
+            "translated text should snap glyph x positions"
+        );
+        assert!(
+            glyphs
+                .iter()
+                .all(|glyph| (glyph.y - glyph.y.round()).abs() <= 0.001),
+            "translated text should snap glyph baselines"
+        );
     }
 
     #[test]
@@ -4155,8 +4215,58 @@ mod tests {
     }
 
     #[test]
+    fn translated_registered_text_layout_stays_snapped_at_fractional_dpi() {
+        let layout = TextLayoutId::from_raw(47);
+        let mut resources = RenderResources::new();
+        resources.register_text_layout(text_layout_resource(layout, "Label"));
+        let primitives = vec![
+            Primitive::TransformBegin(Transform::translation(Vec2::new(2.2, 3.4))),
+            Primitive::Text(TextPrimitive {
+                layout: Some(layout),
+                origin: Point::new(4.3, 16.4),
+                text: "Label".to_owned(),
+                family: "sans-serif".to_owned(),
+                size: 12.0,
+                line_height: 16.0,
+                brush: Brush::Solid(Color::WHITE),
+            }),
+            Primitive::TransformEnd,
+        ];
+        let mut renderer = VelloRenderer::new();
+
+        let output = renderer.submit_frame(RenderFrameInput {
+            viewport: ViewportInfo::new(
+                Size::new(100.0, 100.0),
+                kinetik_ui_core::PhysicalSize::new(125, 125),
+                ScaleFactor::new(1.25),
+            ),
+            primitives: &primitives,
+            resources: &resources,
+        });
+        let encoding = renderer.scene().encoding();
+        let glyph_run = encoding.resources.glyph_runs.first().expect("glyph run");
+        let glyphs = &encoding.resources.glyphs;
+
+        assert!(output.diagnostics.is_empty());
+        assert_approx(glyph_run.font_size, 15.0);
+        assert!(glyph_run.hint);
+        assert!(
+            glyphs
+                .iter()
+                .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
+            "registered text should snap glyph x positions under translation"
+        );
+        assert!(
+            glyphs
+                .iter()
+                .all(|glyph| (glyph.y - glyph.y.round()).abs() <= 0.001),
+            "registered text should snap glyph baselines under translation"
+        );
+    }
+
+    #[test]
     fn repeated_registered_text_reuses_cached_physical_layout() {
-        let layout = TextLayoutId::from_raw(46);
+        let layout = TextLayoutId::from_raw(48);
         let mut resources = RenderResources::new();
         resources.register_text_layout(text_layout_resource(layout, "Label"));
         let primitives = vec![Primitive::Text(TextPrimitive {
