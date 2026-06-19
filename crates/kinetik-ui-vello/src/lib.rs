@@ -1843,7 +1843,7 @@ fn physical_text_layout_for_key(
     let physical_size = quantize_physical_text_metric(f64::from(key.style.size()) * scale);
     let physical_line_height =
         quantize_physical_text_metric(f64::from(key.style.line_height()) * scale);
-    let physical_width = (f64::from(key.width()) * scale) as f32;
+    let physical_width = quantize_physical_text_extent(f64::from(key.width()) * scale);
     (physical_size.is_finite()
         && physical_size > 0.0
         && physical_line_height.is_finite()
@@ -1900,6 +1900,15 @@ fn physical_text_layout(
 fn quantize_physical_text_metric(value: f64) -> f32 {
     if value.is_finite() && value > 0.0 {
         value.round().max(1.0) as f32
+    } else {
+        value as f32
+    }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn quantize_physical_text_extent(value: f64) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value.round().max(0.0) as f32
     } else {
         value as f32
     }
@@ -2536,8 +2545,9 @@ mod tests {
         RenderDiagnostic, RenderFrameInput, RenderImage, RenderImageSampling, RenderResources,
         RendererBackend, ShapedTextCache, TextLayoutResource, TextureResource, VelloRenderer,
         crisp_rect_border_segments, image_quality, image_region_transform, physical_text_layout,
-        physical_text_layout_for_key, quantize_stroke_width_to_device, render_translation_snapshot,
-        root_transform, snap_axis_aligned_translation, snap_filled_path_elements_to_device,
+        physical_text_layout_for_key, quantize_physical_text_extent,
+        quantize_stroke_width_to_device, render_translation_snapshot, root_transform,
+        snap_axis_aligned_translation, snap_filled_path_elements_to_device,
         snap_image_rect_to_device, snap_point_to_device, snap_radius_to_device,
         snap_rect_to_device, snap_stroke_center_to_device, snap_stroked_line_to_device,
         snap_stroked_path_elements_to_device, snap_stroked_rect_to_device,
@@ -4434,6 +4444,46 @@ mod tests {
                 .lines
                 .iter()
                 .all(|line| (line.height - 24.0).abs() < f32::EPSILON)
+        );
+    }
+
+    #[test]
+    fn physical_text_extent_quantizes_fractional_device_widths() {
+        assert_approx(quantize_physical_text_extent(86.25), 86.0);
+        assert_approx(quantize_physical_text_extent(86.5), 87.0);
+        assert_approx(quantize_physical_text_extent(0.0), 0.0);
+    }
+
+    #[test]
+    fn physical_text_layout_for_key_quantizes_wrap_width_at_device_scale() {
+        let key = TextLayoutKey::new(
+            "alpha beta gamma delta epsilon",
+            TextStyle::new("sans-serif", 12.0, 17.0),
+            69.0,
+            true,
+        );
+        let mut expected_engine = CosmicTextEngine::new();
+        let expected = expected_engine.shape_text(&TextLayoutKey::new(
+            key.text.clone(),
+            TextStyle::new("sans-serif", 15.0, 21.0),
+            86.0,
+            true,
+        ));
+        let mut engine = CosmicTextEngine::new();
+        let mut cache = ShapedTextCache::default();
+
+        let layout =
+            physical_text_layout_for_key(&mut engine, &mut cache, root_transform(1.25), &key)
+                .expect("axis-aligned physical layout");
+
+        assert_eq!(layout.line_count, expected.line_count);
+        assert_eq!(layout.lines.len(), expected.lines.len());
+        assert_approx(layout.size.width, expected.size.width);
+        assert!(
+            layout
+                .runs
+                .iter()
+                .all(|run| (run.font_size - 15.0).abs() < f32::EPSILON)
         );
     }
 
