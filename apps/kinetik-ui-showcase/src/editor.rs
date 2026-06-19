@@ -9,8 +9,8 @@
 use kinetik_ui::core::{
     ActionDescriptor, ActionSource, Axis, Brush, ClipId, Color, CornerRadius, CursorShape, ImageId,
     Key, KeyState, LinePrimitive, Modifiers, PathElement, PathPrimitive, PlatformRequest, Point,
-    Primitive, Rect, RectPrimitive, RepaintRequest, Shortcut, Size, Stroke, TextPrimitive,
-    TextureId, Vec2,
+    Primitive, Rect, RectPrimitive, RepaintRequest, ScaleFactor, Shortcut, Size, Stroke,
+    TextPrimitive, TextureId, Vec2,
 };
 use kinetik_ui::render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
@@ -2093,7 +2093,7 @@ mod tests {
         ICON_ATLAS, ICON_ATLAS_CELL_SIZE, ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE,
         PANEL_JOBS, TOOLBAR_BUTTON_SIZE, TOOLBAR_STRIDE, TOOLBAR_Y, VIEWPORT_SIZE, WORKSPACE_TOP,
         frame_tab_rects, icon_atlas_image, inspector_label_width, item_id, register_resources, rgb,
-        rgba,
+        rgba, snap_icon_point_to_scale, snap_icon_rect_to_scale,
     };
     use kinetik_ui::core::{
         Brush, CursorShape, FrameContext, PathElement, PhysicalSize, PlatformRequest, Point,
@@ -2486,6 +2486,54 @@ mod tests {
     }
 
     #[test]
+    fn editor_toolbar_vector_icons_emit_physical_pixel_snapped_points_at_fractional_dpi() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let scale_factor = ScaleFactor::new(1.25);
+        let context = editor_test_context_scaled(UiInput::default(), scale_factor);
+        let mut ui = Ui::begin_frame(context, &mut memory, &theme);
+        let mut editor = EditorShowcase::new();
+
+        editor.render(&mut ui, 0);
+        let output = ui.finish_output();
+        let mut checked = 0;
+
+        for primitive in &output.primitives {
+            match primitive {
+                Primitive::Line(line)
+                    if point_is_in_toolbar(line.from) || point_is_in_toolbar(line.to) =>
+                {
+                    assert_point_snapped_to_scale(line.from, scale_factor);
+                    assert_point_snapped_to_scale(line.to, scale_factor);
+                    checked += 2;
+                }
+                Primitive::Path(path) => {
+                    for point in path.elements.iter().filter_map(path_element_point) {
+                        if point_is_in_toolbar(point) {
+                            assert_point_snapped_to_scale(point, scale_factor);
+                            checked += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(checked >= 24);
+    }
+
+    #[test]
+    fn editor_icon_snap_helpers_align_points_and_rects_to_fractional_dpi() {
+        let scale_factor = ScaleFactor::new(1.25);
+        let point = snap_icon_point_to_scale(Point::new(12.48, 7.52), scale_factor);
+        let rect = snap_icon_rect_to_scale(Rect::new(4.32, 5.76, 12.48, 9.92), scale_factor);
+
+        assert_point_snapped_to_scale(point, scale_factor);
+        assert_point_snapped_to_scale(Point::new(rect.min_x(), rect.min_y()), scale_factor);
+        assert_point_snapped_to_scale(Point::new(rect.max_x(), rect.max_y()), scale_factor);
+    }
+
+    #[test]
     fn editor_toolbar_vector_icons_preserve_icon_button_semantics() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
@@ -2590,6 +2638,26 @@ mod tests {
 
     fn point_is_in_toolbar(point: Point) -> bool {
         point.y >= TOOLBAR_Y && point.y <= TOOLBAR_Y + TOOLBAR_BUTTON_SIZE
+    }
+
+    fn path_element_point(element: &PathElement) -> Option<Point> {
+        match *element {
+            PathElement::MoveTo(point) | PathElement::LineTo(point) => Some(point),
+            PathElement::QuadTo { to, .. } | PathElement::CubicTo { to, .. } => Some(to),
+            PathElement::Close => None,
+        }
+    }
+
+    fn assert_point_snapped_to_scale(point: Point, scale_factor: ScaleFactor) {
+        let scale = scale_factor.value() as f32;
+        assert!(
+            ((point.x * scale) - (point.x * scale).round()).abs() <= 0.001,
+            "x coordinate should be physical-pixel snapped: {point:?}"
+        );
+        assert!(
+            ((point.y * scale) - (point.y * scale).round()).abs() <= 0.001,
+            "y coordinate should be physical-pixel snapped: {point:?}"
+        );
     }
 
     fn pointer_input_at(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInput {
@@ -3167,8 +3235,11 @@ fn draw_toolbar_icon(ui: &mut Ui<'_>, rect: Rect, icon: ToolbarIcon, color: Colo
     }
 }
 
-fn icon_point(rect: Rect, x: f32, y: f32) -> Point {
-    Point::new(rect.x + rect.width * x, rect.y + rect.height * y)
+fn icon_point(ui: &Ui<'_>, rect: Rect, x: f32, y: f32) -> Point {
+    snap_icon_point_to_scale(
+        Point::new(rect.x + rect.width * x, rect.y + rect.height * y),
+        ui.viewport().scale_factor,
+    )
 }
 
 fn icon_line(
@@ -3181,8 +3252,8 @@ fn icon_line(
 ) {
     line(
         ui,
-        icon_point(rect, from.0, from.1),
-        icon_point(rect, to.0, to.1),
+        icon_point(ui, rect, from.0, from.1),
+        icon_point(ui, rect, to.0, to.1),
         color,
         width,
     );
@@ -3195,11 +3266,14 @@ fn icon_polyline(ui: &mut Ui<'_>, rect: Rect, points: &[(f32, f32)], color: Colo
 }
 
 fn icon_rect(ui: &mut Ui<'_>, bounds: Rect, rect: Rect, color: Color, width: f32) {
-    let target = Rect::new(
-        bounds.x + bounds.width * rect.x,
-        bounds.y + bounds.height * rect.y,
-        bounds.width * rect.width,
-        bounds.height * rect.height,
+    let target = snap_icon_rect_to_scale(
+        Rect::new(
+            bounds.x + bounds.width * rect.x,
+            bounds.y + bounds.height * rect.y,
+            bounds.width * rect.width,
+            bounds.height * rect.height,
+        ),
+        ui.viewport().scale_factor,
     );
     ui.primitive(Primitive::Rect(RectPrimitive {
         rect: target,
@@ -3210,11 +3284,14 @@ fn icon_rect(ui: &mut Ui<'_>, bounds: Rect, rect: Rect, color: Color, width: f32
 }
 
 fn icon_filled_rect(ui: &mut Ui<'_>, bounds: Rect, rect: Rect, color: Color) {
-    let target = Rect::new(
-        bounds.x + bounds.width * rect.x,
-        bounds.y + bounds.height * rect.y,
-        bounds.width * rect.width,
-        bounds.height * rect.height,
+    let target = snap_icon_rect_to_scale(
+        Rect::new(
+            bounds.x + bounds.width * rect.x,
+            bounds.y + bounds.height * rect.y,
+            bounds.width * rect.width,
+            bounds.height * rect.height,
+        ),
+        ui.viewport().scale_factor,
     );
     rect_fill(ui, target, color, None, CornerRadius::all(0.0));
 }
@@ -3222,10 +3299,10 @@ fn icon_filled_rect(ui: &mut Ui<'_>, bounds: Rect, rect: Rect, color: Color) {
 fn icon_filled_path(ui: &mut Ui<'_>, rect: Rect, points: &[(f32, f32)], color: Color) {
     if let Some((first, rest)) = points.split_first() {
         let mut elements = Vec::with_capacity(points.len() + 1);
-        elements.push(PathElement::MoveTo(icon_point(rect, first.0, first.1)));
+        elements.push(PathElement::MoveTo(icon_point(ui, rect, first.0, first.1)));
         elements.extend(
             rest.iter()
-                .map(|point| PathElement::LineTo(icon_point(rect, point.0, point.1))),
+                .map(|point| PathElement::LineTo(icon_point(ui, rect, point.0, point.1))),
         );
         elements.push(PathElement::Close);
         ui.primitive(Primitive::Path(PathPrimitive::new(
@@ -3234,6 +3311,40 @@ fn icon_filled_path(ui: &mut Ui<'_>, rect: Rect, points: &[(f32, f32)], color: C
             None,
         )));
     }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn snap_icon_point_to_scale(point: Point, scale_factor: ScaleFactor) -> Point {
+    if !point.x.is_finite() || !point.y.is_finite() || !scale_factor.is_valid() {
+        return point;
+    }
+
+    let scale = scale_factor.value();
+    Point::new(
+        ((f64::from(point.x) * scale).round() / scale) as f32,
+        ((f64::from(point.y) * scale).round() / scale) as f32,
+    )
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn snap_icon_rect_to_scale(rect: Rect, scale_factor: ScaleFactor) -> Rect {
+    if !rect.x.is_finite()
+        || !rect.y.is_finite()
+        || !rect.width.is_finite()
+        || !rect.height.is_finite()
+        || !scale_factor.is_valid()
+    {
+        return rect;
+    }
+
+    let min = snap_icon_point_to_scale(Point::new(rect.min_x(), rect.min_y()), scale_factor);
+    let max = snap_icon_point_to_scale(Point::new(rect.max_x(), rect.max_y()), scale_factor);
+    Rect::new(
+        min.x,
+        min.y,
+        (max.x - min.x).max(0.0),
+        (max.y - min.y).max(0.0),
+    )
 }
 
 fn vector_icon(ui: &mut Ui<'_>, bounds: Rect, icon: ToolbarIcon, size: f32) {
