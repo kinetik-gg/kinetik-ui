@@ -319,7 +319,7 @@ impl LiveVelloRenderer {
                 base_color: VelloColor::from_rgb8(11, 12, 13),
                 width,
                 height,
-                antialiasing_method: AaConfig::Msaa16,
+                antialiasing_method: live_antialiasing_method(),
             },
         )?;
 
@@ -482,11 +482,18 @@ fn blit_extents_match(target: PhysicalSize<u32>, surface: PhysicalSize<u32>) -> 
     target.width == surface.width && target.height == surface.height
 }
 
+fn live_antialiasing_method() -> AaConfig {
+    AaConfig::Area
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{RepaintSchedule, blit_extents_match, resolve_repaint_schedule};
+    use super::{
+        RepaintSchedule, blit_extents_match, live_antialiasing_method, resolve_repaint_schedule,
+    };
     use kinetik_ui::core::RepaintRequest;
     use std::time::{Duration, Instant};
+    use vello::AaConfig;
     use winit::dpi::PhysicalSize;
 
     #[test]
@@ -543,5 +550,10 @@ mod tests {
             PhysicalSize::new(800, 600),
             PhysicalSize::new(800, 601),
         ));
+    }
+
+    #[test]
+    fn live_renderer_uses_area_antialiasing_for_crisper_ui_edges() {
+        assert!(matches!(live_antialiasing_method(), AaConfig::Area));
     }
 }
