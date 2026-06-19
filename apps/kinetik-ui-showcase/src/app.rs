@@ -290,8 +290,8 @@ impl ShowcaseApp {
                 editor_invocations = self.editor.render(&mut ui, self.action_count);
             } else {
                 Self::app_background(&mut ui);
-                self.chrome(&mut ui);
                 self.page_content(&mut ui);
+                self.chrome(&mut ui);
             }
 
             ui.finish_output()
@@ -2010,6 +2010,18 @@ mod tests {
         click(&mut app, Point::new(70.0, 154.0));
 
         assert_eq!(app.action_count(), 1);
+    }
+
+    #[test]
+    fn component_status_reflects_toggle_click_same_frame() {
+        let mut app = ShowcaseApp::new();
+        app.set_page(ShowcasePage::Components);
+
+        click(&mut app, Point::new(231.0, 204.0));
+
+        assert!(app.primitives().iter().any(|primitive| {
+            matches!(primitive, Primitive::Text(text) if text.text == "Toggle: true")
+        }));
     }
 
     #[test]
