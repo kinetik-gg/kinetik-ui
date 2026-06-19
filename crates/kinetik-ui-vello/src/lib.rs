@@ -1915,8 +1915,8 @@ fn encode_shaped_text_device_space(
                 Fill::NonZero,
                 run.glyphs.iter().map(|glyph| Glyph {
                     id: glyph.id,
-                    x: snap_text_glyph_position_to_device(origin.x + glyph.x * scale as f32),
-                    y: snap_text_glyph_position_to_device(origin.y + glyph.y * scale as f32),
+                    x: origin.x + glyph.x * scale as f32,
+                    y: snap_text_glyph_baseline_to_device(origin.y + glyph.y * scale as f32),
                 }),
             );
     }
@@ -1926,7 +1926,7 @@ fn snap_text_origin_to_device(origin: Point) -> Point {
     Point::new(origin.x.round(), origin.y.round())
 }
 
-fn snap_text_glyph_position_to_device(position: f32) -> f32 {
+fn snap_text_glyph_baseline_to_device(position: f32) -> f32 {
     position.round()
 }
 
@@ -2383,7 +2383,7 @@ mod tests {
         snap_image_rect_to_device, snap_point_to_device, snap_radius_to_device,
         snap_rect_to_device, snap_stroke_center_to_device, snap_stroked_line_to_device,
         snap_stroked_path_elements_to_device, snap_stroked_rect_to_device,
-        snap_text_glyph_position_to_device, snap_text_origin_to_device, translate_primitives,
+        snap_text_glyph_baseline_to_device, snap_text_origin_to_device, translate_primitives,
         viewport_device_scale,
     };
     use kinetik_ui_core::render::TexturePrimitive;
@@ -3764,9 +3764,9 @@ mod tests {
     }
 
     #[test]
-    fn text_glyph_position_snapping_rounds_device_coordinates() {
-        assert_approx(snap_text_glyph_position_to_device(11.49), 11.0);
-        assert_approx(snap_text_glyph_position_to_device(11.5), 12.0);
+    fn text_glyph_baseline_snapping_rounds_device_coordinates() {
+        assert_approx(snap_text_glyph_baseline_to_device(11.49), 11.0);
+        assert_approx(snap_text_glyph_baseline_to_device(11.5), 12.0);
     }
 
     #[test]
@@ -3806,7 +3806,7 @@ mod tests {
     }
 
     #[test]
-    fn physical_text_snaps_each_glyph_to_device_pixels() {
+    fn physical_text_preserves_horizontal_glyph_spacing() {
         let mut renderer = VelloRenderer::new();
         let resources = RenderResources::new();
         let primitives = vec![Primitive::Text(TextPrimitive {
@@ -3832,10 +3832,16 @@ mod tests {
 
         assert!(output.diagnostics.is_empty());
         assert!(glyphs.len() > 1);
-        for glyph in glyphs {
-            assert_approx(glyph.x, glyph.x.round());
-            assert_approx(glyph.y, glyph.y.round());
-        }
+        assert!(
+            glyphs.iter().any(|glyph| glyph.x.fract().abs() > 0.001),
+            "horizontal glyph advances should keep shaped fractional spacing"
+        );
+        assert!(
+            glyphs
+                .iter()
+                .all(|glyph| (glyph.y - glyph.y.round()).abs() <= 0.001),
+            "baselines should stay snapped to physical pixels"
+        );
     }
 
     #[test]

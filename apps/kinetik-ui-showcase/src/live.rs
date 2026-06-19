@@ -542,7 +542,7 @@ fn surface_status_forces_reconfigure(status: SurfaceStatus) -> bool {
 }
 
 fn live_antialiasing_method() -> AaConfig {
-    AaConfig::Msaa16
+    AaConfig::Area
 }
 
 fn live_present_mode() -> PresentMode {
@@ -618,8 +618,8 @@ mod tests {
     }
 
     #[test]
-    fn live_renderer_uses_msaa_for_sharper_live_text() {
-        assert!(matches!(live_antialiasing_method(), AaConfig::Msaa16));
+    fn live_renderer_uses_area_antialiasing_for_crisp_live_text() {
+        assert!(matches!(live_antialiasing_method(), AaConfig::Area));
     }
 
     #[test]
