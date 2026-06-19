@@ -503,8 +503,12 @@ pub struct TextPrimitive {
     pub origin: Point,
     /// Text content.
     pub text: String,
+    /// Font family name or logical family.
+    pub family: String,
     /// Font size in logical units.
     pub size: f32,
+    /// Line height in logical units.
+    pub line_height: f32,
     /// Fill brush.
     pub brush: Brush,
 }
@@ -737,7 +741,9 @@ mod tests {
             layout: Some(TextLayoutId::from_raw(3)),
             origin: Point::new(1.0, 2.0),
             text: "Label".to_owned(),
+            family: "sans-serif".to_owned(),
             size: 12.0,
+            line_height: 16.0,
             brush: Brush::Solid(Color::WHITE),
         });
         let path = Primitive::Path(PathPrimitive::new(
