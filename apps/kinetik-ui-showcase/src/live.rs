@@ -81,9 +81,13 @@ impl LiveShowcase {
         }
     }
 
-    fn request_interactive_redraw(&mut self) {
+    fn request_immediate_redraw(&mut self) {
         self.next_redraw_at = Some(Instant::now());
         self.request_redraw();
+    }
+
+    fn request_interactive_redraw(&mut self) {
+        self.request_immediate_redraw();
     }
 
     fn resize_renderer(&mut self, size: PhysicalSize<u32>) {
@@ -121,7 +125,7 @@ impl LiveShowcase {
         let shell = requests.apply_to_window(window);
 
         window.pre_present_notify();
-        match renderer.render(self.app.output(), &resources, viewport) {
+        let retry_surface_redraw = match renderer.render(self.app.output(), &resources, viewport) {
             Ok(()) => {
                 self.next_redraw_at = schedule_shell_repaint(
                     event_loop,
@@ -130,17 +134,20 @@ impl LiveShowcase {
                     shell.repaint_after,
                     shell.continuous_repaint,
                 );
+                false
             }
             Err(LiveRenderError::Surface(status)) => {
                 handle_surface_status(status, renderer, size);
-                if surface_status_requests_redraw(status) {
-                    window.request_redraw();
-                }
+                surface_status_requests_redraw(status)
             }
             Err(error) => {
                 eprintln!("showcase render error: {error}");
                 event_loop.exit();
+                false
             }
+        };
+        if retry_surface_redraw {
+            self.request_immediate_redraw();
         }
 
         self.input.begin_frame();
@@ -713,6 +720,19 @@ mod tests {
         app.request_interactive_redraw();
 
         let deadline = app.next_redraw_at.expect("interactive redraw deadline");
+        assert!(deadline >= before);
+        assert!(deadline <= Instant::now());
+    }
+
+    #[test]
+    fn immediate_redraw_replaces_delayed_repaint_with_fallback_deadline() {
+        let mut app = LiveShowcase::new(None);
+        app.next_redraw_at = Some(Instant::now() + Duration::from_secs(1));
+
+        let before = Instant::now();
+        app.request_immediate_redraw();
+
+        let deadline = app.next_redraw_at.expect("immediate redraw deadline");
         assert!(deadline >= before);
         assert!(deadline <= Instant::now());
     }
