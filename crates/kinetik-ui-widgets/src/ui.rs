@@ -4,10 +4,11 @@ use std::hash::Hash;
 
 use kinetik_ui_core::{
     ActionContext, ActionDescriptor, ActionId, ActionInvocation, ActionSource, ClipId,
-    DropTargetResponse, FrameContext, FrameOutput, ImageId, Insets, PhysicalSize, Primitive, Rect,
-    RepaintRequest, Response, ScaleFactor, ScrollResponse, Size, TextPrimitive, Theme, TimeInfo,
-    Transform, Ui as CoreUi, UiInput, UiMemory, Vec2, ViewportInfo, WidgetId, context_menu_trigger,
-    draggable, drop_target, focusable, pressable, scrollable, selectable, tooltip_trigger,
+    DropTargetResponse, FrameContext, FrameOutput, ImageId, Insets, PhysicalSize, PlatformRequest,
+    Primitive, Rect, RepaintRequest, Response, ScaleFactor, ScrollResponse, SemanticNode, Size,
+    TextPrimitive, Theme, TimeInfo, Transform, Ui as CoreUi, UiInput, UiMemory, Vec2, ViewportInfo,
+    WidgetId, context_menu_trigger, draggable, drop_target, focusable, pressable, scrollable,
+    selectable, tooltip_trigger,
 };
 use kinetik_ui_text::{TextEditState, TextLayoutKey, TextLayoutStore, TextStyle};
 
@@ -214,6 +215,16 @@ impl<'a> Ui<'a> {
         self.runtime.request_repaint(request);
     }
 
+    /// Appends a semantic node for custom application-drawn UI.
+    pub fn push_semantic_node(&mut self, node: SemanticNode) {
+        self.runtime.push_semantic_node(node);
+    }
+
+    /// Adds a platform request for custom application-drawn UI.
+    pub fn push_platform_request(&mut self, request: PlatformRequest) {
+        self.runtime.push_platform_request(request);
+    }
+
     /// Invokes a visible, enabled action descriptor from the provided UI source.
     ///
     /// Returns false when the descriptor is hidden or disabled.
@@ -323,6 +334,11 @@ impl<'a> Ui<'a> {
     /// Resolves neutral press/click behavior without painting.
     pub fn pressable(&mut self, key: impl Hash, rect: Rect, disabled: bool) -> Response {
         let id = self.id(key);
+        self.pressable_with_id(id, rect, disabled)
+    }
+
+    /// Resolves neutral press/click behavior for a precomputed widget ID.
+    pub fn pressable_with_id(&mut self, id: WidgetId, rect: Rect, disabled: bool) -> Response {
         let (input, memory) = self.runtime.input_and_memory_mut();
         pressable(id, rect, input, memory, disabled)
     }
@@ -1129,8 +1145,8 @@ mod tests {
         ActionContext, ActionDescriptor, ActionSource, Brush, Color, CursorShape, FrameContext,
         FrameWarning, IconId, ImageId, Insets, PathElement, PhysicalSize, PlatformRequest, Point,
         PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, ScaleFactor,
-        SemanticRole, Size, TextPrimitive, TimeInfo, UiInput, UiMemory, Vec2, ViewportInfo,
-        WidgetId, default_dark_theme,
+        SemanticNode, SemanticRole, Size, TextPrimitive, TimeInfo, UiInput, UiMemory, Vec2,
+        ViewportInfo, WidgetId, default_dark_theme,
     };
     use kinetik_ui_text::{TextEditState, TextLayoutKey, TextLayoutStore, TextStyle};
 
@@ -1565,6 +1581,37 @@ mod tests {
     }
 
     #[test]
+    fn ui_exposes_custom_semantics_and_platform_requests() {
+        let theme = default_dark_theme();
+        let input = UiInput::default();
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let id = ui.id("custom-button");
+
+        ui.push_semantic_node(
+            SemanticNode::new(
+                id,
+                SemanticRole::IconButton,
+                Rect::new(0.0, 0.0, 24.0, 24.0),
+            )
+            .with_label("Custom"),
+        );
+        ui.push_platform_request(PlatformRequest::SetCursor(CursorShape::PointingHand));
+        let output = ui.finish_output();
+
+        assert!(output.semantics.nodes().iter().any(|node| {
+            node.id == id
+                && node.role == SemanticRole::IconButton
+                && node.label.as_deref() == Some("Custom")
+        }));
+        assert!(
+            output
+                .platform_requests
+                .contains(&PlatformRequest::SetCursor(CursorShape::PointingHand))
+        );
+    }
+
+    #[test]
     fn ui_toggle_value_mutates_and_reflects_clicked_state_same_frame() {
         let theme = default_dark_theme();
         let rect = Rect::new(0.0, 0.0, 54.0, 24.0);
@@ -1806,6 +1853,27 @@ mod tests {
         let dragged = ui.draggable("draggable", Rect::new(0.0, 0.0, 20.0, 20.0), false);
         assert!(dragged.state.active);
         assert!(ui.finish_output().primitives.is_empty());
+    }
+
+    #[test]
+    fn ui_pressable_with_id_supports_custom_semantics_without_duplicate_warning() {
+        let theme = default_dark_theme();
+        let input = pressed_at(4.0, 4.0);
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let id = ui.id("custom-pressable");
+
+        let pressed = ui.pressable_with_id(id, Rect::new(0.0, 0.0, 20.0, 20.0), false);
+        ui.push_semantic_node(SemanticNode::new(
+            id,
+            SemanticRole::IconButton,
+            Rect::new(0.0, 0.0, 20.0, 20.0),
+        ));
+        let output = ui.finish_output();
+
+        assert!(pressed.state.pressed);
+        assert!(output.warnings.is_empty());
+        assert_eq!(output.semantics.nodes()[0].id, id);
     }
 
     #[test]
