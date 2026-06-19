@@ -2544,7 +2544,7 @@ mod tests {
     }
 
     #[test]
-    fn showcase_pages_snap_text_to_physical_pixels_at_fractional_dpi() {
+    fn showcase_pages_snap_text_origins_and_baselines_at_fractional_dpi() {
         for (size, scale_factor) in [
             (Size::new(1151.2, 719.2), 1.25),
             (Size::new(960.7, 602.0), 1.5),
@@ -2566,7 +2566,9 @@ mod tests {
                     primitives: &app.output().primitives,
                     resources: &resources,
                 });
-                let glyphs = &renderer.scene().encoding().resources.glyphs;
+                let encoding = renderer.scene().encoding();
+                let glyphs = &encoding.resources.glyphs;
+                let glyph_runs = &encoding.resources.glyph_runs;
 
                 assert!(
                     output.diagnostics.is_empty(),
@@ -2578,10 +2580,12 @@ mod tests {
                     "{page:?} at {size:?} emitted no glyphs at fractional DPI"
                 );
                 assert!(
-                    glyphs
-                        .iter()
-                        .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
-                    "{page:?} at {size:?} emitted fractional glyph x positions"
+                    glyph_runs.iter().all(|run| {
+                        glyphs
+                            .get(run.glyphs.start)
+                            .is_some_and(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001)
+                    }),
+                    "{page:?} at {size:?} emitted fractional glyph run origins"
                 );
                 assert!(
                     glyphs

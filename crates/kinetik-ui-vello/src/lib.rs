@@ -1975,7 +1975,7 @@ fn encode_shaped_text_device_space(
                 Fill::NonZero,
                 run.glyphs.iter().map(|glyph| Glyph {
                     id: glyph.id,
-                    x: snap_text_glyph_position_to_device(origin.x + glyph.x * scale as f32),
+                    x: origin.x + glyph.x * scale as f32,
                     y: snap_text_glyph_baseline_to_device(origin.y + glyph.y * scale as f32),
                 }),
             );
@@ -2012,9 +2012,7 @@ fn encode_shaped_text_axis_aligned_device_space(
                 Fill::NonZero,
                 run.glyphs.iter().map(|glyph| Glyph {
                     id: glyph.id,
-                    x: snap_text_glyph_position_to_device(
-                        origin.x + (f64::from(glyph.x) * scale_x) as f32,
-                    ),
+                    x: origin.x + (f64::from(glyph.x) * scale_x) as f32,
                     y: snap_text_glyph_baseline_to_device(
                         origin.y + (f64::from(glyph.y) * effective_y_scale) as f32,
                     ),
@@ -2028,10 +2026,6 @@ fn snap_text_origin_to_device(origin: Point) -> Point {
 }
 
 fn snap_text_glyph_baseline_to_device(position: f32) -> f32 {
-    position.round()
-}
-
-fn snap_text_glyph_position_to_device(position: f32) -> f32 {
     position.round()
 }
 
@@ -2551,9 +2545,9 @@ mod tests {
         snap_image_rect_to_device, snap_point_to_device, snap_radius_to_device,
         snap_rect_to_device, snap_stroke_center_to_device, snap_stroked_line_to_device,
         snap_stroked_path_elements_to_device, snap_stroked_rect_to_device,
-        snap_text_glyph_baseline_to_device, snap_text_glyph_position_to_device,
-        snap_text_origin_to_device, snap_text_transform_origin_to_device, transform_point,
-        translate_primitives, viewport_device_scale,
+        snap_text_glyph_baseline_to_device, snap_text_origin_to_device,
+        snap_text_transform_origin_to_device, transform_point, translate_primitives,
+        viewport_device_scale,
     };
     use kinetik_ui_core::render::TexturePrimitive;
     use kinetik_ui_core::{
@@ -2662,6 +2656,19 @@ mod tests {
             key,
             layout: std::sync::Arc::new(layout),
         }
+    }
+
+    fn shaped_glyph_x_positions(
+        layout: &ShapedTextLayout,
+        snapped_origin_x: f32,
+        scale: f32,
+    ) -> Vec<f32> {
+        layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .map(|glyph| snapped_origin_x + glyph.x * scale)
+            .collect()
     }
 
     fn clip_rects(command: &RenderCommand) -> Vec<Rect> {
@@ -4061,12 +4068,6 @@ mod tests {
     }
 
     #[test]
-    fn text_glyph_position_snapping_rounds_device_coordinates() {
-        assert_approx(snap_text_glyph_position_to_device(7.49), 7.0);
-        assert_approx(snap_text_glyph_position_to_device(7.5), 8.0);
-    }
-
-    #[test]
     fn text_transform_origin_snapping_happens_in_device_space_for_non_uniform_scale() {
         let transform = root_transform(1.25) * Affine::scale_non_uniform(1.5, 1.0);
         let origin = Point::new(4.3, 16.4);
@@ -4127,9 +4128,11 @@ mod tests {
     }
 
     #[test]
-    fn physical_text_snaps_horizontal_glyph_positions() {
+    fn physical_text_preserves_shaped_horizontal_glyph_positions() {
         let mut renderer = VelloRenderer::new();
         let resources = RenderResources::new();
+        let mut text_engine = CosmicTextEngine::new();
+        let mut text_cache = ShapedTextCache::default();
         let primitives = vec![Primitive::Text(TextPrimitive {
             layout: None,
             origin: Point::new(4.3, 16.4),
@@ -4150,15 +4153,23 @@ mod tests {
             resources: &resources,
         });
         let glyphs = &renderer.scene().encoding().resources.glyphs;
+        let layout = physical_text_layout(
+            &mut text_engine,
+            &mut text_cache,
+            root_transform(1.25),
+            "Kinetik",
+            "sans-serif",
+            13.0,
+            18.0,
+        )
+        .expect("axis-aligned physical layout");
+        let expected_x = shaped_glyph_x_positions(&layout, 5.0, 1.0);
 
         assert!(output.diagnostics.is_empty());
-        assert!(glyphs.len() > 1);
-        assert!(
-            glyphs
-                .iter()
-                .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
-            "horizontal glyph positions should stay snapped to physical pixels"
-        );
+        assert_eq!(glyphs.len(), expected_x.len());
+        for (glyph, expected) in glyphs.iter().zip(expected_x) {
+            assert_approx(glyph.x, expected);
+        }
         assert!(
             glyphs
                 .iter()
@@ -4211,12 +4222,6 @@ mod tests {
             assert!(
                 glyphs
                     .iter()
-                    .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
-                "scale {scale} should snap glyph x positions"
-            );
-            assert!(
-                glyphs
-                    .iter()
                     .all(|glyph| (glyph.y - glyph.y.round()).abs() <= 0.001),
                 "scale {scale} should snap glyph baselines"
             );
@@ -4258,12 +4263,8 @@ mod tests {
         assert_approx(glyph_run.font_size, 20.0);
         assert!(glyph_run.hint);
         assert!(glyphs.len() > 1);
-        assert!(
-            glyphs
-                .iter()
-                .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
-            "translated text should snap glyph x positions"
-        );
+        let first_glyph = glyphs.first().expect("glyph");
+        assert!((first_glyph.x - first_glyph.x.round()).abs() <= 0.001);
         assert!(
             glyphs
                 .iter()
@@ -4322,12 +4323,8 @@ mod tests {
         assert_approx(glyph_transform.matrix[0], 0.8125);
         assert_approx(glyph_transform.matrix[3], 1.0);
         assert!(glyphs.len() > 1);
-        assert!(
-            glyphs
-                .iter()
-                .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
-            "non-uniform text should snap glyph x positions"
-        );
+        let first_glyph = glyphs.first().expect("glyph");
+        assert!((first_glyph.x - first_glyph.x.round()).abs() <= 0.001);
         assert!(
             glyphs
                 .iter()
@@ -4595,12 +4592,8 @@ mod tests {
         assert!(output.diagnostics.is_empty());
         assert_approx(glyph_run.font_size, 15.0);
         assert!(glyph_run.hint);
-        assert!(
-            glyphs
-                .iter()
-                .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
-            "registered text should snap glyph x positions under translation"
-        );
+        let first_glyph = glyphs.first().expect("glyph");
+        assert!((first_glyph.x - first_glyph.x.round()).abs() <= 0.001);
         assert!(
             glyphs
                 .iter()
