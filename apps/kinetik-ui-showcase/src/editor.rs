@@ -8,8 +8,8 @@
 
 use kinetik_ui::core::{
     ActionDescriptor, ActionSource, Axis, Brush, ClipId, Color, CornerRadius, ImageId, Key,
-    KeyState, LinePrimitive, Modifiers, Point, Primitive, Rect, RectPrimitive, RepaintRequest,
-    Shortcut, Size, Stroke, TextPrimitive, TextureId, Vec2,
+    KeyState, LinePrimitive, Modifiers, PathElement, PathPrimitive, Point, Primitive, Rect,
+    RectPrimitive, RepaintRequest, Shortcut, Size, Stroke, TextPrimitive, TextureId, Vec2,
 };
 use kinetik_ui::render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
@@ -168,6 +168,41 @@ enum EditorTool {
     Move,
     Rotate,
     Scale,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolbarIcon {
+    Select,
+    Move,
+    Rotate,
+    Scale,
+    Grid,
+    Crosshair,
+    Reset,
+    Play,
+    Pause,
+    Stop,
+    Rocket,
+    Download,
+}
+
+impl ToolbarIcon {
+    const fn raw(self) -> u64 {
+        match self {
+            Self::Select => 1,
+            Self::Move => 2,
+            Self::Rotate => 3,
+            Self::Scale => 4,
+            Self::Grid => 5,
+            Self::Crosshair => 6,
+            Self::Reset => 7,
+            Self::Play => 8,
+            Self::Pause => 9,
+            Self::Stop => 10,
+            Self::Rocket => 11,
+            Self::Download => 12,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -744,36 +779,42 @@ impl EditorShowcase {
         for (tool, icon, label, action) in [
             (
                 EditorTool::Select,
-                ICON_CURSOR,
+                ToolbarIcon::Select,
                 "Select",
                 ACTION_TOOL_SELECT,
             ),
-            (EditorTool::Move, ICON_MOVE, "Move", ACTION_TOOL_MOVE),
+            (
+                EditorTool::Move,
+                ToolbarIcon::Move,
+                "Move",
+                ACTION_TOOL_MOVE,
+            ),
             (
                 EditorTool::Rotate,
-                ICON_ROTATE,
+                ToolbarIcon::Rotate,
                 "Rotate",
                 ACTION_TOOL_ROTATE,
             ),
             (
                 EditorTool::Scale,
-                ICON_TRANSFORM,
+                ToolbarIcon::Scale,
                 "Scale",
                 ACTION_TOOL_SCALE,
             ),
         ] {
             let button = Rect::new(x, TOOLBAR_Y, TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-            let response = ui.image_icon_button_value_sized(
+            let response = toolbar_icon_button(
+                ui,
                 ("editor.tool", action),
                 button,
                 icon,
                 label,
-                TOOLBAR_ICON_SIZE,
-                &mut self.selected_tool,
-                tool,
+                self.selected_tool == tool,
                 false,
             );
             if response.clicked {
+                self.selected_tool = tool;
+                ui.request_repaint(RepaintRequest::NextFrame);
                 let status = match tool {
                     EditorTool::Select => "Select tool active",
                     EditorTool::Move => "Move tool active",
@@ -797,16 +838,17 @@ impl EditorShowcase {
         );
         x += 18.0;
         for (icon, label, action) in [
-            (ICON_GRID, "Toggle grid", ACTION_GRID),
-            (ICON_CROSSHAIR, "Frame selected", ACTION_PALETTE),
-            (ICON_RESET, "Reset view", ACTION_PALETTE),
+            (ToolbarIcon::Grid, "Toggle grid", ACTION_GRID),
+            (ToolbarIcon::Crosshair, "Frame selected", ACTION_PALETTE),
+            (ToolbarIcon::Reset, "Reset view", ACTION_PALETTE),
         ] {
-            let response = ui.image_icon_button_sized(
+            let response = toolbar_icon_button(
+                ui,
                 ("editor.viewport-tool", action, icon.raw()),
                 Rect::new(x, TOOLBAR_Y, TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE),
                 icon,
                 label,
-                TOOLBAR_ICON_SIZE,
+                false,
                 false,
             );
             if response.clicked {
@@ -817,16 +859,17 @@ impl EditorShowcase {
 
         let right = viewport.max_x() - 220.0;
         for (index, (icon, label, action)) in [
-            (ICON_PLAY, "Play", ACTION_PLAY),
-            (ICON_PAUSE, "Pause", ACTION_PLAY),
-            (ICON_STOP, "Stop", ACTION_STOP),
-            (ICON_ROCKET, "Build", ACTION_BUILD),
-            (ICON_DOWNLOAD, "Export", ACTION_BUILD),
+            (ToolbarIcon::Play, "Play", ACTION_PLAY),
+            (ToolbarIcon::Pause, "Pause", ACTION_PLAY),
+            (ToolbarIcon::Stop, "Stop", ACTION_STOP),
+            (ToolbarIcon::Rocket, "Build", ACTION_BUILD),
+            (ToolbarIcon::Download, "Export", ACTION_BUILD),
         ]
         .into_iter()
         .enumerate()
         {
-            let response = ui.image_icon_button_sized(
+            let response = toolbar_icon_button(
+                ui,
                 ("editor.run", action, index),
                 Rect::new(
                     right + index as f32 * TOOLBAR_STRIDE,
@@ -836,7 +879,7 @@ impl EditorShowcase {
                 ),
                 icon,
                 label,
-                TOOLBAR_ICON_SIZE,
+                false,
                 false,
             );
             if response.clicked {
@@ -1869,13 +1912,13 @@ fn inspector_label_width(grid_width: f32) -> f32 {
 mod tests {
     use super::{
         EditorShowcase, EditorTool, ICON_ASSETS, ICON_ATLAS, ICON_ATLAS_CELL_SIZE,
-        ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE, TOOLBAR_ICON_SIZE, TOOLBAR_Y,
+        ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE, TOOLBAR_BUTTON_SIZE, TOOLBAR_Y,
         icon_atlas_image, inspector_label_width, item_id, register_resources,
     };
     use kinetik_ui::core::{
-        FrameContext, PhysicalSize, Point, PointerButtonState, PointerInput, Primitive, Rect,
-        RepaintRequest, ScaleFactor, Size, TimeInfo, UiInput, UiMemory, ViewportInfo,
-        default_dark_theme,
+        FrameContext, PathElement, PhysicalSize, Point, PointerButtonState, PointerInput,
+        Primitive, Rect, RepaintRequest, ScaleFactor, Size, TimeInfo, UiInput, UiMemory,
+        ViewportInfo, default_dark_theme,
     };
     use kinetik_ui::render::RenderResources;
     use kinetik_ui::widgets::Ui;
@@ -2061,7 +2104,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_toolbar_icons_use_native_atlas_size() {
+    fn editor_toolbar_icons_use_vector_primitives_instead_of_bitmap_atlas() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
         let context = editor_test_context(UiInput::default());
@@ -2070,27 +2113,45 @@ mod tests {
 
         editor.render(&mut ui, 0);
         let output = ui.finish_output();
-        let toolbar_icons = output
+        let toolbar_bitmap_icons = output
             .primitives
             .iter()
-            .filter_map(|primitive| match primitive {
-                Primitive::Image(image)
-                    if is_editor_icon(image.image)
-                        && (image.rect.y - (TOOLBAR_Y + 1.0)).abs() <= f32::EPSILON =>
-                {
-                    Some(image.rect)
-                }
-                _ => None,
+            .filter(|primitive| {
+                matches!(
+                    primitive,
+                    Primitive::Image(image)
+                        if is_editor_icon(image.image)
+                            && (image.rect.y - (TOOLBAR_Y + 1.0)).abs() <= f32::EPSILON
+                )
             })
-            .collect::<Vec<_>>();
+            .count();
+        let toolbar_vector_segments = output
+            .primitives
+            .iter()
+            .filter(|primitive| match primitive {
+                Primitive::Line(line) => {
+                    point_is_in_toolbar(line.from) || point_is_in_toolbar(line.to)
+                }
+                Primitive::Path(path) => path.elements.iter().any(|element| match element {
+                    PathElement::MoveTo(point) | PathElement::LineTo(point) => {
+                        point_is_in_toolbar(*point)
+                    }
+                    PathElement::QuadTo { ctrl, to } => {
+                        point_is_in_toolbar(*ctrl) || point_is_in_toolbar(*to)
+                    }
+                    PathElement::CubicTo { ctrl1, ctrl2, to } => {
+                        point_is_in_toolbar(*ctrl1)
+                            || point_is_in_toolbar(*ctrl2)
+                            || point_is_in_toolbar(*to)
+                    }
+                    PathElement::Close => false,
+                }),
+                _ => false,
+            })
+            .count();
 
-        assert_eq!(toolbar_icons.len(), 12);
-        for rect in toolbar_icons {
-            assert_eq!(rect.width, ICON_SIZE as f32);
-            assert_eq!(rect.height, ICON_SIZE as f32);
-            assert_eq!(rect.width, TOOLBAR_ICON_SIZE);
-            assert_eq!(rect.height, TOOLBAR_ICON_SIZE);
-        }
+        assert_eq!(toolbar_bitmap_icons, 0);
+        assert!(toolbar_vector_segments >= 12);
     }
 
     fn editor_test_context(input: UiInput) -> FrameContext {
@@ -2103,6 +2164,10 @@ mod tests {
             input,
             TimeInfo::default(),
         )
+    }
+
+    fn point_is_in_toolbar(point: Point) -> bool {
+        point.y >= TOOLBAR_Y && point.y <= TOOLBAR_Y + TOOLBAR_BUTTON_SIZE
     }
 
     fn pointer_input_at(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInput {
@@ -2324,6 +2389,253 @@ fn line(ui: &mut Ui<'_>, from: Point, to: Point, color: Color, width: f32) {
         to,
         stroke: Stroke::new(width, Brush::Solid(color)),
     }));
+}
+
+fn toolbar_icon_button(
+    ui: &mut Ui<'_>,
+    key: impl std::hash::Hash,
+    rect: Rect,
+    icon: ToolbarIcon,
+    _label: &str,
+    selected: bool,
+    disabled: bool,
+) -> kinetik_ui::core::Response {
+    let response = ui.pressable(key, rect, disabled);
+    let visual_selected = selected || response.clicked;
+    let fill = if disabled {
+        rgb(24, 25, 28)
+    } else if visual_selected {
+        rgb(39, 69, 122)
+    } else if response.state.pressed {
+        rgb(35, 37, 42)
+    } else if response.state.hovered {
+        rgb(31, 33, 38)
+    } else {
+        rgb(24, 25, 28)
+    };
+    let stroke = if visual_selected {
+        rgb(83, 137, 230)
+    } else {
+        rgb(58, 61, 68)
+    };
+    let color = if disabled {
+        rgb(112, 118, 128)
+    } else if visual_selected {
+        rgb(246, 248, 252)
+    } else {
+        rgb(218, 223, 232)
+    };
+
+    rect_fill(ui, rect, fill, Some(stroke), CornerRadius::all(4.0));
+    let icon_rect = Rect::new(
+        rect.x + (rect.width - TOOLBAR_ICON_SIZE) * 0.5,
+        rect.y + (rect.height - TOOLBAR_ICON_SIZE) * 0.5,
+        TOOLBAR_ICON_SIZE,
+        TOOLBAR_ICON_SIZE,
+    );
+    draw_toolbar_icon(ui, icon_rect, icon, color);
+
+    response
+}
+
+fn draw_toolbar_icon(ui: &mut Ui<'_>, rect: Rect, icon: ToolbarIcon, color: Color) {
+    match icon {
+        ToolbarIcon::Select => {
+            icon_polyline(
+                ui,
+                rect,
+                &[
+                    (0.25, 0.14),
+                    (0.25, 0.78),
+                    (0.42, 0.62),
+                    (0.54, 0.88),
+                    (0.66, 0.82),
+                    (0.54, 0.57),
+                    (0.77, 0.57),
+                    (0.25, 0.14),
+                ],
+                color,
+                2.0,
+            );
+        }
+        ToolbarIcon::Move => {
+            icon_line(ui, rect, (0.5, 0.18), (0.5, 0.82), color, 2.0);
+            icon_line(ui, rect, (0.18, 0.5), (0.82, 0.5), color, 2.0);
+            icon_line(ui, rect, (0.5, 0.18), (0.39, 0.31), color, 2.0);
+            icon_line(ui, rect, (0.5, 0.18), (0.61, 0.31), color, 2.0);
+            icon_line(ui, rect, (0.5, 0.82), (0.39, 0.69), color, 2.0);
+            icon_line(ui, rect, (0.5, 0.82), (0.61, 0.69), color, 2.0);
+            icon_line(ui, rect, (0.18, 0.5), (0.31, 0.39), color, 2.0);
+            icon_line(ui, rect, (0.18, 0.5), (0.31, 0.61), color, 2.0);
+            icon_line(ui, rect, (0.82, 0.5), (0.69, 0.39), color, 2.0);
+            icon_line(ui, rect, (0.82, 0.5), (0.69, 0.61), color, 2.0);
+        }
+        ToolbarIcon::Rotate => {
+            icon_polyline(
+                ui,
+                rect,
+                &[
+                    (0.72, 0.26),
+                    (0.56, 0.18),
+                    (0.37, 0.23),
+                    (0.24, 0.38),
+                    (0.23, 0.58),
+                    (0.34, 0.75),
+                    (0.53, 0.82),
+                    (0.72, 0.76),
+                ],
+                color,
+                2.0,
+            );
+            icon_line(ui, rect, (0.72, 0.26), (0.72, 0.45), color, 2.0);
+            icon_line(ui, rect, (0.72, 0.26), (0.54, 0.28), color, 2.0);
+        }
+        ToolbarIcon::Scale => {
+            icon_rect(ui, rect, Rect::new(0.25, 0.25, 0.50, 0.50), color, 2.0);
+            icon_line(ui, rect, (0.25, 0.25), (0.13, 0.13), color, 2.0);
+            icon_line(ui, rect, (0.75, 0.25), (0.87, 0.13), color, 2.0);
+            icon_line(ui, rect, (0.25, 0.75), (0.13, 0.87), color, 2.0);
+            icon_line(ui, rect, (0.75, 0.75), (0.87, 0.87), color, 2.0);
+        }
+        ToolbarIcon::Grid => {
+            icon_rect(ui, rect, Rect::new(0.18, 0.18, 0.64, 0.64), color, 2.0);
+            icon_line(ui, rect, (0.39, 0.18), (0.39, 0.82), color, 2.0);
+            icon_line(ui, rect, (0.61, 0.18), (0.61, 0.82), color, 2.0);
+            icon_line(ui, rect, (0.18, 0.39), (0.82, 0.39), color, 2.0);
+            icon_line(ui, rect, (0.18, 0.61), (0.82, 0.61), color, 2.0);
+        }
+        ToolbarIcon::Crosshair => {
+            icon_line(ui, rect, (0.5, 0.14), (0.5, 0.34), color, 2.0);
+            icon_line(ui, rect, (0.5, 0.66), (0.5, 0.86), color, 2.0);
+            icon_line(ui, rect, (0.14, 0.5), (0.34, 0.5), color, 2.0);
+            icon_line(ui, rect, (0.66, 0.5), (0.86, 0.5), color, 2.0);
+            icon_rect(ui, rect, Rect::new(0.34, 0.34, 0.32, 0.32), color, 2.0);
+        }
+        ToolbarIcon::Reset => {
+            icon_polyline(
+                ui,
+                rect,
+                &[
+                    (0.72, 0.28),
+                    (0.55, 0.18),
+                    (0.34, 0.24),
+                    (0.22, 0.42),
+                    (0.26, 0.64),
+                    (0.43, 0.78),
+                    (0.65, 0.76),
+                    (0.78, 0.60),
+                ],
+                color,
+                2.0,
+            );
+            icon_line(ui, rect, (0.72, 0.28), (0.70, 0.47), color, 2.0);
+            icon_line(ui, rect, (0.72, 0.28), (0.53, 0.30), color, 2.0);
+        }
+        ToolbarIcon::Play => {
+            icon_filled_path(ui, rect, &[(0.34, 0.22), (0.34, 0.78), (0.78, 0.50)], color);
+        }
+        ToolbarIcon::Pause => {
+            icon_filled_rect(ui, rect, Rect::new(0.30, 0.23, 0.14, 0.54), color);
+            icon_filled_rect(ui, rect, Rect::new(0.56, 0.23, 0.14, 0.54), color);
+        }
+        ToolbarIcon::Stop => {
+            icon_filled_rect(ui, rect, Rect::new(0.30, 0.30, 0.40, 0.40), color);
+        }
+        ToolbarIcon::Rocket => {
+            icon_polyline(
+                ui,
+                rect,
+                &[
+                    (0.33, 0.72),
+                    (0.48, 0.34),
+                    (0.70, 0.18),
+                    (0.64, 0.45),
+                    (0.28, 0.66),
+                    (0.33, 0.72),
+                ],
+                color,
+                2.0,
+            );
+            icon_line(ui, rect, (0.30, 0.70), (0.18, 0.82), color, 2.0);
+            icon_line(ui, rect, (0.43, 0.77), (0.30, 0.90), color, 2.0);
+            icon_line(ui, rect, (0.48, 0.34), (0.64, 0.45), color, 2.0);
+        }
+        ToolbarIcon::Download => {
+            icon_line(ui, rect, (0.5, 0.18), (0.5, 0.64), color, 2.0);
+            icon_line(ui, rect, (0.31, 0.47), (0.5, 0.66), color, 2.0);
+            icon_line(ui, rect, (0.69, 0.47), (0.5, 0.66), color, 2.0);
+            icon_line(ui, rect, (0.24, 0.80), (0.76, 0.80), color, 2.0);
+        }
+    }
+}
+
+fn icon_point(rect: Rect, x: f32, y: f32) -> Point {
+    Point::new(rect.x + rect.width * x, rect.y + rect.height * y)
+}
+
+fn icon_line(
+    ui: &mut Ui<'_>,
+    rect: Rect,
+    from: (f32, f32),
+    to: (f32, f32),
+    color: Color,
+    width: f32,
+) {
+    line(
+        ui,
+        icon_point(rect, from.0, from.1),
+        icon_point(rect, to.0, to.1),
+        color,
+        width,
+    );
+}
+
+fn icon_polyline(ui: &mut Ui<'_>, rect: Rect, points: &[(f32, f32)], color: Color, width: f32) {
+    for pair in points.windows(2) {
+        icon_line(ui, rect, pair[0], pair[1], color, width);
+    }
+}
+
+fn icon_rect(ui: &mut Ui<'_>, bounds: Rect, rect: Rect, color: Color, width: f32) {
+    let target = Rect::new(
+        bounds.x + bounds.width * rect.x,
+        bounds.y + bounds.height * rect.y,
+        bounds.width * rect.width,
+        bounds.height * rect.height,
+    );
+    ui.primitive(Primitive::Rect(RectPrimitive {
+        rect: target,
+        fill: None,
+        stroke: Some(Stroke::new(width, Brush::Solid(color))),
+        radius: CornerRadius::all(0.0),
+    }));
+}
+
+fn icon_filled_rect(ui: &mut Ui<'_>, bounds: Rect, rect: Rect, color: Color) {
+    let target = Rect::new(
+        bounds.x + bounds.width * rect.x,
+        bounds.y + bounds.height * rect.y,
+        bounds.width * rect.width,
+        bounds.height * rect.height,
+    );
+    rect_fill(ui, target, color, None, CornerRadius::all(0.0));
+}
+
+fn icon_filled_path(ui: &mut Ui<'_>, rect: Rect, points: &[(f32, f32)], color: Color) {
+    if let Some((first, rest)) = points.split_first() {
+        let mut elements = Vec::with_capacity(points.len() + 1);
+        elements.push(PathElement::MoveTo(icon_point(rect, first.0, first.1)));
+        elements.extend(
+            rest.iter()
+                .map(|point| PathElement::LineTo(icon_point(rect, point.0, point.1))),
+        );
+        elements.push(PathElement::Close);
+        ui.primitive(Primitive::Path(PathPrimitive::new(
+            elements,
+            Some(Brush::Solid(color)),
+            None,
+        )));
+    }
 }
 
 fn icon(ui: &mut Ui<'_>, bounds: Rect, image: ImageId, size: f32) {
