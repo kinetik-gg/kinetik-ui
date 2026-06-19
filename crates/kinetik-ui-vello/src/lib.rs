@@ -2145,19 +2145,22 @@ fn fill_image_region(
     sampling: RenderImageSampling,
 ) {
     let brush = ImageBrush::new(image_data).with_quality(image_quality(sampling));
-    let scale_x = f64::from(rect.width) / f64::from(source.width);
-    let scale_y = f64::from(rect.height) / f64::from(source.height);
-    let image_transform = transform
-        * Affine::translate((f64::from(rect.x), f64::from(rect.y)))
-        * Affine::scale_non_uniform(scale_x, scale_y)
-        * Affine::translate((-f64::from(source.x), -f64::from(source.y)));
     scene.fill(
         Fill::NonZero,
-        image_transform,
+        image_region_transform(transform, rect, source),
         brush.as_ref(),
         None,
         &kurbo_rect(source),
     );
+}
+
+fn image_region_transform(transform: Affine, rect: Rect, source: Rect) -> Affine {
+    let scale_x = f64::from(rect.width) / f64::from(source.width);
+    let scale_y = f64::from(rect.height) / f64::from(source.height);
+    transform
+        * Affine::translate((f64::from(rect.x), f64::from(rect.y)))
+        * Affine::scale_non_uniform(scale_x, scale_y)
+        * Affine::translate((-f64::from(source.x), -f64::from(source.y)))
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -2542,7 +2545,7 @@ mod tests {
         ImageAtlasRegion, ImageDataCache, ImageResource, RenderCommand, RenderCommandKind,
         RenderDiagnostic, RenderFrameInput, RenderImage, RenderImageSampling, RenderResources,
         RendererBackend, ShapedTextCache, TextLayoutResource, TextureResource, VelloRenderer,
-        crisp_rect_border_segments, image_quality, physical_text_layout,
+        crisp_rect_border_segments, image_quality, image_region_transform, physical_text_layout,
         physical_text_layout_for_key, quantize_stroke_width_to_device, render_translation_snapshot,
         root_transform, snap_axis_aligned_translation, snap_filled_path_elements_to_device,
         snap_image_rect_to_device, snap_point_to_device, snap_radius_to_device,
@@ -3752,6 +3755,51 @@ mod tests {
             image_quality(RenderImageSampling::HighQuality),
             ImageQuality::High
         );
+    }
+
+    #[test]
+    fn native_size_image_regions_keep_atlas_pixels_at_native_scale() {
+        let source = Rect::new(33.0, 34.0, 32.0, 32.0);
+        let rect = Rect::new(101.0, 103.0, 32.0, 32.0);
+        let transform = image_region_transform(Affine::IDENTITY, rect, source);
+
+        let coeffs = transform.as_coeffs();
+        assert_approx64(coeffs[0], 1.0);
+        assert_approx64(coeffs[1], 0.0);
+        assert_approx64(coeffs[2], 0.0);
+        assert_approx64(coeffs[3], 1.0);
+        assert_approx64(coeffs[4], 68.0);
+        assert_approx64(coeffs[5], 69.0);
+    }
+
+    #[test]
+    fn native_size_image_regions_only_apply_root_scale_once() {
+        let source = Rect::new(33.0, 34.0, 32.0, 32.0);
+        let rect = Rect::new(101.0, 103.0, 32.0, 32.0);
+        let transform = image_region_transform(root_transform(1.25), rect, source);
+
+        let coeffs = transform.as_coeffs();
+        assert_approx64(coeffs[0], 1.25);
+        assert_approx64(coeffs[1], 0.0);
+        assert_approx64(coeffs[2], 0.0);
+        assert_approx64(coeffs[3], 1.25);
+        assert_approx64(coeffs[4], 85.0);
+        assert_approx64(coeffs[5], 86.25);
+    }
+
+    #[test]
+    fn scaled_image_regions_encode_explicit_destination_scale() {
+        let source = Rect::new(8.0, 12.0, 32.0, 16.0);
+        let rect = Rect::new(20.0, 30.0, 64.0, 24.0);
+        let transform = image_region_transform(Affine::IDENTITY, rect, source);
+
+        let coeffs = transform.as_coeffs();
+        assert_approx64(coeffs[0], 2.0);
+        assert_approx64(coeffs[1], 0.0);
+        assert_approx64(coeffs[2], 0.0);
+        assert_approx64(coeffs[3], 1.5);
+        assert_approx64(coeffs[4], 4.0);
+        assert_approx64(coeffs[5], 12.0);
     }
 
     #[test]
