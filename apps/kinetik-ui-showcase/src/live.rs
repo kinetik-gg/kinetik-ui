@@ -512,7 +512,7 @@ fn blit_extents_match(target: PhysicalSize<u32>, surface: PhysicalSize<u32>) -> 
 }
 
 fn live_antialiasing_method() -> AaConfig {
-    AaConfig::Area
+    AaConfig::Msaa16
 }
 
 fn live_present_mode() -> PresentMode {
@@ -588,8 +588,8 @@ mod tests {
     }
 
     #[test]
-    fn live_renderer_uses_area_antialiasing_for_crisper_ui_edges() {
-        assert!(matches!(live_antialiasing_method(), AaConfig::Area));
+    fn live_renderer_uses_msaa_for_sharper_live_text() {
+        assert!(matches!(live_antialiasing_method(), AaConfig::Msaa16));
     }
 
     #[test]
