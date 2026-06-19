@@ -330,8 +330,20 @@ impl LiveVelloRenderer {
         }
 
         let device_handle = &self.context.devices[self.surface.dev_id];
-        let width = self.surface.config.width;
-        let height = self.surface.config.height;
+        let surface_extent =
+            PhysicalSize::new(self.surface.config.width, self.surface.config.height);
+        if !viewport_surface_extents_match(viewport, surface_extent) {
+            eprintln!(
+                "showcase surface extent drift: viewport={}x{} surface={}x{}",
+                viewport.physical_size.width,
+                viewport.physical_size.height,
+                surface_extent.width,
+                surface_extent.height
+            );
+            return Err(LiveRenderError::Surface(SurfaceStatus::Outdated));
+        }
+        let width = surface_extent.width;
+        let height = surface_extent.height;
         self.renderer.render_to_texture(
             &device_handle.device,
             &device_handle.queue,
@@ -521,6 +533,14 @@ fn blit_extents_match(target: PhysicalSize<u32>, surface: PhysicalSize<u32>) -> 
     target.width == surface.width && target.height == surface.height
 }
 
+fn viewport_surface_extents_match(viewport: ViewportInfo, surface: PhysicalSize<u32>) -> bool {
+    let expected = sanitize_physical_size(PhysicalSize::new(
+        viewport.physical_size.width,
+        viewport.physical_size.height,
+    ));
+    blit_extents_match(expected, surface)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SurfaceResizeMode {
     IfChanged,
@@ -555,8 +575,9 @@ mod tests {
         LiveShowcase, PresentMode, RepaintSchedule, SurfaceResizeMode, SurfaceStatus,
         blit_extents_match, live_antialiasing_method, live_present_mode, resolve_repaint_schedule,
         surface_resize_required, surface_status_forces_reconfigure, surface_status_requests_redraw,
+        viewport_surface_extents_match,
     };
-    use kinetik_ui::core::RepaintRequest;
+    use kinetik_ui::core::{RepaintRequest, ScaleFactor, Size, ViewportInfo};
     use std::time::{Duration, Instant};
     use vello::AaConfig;
     use winit::dpi::PhysicalSize;
@@ -614,6 +635,24 @@ mod tests {
         assert!(!blit_extents_match(
             PhysicalSize::new(800, 600),
             PhysicalSize::new(800, 601),
+        ));
+    }
+
+    #[test]
+    fn viewport_surface_extent_drift_is_detected_before_blit() {
+        let viewport = ViewportInfo::new(
+            Size::new(640.0, 360.0),
+            kinetik_ui::core::PhysicalSize::new(960, 540),
+            ScaleFactor::new(1.5),
+        );
+
+        assert!(viewport_surface_extents_match(
+            viewport,
+            PhysicalSize::new(960, 540),
+        ));
+        assert!(!viewport_surface_extents_match(
+            viewport,
+            PhysicalSize::new(959, 540),
         ));
     }
 
