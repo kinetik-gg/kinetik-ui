@@ -160,7 +160,12 @@ impl VelloRenderer {
 
     #[cfg(test)]
     fn cached_image_count(&self) -> usize {
-        self.image_cache.len()
+        self.image_cache.image_len()
+    }
+
+    #[cfg(test)]
+    fn cached_texture_count(&self) -> usize {
+        self.image_cache.texture_len()
     }
 
     #[cfg(test)]
@@ -216,32 +221,50 @@ impl ImageSignature {
 #[derive(Debug, Default)]
 struct ImageDataCache {
     images: HashMap<ImageId, CachedImageData>,
+    textures: HashMap<TextureId, CachedImageData>,
 }
 
 impl ImageDataCache {
     fn image_data(&mut self, id: ImageId, image: &RenderImage) -> ImageData {
-        let signature = image_signature(image);
-        if let Some(cached) = self.images.get(&id)
-            && cached.signature.matches(image)
-        {
-            return cached.data.clone();
-        }
+        cached_image_data(&mut self.images, id, image)
+    }
 
-        let data = image_data_from_render_image(image);
-        self.images.insert(
-            id,
-            CachedImageData {
-                signature,
-                data: data.clone(),
-            },
-        );
-        data
+    fn texture_data(&mut self, id: TextureId, image: &RenderImage) -> ImageData {
+        cached_image_data(&mut self.textures, id, image)
     }
 
     #[cfg(test)]
-    fn len(&self) -> usize {
+    fn image_len(&self) -> usize {
         self.images.len()
     }
+
+    #[cfg(test)]
+    fn texture_len(&self) -> usize {
+        self.textures.len()
+    }
+}
+
+fn cached_image_data<Id: Eq + std::hash::Hash>(
+    cache: &mut HashMap<Id, CachedImageData>,
+    id: Id,
+    image: &RenderImage,
+) -> ImageData {
+    let signature = image_signature(image);
+    if let Some(cached) = cache.get(&id)
+        && cached.signature.matches(image)
+    {
+        return cached.data.clone();
+    }
+
+    let data = image_data_from_render_image(image);
+    cache.insert(
+        id,
+        CachedImageData {
+            signature,
+            data: data.clone(),
+        },
+    );
+    data
 }
 
 fn image_signature(image: &RenderImage) -> ImageSignature {
@@ -1351,6 +1374,7 @@ fn encode_command(
                 scene,
                 transform,
                 resources,
+                image_cache,
                 *texture,
                 *rect,
                 *source_size,
@@ -1486,10 +1510,12 @@ fn encode_image_command(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_texture_command(
     scene: &mut Scene,
     transform: Affine,
     resources: &RenderResources,
+    image_cache: &mut ImageDataCache,
     texture: TextureId,
     rect: Rect,
     source_size: Size,
@@ -1500,7 +1526,15 @@ fn encode_texture_command(
         && source_size_matches_snapshot(source_size, snapshot)
     {
         let rect = snap_image_rect_to_device(rect, resource.sampling, device_scale);
-        encode_image(scene, transform, rect, snapshot, resource.sampling);
+        encode_cached_texture(
+            scene,
+            transform,
+            rect,
+            image_cache,
+            texture,
+            snapshot,
+            resource.sampling,
+        );
     } else {
         let rect = snap_rect_to_device(rect, device_scale);
         encode_resource_placeholder(
@@ -1964,10 +1998,12 @@ fn transform_point(transform: Affine, point: Point) -> Point {
     )
 }
 
-fn encode_image(
+fn encode_cached_texture(
     scene: &mut Scene,
     transform: Affine,
     rect: Rect,
+    image_cache: &mut ImageDataCache,
+    texture: TextureId,
     image: &RenderImage,
     sampling: RenderImageSampling,
 ) {
@@ -1983,7 +2019,7 @@ fn encode_image(
         scene,
         transform,
         rect,
-        image_data_from_render_image(image),
+        image_cache.texture_data(texture, image),
         source,
         sampling,
     );
@@ -3631,6 +3667,47 @@ mod tests {
         let replaced_payload = &cache.images.get(&id).expect("cache entry").signature.data;
         assert!(std::sync::Arc::ptr_eq(replaced_payload, &replacement.data));
         assert!(!std::sync::Arc::ptr_eq(&cached_payload, replaced_payload));
+    }
+
+    #[test]
+    fn frame_submission_reuses_cached_texture_snapshot_payload() {
+        let texture = TextureId::from_raw(77);
+        let snapshot = RenderImage::rgba8(4, 4, vec![64; 64]).expect("valid texture snapshot");
+        let mut resources = RenderResources::new();
+        resources.register_texture(TextureResource {
+            id: texture,
+            size: Size::new(4.0, 4.0),
+            sampling: RenderImageSampling::Smooth,
+            snapshot: Some(snapshot),
+        });
+        let primitives = vec![Primitive::Texture(TexturePrimitive {
+            texture,
+            rect: Rect::new(4.0, 4.0, 32.0, 32.0),
+            source_size: Size::new(4.0, 4.0),
+        })];
+        let viewport = ViewportInfo::new(
+            Size::new(100.0, 100.0),
+            kinetik_ui_core::PhysicalSize::new(100, 100),
+            ScaleFactor::ONE,
+        );
+        let mut renderer = VelloRenderer::new();
+
+        let output = renderer.submit_frame(RenderFrameInput {
+            viewport,
+            primitives: &primitives,
+            resources: &resources,
+        });
+        assert!(output.diagnostics.is_empty());
+        assert_eq!(renderer.cached_texture_count(), 1);
+
+        let output = renderer.submit_frame(RenderFrameInput {
+            viewport,
+            primitives: &primitives,
+            resources: &resources,
+        });
+        assert!(output.diagnostics.is_empty());
+        assert_eq!(renderer.cached_texture_count(), 1);
+        assert_eq!(renderer.cached_image_count(), 0);
     }
 
     #[test]
