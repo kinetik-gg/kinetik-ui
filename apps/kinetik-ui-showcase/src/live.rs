@@ -96,24 +96,26 @@ impl LiveShowcase {
         }
     }
 
-    fn redraw(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(window) = self.window.as_ref() else {
-            return;
-        };
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
+    fn reset_resume_input_state(&mut self) {
+        self.accepting_input = false;
+        self.input.set_window_focused(false);
+        self.input.begin_frame();
+    }
 
-        let size = sanitize_physical_size(window.inner_size());
-        renderer.resize(size);
-        let scale_factor = window.scale_factor();
+    fn frame_input_snapshot(&mut self, scale_factor: f64) -> kinetik_ui::core::UiInput {
         self.input
             .set_scale_factor(scale_factor_from_winit(scale_factor));
-        if !self.accepting_input {
-            self.input.begin_frame();
-        }
+        self.input.input().clone()
+    }
+
+    fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let size = sanitize_physical_size(window.inner_size());
+        let scale_factor = window.scale_factor();
         let time = self.clock.tick(self.started.elapsed());
-        let input = self.input.input().clone();
+        let input = self.frame_input_snapshot(scale_factor);
         let context = frame_context_from_winit(size, scale_factor, input, time);
         let viewport = context.viewport;
 
@@ -122,14 +124,18 @@ impl LiveShowcase {
         let repaint = self.app.output().repaint;
         let mut requests = WinitPlatformRequests::from_frame_output(self.app.output());
         requests.repaint = RepaintRequest::None;
-        let shell = requests.apply_to_window(window);
+        let shell = requests.apply_to_window(&window);
 
         window.pre_present_notify();
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        renderer.resize(size);
         let retry_surface_redraw = match renderer.render(self.app.output(), &resources, viewport) {
             Ok(()) => {
                 self.next_redraw_at = schedule_shell_repaint(
                     event_loop,
-                    window,
+                    &window,
                     repaint,
                     shell.repaint_after,
                     shell.continuous_repaint,
@@ -157,7 +163,7 @@ impl LiveShowcase {
 
 impl ApplicationHandler for LiveShowcase {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.accepting_input = false;
+        self.reset_resume_input_state();
         let attributes = Window::default_attributes()
             .with_title("Kinetik Forge - Kinetik UI")
             .with_inner_size(LogicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT))
@@ -588,6 +594,7 @@ mod tests {
     use std::time::{Duration, Instant};
     use vello::AaConfig;
     use winit::dpi::PhysicalSize;
+    use winit::event::{ElementState, MouseButton as WinitMouseButton};
 
     #[test]
     fn next_frame_repaint_requests_immediate_redraw() {
@@ -735,5 +742,31 @@ mod tests {
         let deadline = app.next_redraw_at.expect("immediate redraw deadline");
         assert!(deadline >= before);
         assert!(deadline <= Instant::now());
+    }
+
+    #[test]
+    fn resume_clears_stale_input_edges_before_new_window_events() {
+        let mut app = LiveShowcase::new(None);
+        app.input
+            .mouse_button(WinitMouseButton::Left, ElementState::Pressed, 1);
+
+        app.reset_resume_input_state();
+
+        assert!(!app.input.input().pointer.primary.pressed);
+        assert!(!app.input.input().pointer.primary.down);
+        assert!(!app.accepting_input);
+    }
+
+    #[test]
+    fn first_redraw_snapshot_preserves_input_edges_recorded_after_resume() {
+        let mut app = LiveShowcase::new(None);
+        app.reset_resume_input_state();
+        app.input
+            .mouse_button(WinitMouseButton::Left, ElementState::Pressed, 1);
+
+        let input = app.frame_input_snapshot(1.5);
+
+        assert!(input.pointer.primary.pressed);
+        assert!(input.pointer.primary.down);
     }
 }
