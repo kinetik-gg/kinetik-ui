@@ -103,8 +103,12 @@ pub enum RenderCommandKind {
         origin: kinetik_ui_core::Point,
         /// Text content.
         text: String,
+        /// Font family name or logical family.
+        family: String,
         /// Font size in logical units.
         size: f32,
+        /// Line height in logical units.
+        line_height: f32,
         /// Text color.
         color: Color,
     },
@@ -290,6 +294,10 @@ pub fn translate_primitives(primitives: &[Primitive], resources: &RenderResource
                     diagnostics.push(RenderDiagnostic::InvalidGeometry("text_size"));
                     continue;
                 };
+                let Some(line_height) = finite_positive(text.line_height) else {
+                    diagnostics.push(RenderDiagnostic::InvalidGeometry("text_line_height"));
+                    continue;
+                };
                 match text.layout {
                     Some(layout) if !resources.has_text_layout(layout) => {
                         diagnostics.push(RenderDiagnostic::MissingTextLayout(layout));
@@ -304,7 +312,9 @@ pub fn translate_primitives(primitives: &[Primitive], resources: &RenderResource
                         layout: text.layout,
                         origin,
                         text: text.text.clone(),
+                        family: text.family.clone(),
                         size,
+                        line_height,
                         color: brush_fallback_color(&sanitize_brush(
                             text.brush,
                             &mut diagnostics,
@@ -507,14 +517,18 @@ fn format_command_kind(kind: &RenderCommandKind) -> String {
             layout,
             origin,
             text,
+            family,
             size,
+            line_height,
             color,
         } => format!(
-            "text layout={} origin=({}, {}) size={} color={} text={:?}",
+            "text layout={} origin=({}, {}) family={:?} size={} line_height={} color={} text={:?}",
             layout.map_or_else(|| "none".to_owned(), |layout| layout.raw().to_string()),
             format_f32(origin.x),
             format_f32(origin.y),
+            family,
             format_f32(*size),
+            format_f32(*line_height),
             format_color(*color),
             text,
         ),
@@ -1133,7 +1147,9 @@ fn encode_command(
             layout,
             origin,
             text,
+            family,
             size,
+            line_height,
             color,
         } => encode_text_command(
             scene,
@@ -1143,7 +1159,9 @@ fn encode_command(
             *layout,
             *origin,
             text,
+            family,
             *size,
+            *line_height,
             *color,
             device_scale,
         ),
@@ -1177,12 +1195,15 @@ fn encode_text_command(
     layout: Option<TextLayoutId>,
     origin: Point,
     text: &str,
+    family: &str,
     size: f32,
+    line_height: f32,
     color: Color,
     device_scale: f64,
 ) {
     if let Some(layout) = layout.and_then(|id| resources.text_layout(id)) {
-        let physical_layout = physical_text_layout(text_engine, transform, text, size);
+        let physical_layout =
+            physical_text_layout(text_engine, transform, text, family, size, line_height);
         encode_text_layout(
             scene,
             transform,
@@ -1193,8 +1214,9 @@ fn encode_text_command(
             device_scale,
         );
     } else {
-        let layout = shape_fallback_text(text_engine, text, size);
-        let physical_layout = physical_text_layout(text_engine, transform, text, size);
+        let layout = shape_fallback_text(text_engine, text, family, size, line_height);
+        let physical_layout =
+            physical_text_layout(text_engine, transform, text, family, size, line_height);
         encode_text_layout(
             scene,
             transform,
@@ -1371,20 +1393,23 @@ fn bez_path(elements: &[PathElement]) -> BezPath {
 fn shape_fallback_text(
     text_engine: &mut CosmicTextEngine,
     text: &str,
+    family: &str,
     size: f32,
+    line_height: f32,
 ) -> ShapedTextLayout {
-    shape_text_with_metrics(text_engine, text, size, size + 5.0)
+    shape_text_with_metrics(text_engine, text, family, size, line_height)
 }
 
 fn shape_text_with_metrics(
     text_engine: &mut CosmicTextEngine,
     text: &str,
+    family: &str,
     size: f32,
     line_height: f32,
 ) -> ShapedTextLayout {
     text_engine.shape_text(&TextLayoutKey::new(
         text,
-        TextStyle::new("sans-serif", size, line_height),
+        TextStyle::new(family, size, line_height),
         0.0,
         false,
     ))
@@ -1395,13 +1420,22 @@ fn physical_text_layout(
     text_engine: &mut CosmicTextEngine,
     transform: Affine,
     text: &str,
+    family: &str,
     size: f32,
+    line_height: f32,
 ) -> Option<ShapedTextLayout> {
     let scale = uniform_axis_aligned_scale(transform)?;
     let physical_size = (f64::from(size) * scale) as f32;
-    let physical_line_height = (f64::from(size + 5.0) * scale) as f32;
-    (physical_size.is_finite() && physical_size > 0.0)
-        .then(|| shape_text_with_metrics(text_engine, text, physical_size, physical_line_height))
+    let physical_line_height = (f64::from(line_height) * scale) as f32;
+    (physical_size.is_finite() && physical_size > 0.0).then(|| {
+        shape_text_with_metrics(
+            text_engine,
+            text,
+            family,
+            physical_size,
+            physical_line_height,
+        )
+    })
 }
 
 fn encode_text_layout(
@@ -2476,7 +2510,9 @@ mod tests {
                 layout: Some(missing_layout),
                 origin: Point::new(4.0, 16.0),
                 text: "Hi".to_owned(),
+                family: "monospace".to_owned(),
                 size: 12.0,
+                line_height: 17.0,
                 brush: Brush::Solid(Color::BLACK),
             }),
             Primitive::Image(ImagePrimitive {
@@ -2494,7 +2530,7 @@ mod tests {
 
         assert_eq!(
             render_translation_snapshot(&translation),
-            "commands:\n  0: layer=3 transform=[1.000, 0.000, 0.000, 1.000, 2.000, 3.000] clips=[{rect=(0.000, 0.000, 20.000, 12.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}] rect rect=(1.000, 1.000, 8.000, 4.000) fill=rgba(1.000, 1.000, 1.000, 1.000) stroke=none radius=(2.000, 2.000, 2.000, 2.000)\n  1: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] text layout=7 origin=(4.000, 16.000) size=12.000 color=rgba(0.000, 0.000, 0.000, 1.000) text=\"Hi\"\n  2: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] image#9 rect=(0.000, 20.000, 16.000, 16.000)\n  3: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] texture#2 rect=(20.000, 20.000, 16.000, 16.000) source_size=2.000x2.000\ndiagnostics:\n  missing_text_layout#7\n  missing_image#9"
+            "commands:\n  0: layer=3 transform=[1.000, 0.000, 0.000, 1.000, 2.000, 3.000] clips=[{rect=(0.000, 0.000, 20.000, 12.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}] rect rect=(1.000, 1.000, 8.000, 4.000) fill=rgba(1.000, 1.000, 1.000, 1.000) stroke=none radius=(2.000, 2.000, 2.000, 2.000)\n  1: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] text layout=7 origin=(4.000, 16.000) family=\"monospace\" size=12.000 line_height=17.000 color=rgba(0.000, 0.000, 0.000, 1.000) text=\"Hi\"\n  2: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] image#9 rect=(0.000, 20.000, 16.000, 16.000)\n  3: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] texture#2 rect=(20.000, 20.000, 16.000, 16.000) source_size=2.000x2.000\ndiagnostics:\n  missing_text_layout#7\n  missing_image#9"
         );
     }
 
@@ -2596,7 +2632,9 @@ mod tests {
             layout: None,
             origin: Point::new(0.0, 0.0),
             text: "Label".to_owned(),
+            family: "sans-serif".to_owned(),
             size: 12.0,
+            line_height: 16.0,
             brush: Brush::Solid(Color::WHITE),
         })];
 
@@ -2616,7 +2654,9 @@ mod tests {
             layout: Some(layout),
             origin: Point::new(0.0, 0.0),
             text: "Label".to_owned(),
+            family: "sans-serif".to_owned(),
             size: 12.0,
+            line_height: 16.0,
             brush: Brush::Solid(Color::WHITE),
         })];
 
@@ -2798,7 +2838,9 @@ mod tests {
                 layout: None,
                 origin: Point::new(4.0, 16.0),
                 text: "Label".to_owned(),
+                family: "sans-serif".to_owned(),
                 size: 12.0,
+                line_height: 16.0,
                 brush: Brush::Solid(Color::WHITE),
             }),
             Primitive::Image(ImagePrimitive {
@@ -2837,7 +2879,9 @@ mod tests {
             layout: None,
             origin: Point::new(4.0, 16.0),
             text: "Label".to_owned(),
+            family: "sans-serif".to_owned(),
             size: 12.0,
+            line_height: 16.0,
             brush: Brush::Solid(Color::WHITE),
         })];
 
@@ -2867,14 +2911,27 @@ mod tests {
     #[test]
     fn physical_text_layout_shapes_at_device_font_size() {
         let mut engine = CosmicTextEngine::new();
-        let layout = physical_text_layout(&mut engine, root_transform(1.5), "Label", 12.0)
-            .expect("axis-aligned physical layout");
+        let layout = physical_text_layout(
+            &mut engine,
+            root_transform(1.5),
+            "Label",
+            "monospace",
+            12.0,
+            17.0,
+        )
+        .expect("axis-aligned physical layout");
 
         assert!(
             layout
                 .runs
                 .iter()
                 .all(|run| (run.font_size - 18.0).abs() < f32::EPSILON)
+        );
+        assert!(
+            layout
+                .lines
+                .iter()
+                .all(|line| (line.height - 25.5).abs() < f32::EPSILON)
         );
     }
 
@@ -2887,7 +2944,9 @@ mod tests {
             layout: Some(layout),
             origin: Point::new(4.0, 16.0),
             text: "Label".to_owned(),
+            family: "sans-serif".to_owned(),
             size: 12.0,
+            line_height: 16.0,
             brush: Brush::Solid(Color::WHITE),
         })];
         let mut renderer = VelloRenderer::new();
@@ -2916,7 +2975,9 @@ mod tests {
             layout: Some(layout),
             origin: Point::new(4.0, 16.0),
             text: "Label".to_owned(),
+            family: "sans-serif".to_owned(),
             size: 12.0,
+            line_height: 16.0,
             brush: Brush::Solid(Color::WHITE),
         })];
         let mut renderer = VelloRenderer::new();
