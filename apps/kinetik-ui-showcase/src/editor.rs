@@ -51,6 +51,8 @@ const ICON_ATLAS_PADDING: u32 = 1;
 const ICON_ATLAS_CELL_SIZE: u32 = ICON_SIZE + ICON_ATLAS_PADDING * 2;
 const ICON_ATLAS_COLUMNS: u32 = 7;
 const ICON_ATLAS_ROWS: u32 = 4;
+const DENSE_ICON_SIZE: f32 = 16.0;
+const ASSET_ICON_SIZE: f32 = 24.0;
 
 const ICON_CURSOR: ImageId = ImageId::from_raw(7_001);
 const ICON_MOVE: ImageId = ImageId::from_raw(7_002);
@@ -932,7 +934,7 @@ impl EditorShowcase {
             13.0,
             rgb(222, 225, 230),
         );
-        ui.image(header.right_strip(24.0).inset(4.0), ICON_DOTS);
+        icon(ui, header.right_strip(24.0), ICON_DOTS, DENSE_ICON_SIZE);
 
         let rows = scene_model().visible_rows(&self.scene_expansion);
         let layout = TreeLayout::new(22.0, 15.0);
@@ -983,14 +985,16 @@ impl EditorShowcase {
                             rgb(176, 181, 188),
                         );
                     }
-                    ui.image(
+                    icon(
+                        ui,
                         Rect::new(
-                            row_rect.content_rect.x + 18.0,
-                            row_rect.rect.y + 4.0,
-                            14.0,
-                            14.0,
+                            row_rect.content_rect.x + 17.0,
+                            row_rect.rect.y + 3.0,
+                            18.0,
+                            18.0,
                         ),
                         scene_icon(row.id),
+                        DENSE_ICON_SIZE,
                     );
                     text(
                         ui,
@@ -1014,9 +1018,11 @@ impl EditorShowcase {
             &mut self.asset_filter,
             false,
         );
-        ui.image(
-            Rect::new(search.x + 6.0, search.y + 6.0, 14.0, 14.0),
+        icon(
+            ui,
+            Rect::new(search.x + 5.0, search.y + 5.0, 18.0, 18.0),
             ICON_SEARCH,
+            DENSE_ICON_SIZE,
         );
 
         let grid_bounds = Rect::new(
@@ -1069,9 +1075,11 @@ impl EditorShowcase {
                     if response.clicked {
                         self.status = format!("Asset selected: {}", asset.name);
                     }
-                    ui.image(
-                        Rect::new(item.rect.x + 8.0, item.rect.y + 8.0, 22.0, 22.0),
+                    icon(
+                        ui,
+                        Rect::new(item.rect.x + 8.0, item.rect.y + 8.0, 24.0, 24.0),
                         asset.icon,
+                        ASSET_ICON_SIZE,
                     );
                     text(
                         ui,
@@ -1270,9 +1278,11 @@ impl EditorShowcase {
         rect(ui, body, rgb(24, 25, 27), None);
         let header = Rect::new(body.x + 8.0, body.y + 8.0, body.width - 16.0, 34.0);
         rect(ui, header, rgb(37, 39, 43), Some(rgb(55, 58, 64)));
-        ui.image(
-            Rect::new(header.x + 8.0, header.y + 8.0, 18.0, 18.0),
+        icon(
+            ui,
+            Rect::new(header.x + 7.0, header.y + 7.0, 20.0, 20.0),
             scene_icon(self.selected_node),
+            DENSE_ICON_SIZE,
         );
         text(
             ui,
@@ -1282,9 +1292,11 @@ impl EditorShowcase {
             13.0,
             rgb(231, 233, 237),
         );
-        ui.image(
-            Rect::new(header.max_x() - 26.0, header.y + 8.0, 18.0, 18.0),
+        icon(
+            ui,
+            Rect::new(header.max_x() - 27.0, header.y + 7.0, 20.0, 20.0),
             ICON_GEAR,
+            DENSE_ICON_SIZE,
         );
 
         let rows = inspector_rows();
@@ -1823,11 +1835,15 @@ fn inspector_label_width(grid_width: f32) -> f32 {
 #[allow(clippy::float_cmp, clippy::items_after_test_module)]
 mod tests {
     use super::{
-        ICON_ASSETS, ICON_ATLAS_CELL_SIZE, ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE,
-        icon_atlas_image, inspector_label_width, register_resources,
+        EditorShowcase, ICON_ASSETS, ICON_ATLAS, ICON_ATLAS_CELL_SIZE, ICON_ATLAS_PADDING,
+        ICON_CROSSHAIR, ICON_SIZE, icon_atlas_image, inspector_label_width, register_resources,
     };
-    use kinetik_ui::core::Rect;
+    use kinetik_ui::core::{
+        FrameContext, PhysicalSize, Primitive, Rect, ScaleFactor, Size, TimeInfo, UiInput,
+        UiMemory, ViewportInfo, default_dark_theme,
+    };
     use kinetik_ui::render::RenderResources;
+    use kinetik_ui::widgets::Ui;
 
     #[test]
     fn inspector_label_width_preserves_value_space_at_narrow_widths() {
@@ -1889,9 +1905,54 @@ mod tests {
         );
     }
 
+    #[test]
+    fn editor_icon_destinations_land_on_common_physical_pixels() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let context = FrameContext::new(
+            ViewportInfo::new(
+                Size::new(1440.0, 900.0),
+                PhysicalSize::new(1440, 900),
+                ScaleFactor::ONE,
+            ),
+            UiInput::default(),
+            TimeInfo::default(),
+        );
+        let mut ui = Ui::begin_frame(context, &mut memory, &theme);
+        let mut editor = EditorShowcase::new();
+
+        editor.render(&mut ui, 0);
+        let output = ui.finish_output();
+        let icon_rects: Vec<_> = output
+            .primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Image(image) if is_editor_icon(image.image) => Some(image.rect),
+                _ => None,
+            })
+            .collect();
+
+        assert!(!icon_rects.is_empty());
+        for rect in icon_rects {
+            assert_eq!(rect.width, rect.height);
+            for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+                let physical = rect.width * scale;
+                assert_eq!(
+                    physical,
+                    physical.round(),
+                    "icon rect {rect:?} is fractional at {scale}x"
+                );
+            }
+        }
+    }
+
     fn atlas_pixel(data: &[u8], width: u32, x: u32, y: u32) -> &[u8] {
         let start = ((y * width + x) * 4) as usize;
         &data[start..start + 4]
+    }
+
+    fn is_editor_icon(image: kinetik_ui::core::ImageId) -> bool {
+        image.raw() > ICON_ATLAS.raw() && image.raw() <= ICON_CROSSHAIR.raw()
     }
 }
 
@@ -2093,6 +2154,21 @@ fn line(ui: &mut Ui<'_>, from: Point, to: Point, color: Color, width: f32) {
         to,
         stroke: Stroke::new(width, Brush::Solid(color)),
     }));
+}
+
+fn icon(ui: &mut Ui<'_>, bounds: Rect, image: ImageId, size: f32) {
+    let size = if size.is_finite() && size > 0.0 {
+        size
+    } else {
+        DENSE_ICON_SIZE
+    };
+    let rect = Rect::new(
+        bounds.x + (bounds.width - size) * 0.5,
+        bounds.y + (bounds.height - size) * 0.5,
+        size,
+        size,
+    );
+    ui.image(rect, image);
 }
 
 fn text(ui: &mut Ui<'_>, x: f32, baseline: f32, value: &str, size: f32, fill: Color) {
