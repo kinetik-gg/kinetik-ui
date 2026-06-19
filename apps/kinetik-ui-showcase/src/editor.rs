@@ -8,8 +8,8 @@
 
 use kinetik_ui::core::{
     ActionDescriptor, ActionSource, Axis, Brush, ClipId, Color, CornerRadius, ImageId, Key,
-    KeyState, LinePrimitive, Modifiers, Point, Primitive, Rect, RectPrimitive, Shortcut, Size,
-    Stroke, TextPrimitive, TextureId, Vec2,
+    KeyState, LinePrimitive, Modifiers, Point, Primitive, Rect, RectPrimitive, RepaintRequest,
+    Shortcut, Size, Stroke, TextPrimitive, TextureId, Vec2,
 };
 use kinetik_ui::render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
@@ -387,6 +387,17 @@ impl EditorShowcase {
         text(ui, 12.0, 18.0, "Kinetik Forge", 13.0, rgb(226, 229, 234));
         for (kind, label, rect) in menu_header_rects() {
             let response = ui.pressable(("editor.menu-header", kind), rect, false);
+            let was_active = self.open_menu == Some(kind);
+            if response.clicked {
+                self.open_menu = if was_active { None } else { Some(kind) };
+                ui.request_repaint(RepaintRequest::NextFrame);
+            } else if self.open_menu.is_some()
+                && response.state.hovered
+                && self.open_menu != Some(kind)
+            {
+                self.open_menu = Some(kind);
+                ui.request_repaint(RepaintRequest::NextFrame);
+            }
             let active = self.open_menu == Some(kind);
             if active || response.state.hovered {
                 rect_fill(
@@ -413,11 +424,6 @@ impl EditorShowcase {
                     rgb(196, 200, 207)
                 },
             );
-            if response.clicked {
-                self.open_menu = if active { None } else { Some(kind) };
-            } else if self.open_menu.is_some() && response.state.hovered {
-                self.open_menu = Some(kind);
-            }
         }
 
         let hint = if self.running {
@@ -861,6 +867,7 @@ impl EditorShowcase {
             if response.dragged {
                 self.dock
                     .resize_split(&splitter.path, bounds, response.drag_delta);
+                ui.request_repaint(RepaintRequest::NextFrame);
             }
             let color = if response.state.hovered || response.state.active {
                 rgb(70, 116, 190)
@@ -894,6 +901,7 @@ impl EditorShowcase {
             );
             if response.clicked {
                 self.dock.select_panel(frame_id, tab.panel);
+                ui.request_repaint(RepaintRequest::NextFrame);
             }
             tab_x += width + 1.0;
         }
@@ -975,6 +983,15 @@ impl EditorShowcase {
             |ui, _| {
                 for row_rect in layout.visible_row_rects(scroll, &rows, 0.0, 2) {
                     let row = row_rect.row;
+                    let twisty = Rect::new(
+                        row_rect.content_rect.x + 3.0,
+                        row_rect.rect.y + 5.0,
+                        12.0,
+                        12.0,
+                    );
+                    let twist = row.has_children.then(|| {
+                        ui.pressable(("editor.scene.expand", row.id.raw()), twisty, false)
+                    });
                     let response = ui.list_row_value(
                         ("editor.scene.row", row.id.raw()),
                         row_rect.rect,
@@ -986,23 +1003,18 @@ impl EditorShowcase {
                     if response.clicked {
                         self.status = format!("Selected {}", scene_label(row.id));
                     }
-                    let twisty = Rect::new(
-                        row_rect.content_rect.x + 3.0,
-                        row_rect.rect.y + 5.0,
-                        12.0,
-                        12.0,
-                    );
-                    if row.has_children {
-                        let twist =
-                            ui.pressable(("editor.scene.expand", row.id.raw()), twisty, false);
+                    if let Some(twist) = twist {
+                        let mut expanded = row.expanded;
                         if twist.clicked {
                             self.scene_expansion.toggle(row.id);
+                            expanded = !expanded;
+                            ui.request_repaint(RepaintRequest::NextFrame);
                         }
                         text(
                             ui,
                             twisty.x + 2.0,
                             twisty.y + 10.0,
-                            if row.expanded { "v" } else { ">" },
+                            if expanded { "v" } else { ">" },
                             11.0,
                             rgb(176, 181, 188),
                         );
@@ -1162,6 +1174,7 @@ impl EditorShowcase {
         let drag = ui.draggable("editor.viewport.surface", surface_bounds, false);
         if drag.dragged {
             self.viewport_pan_zoom.pan_by(drag.drag_delta);
+            ui.request_repaint(RepaintRequest::NextFrame);
         }
         if drag.state.hovered {
             let wheel = ui.input().pointer.wheel_delta.y;
@@ -1170,6 +1183,7 @@ impl EditorShowcase {
                 let next = (current + (-wheel * 0.001)).clamp(0.25, 2.5);
                 self.viewport_pan_zoom.set_zoom(next);
                 self.status = format!("Viewport zoom {:.0}%", next * 100.0);
+                ui.request_repaint(RepaintRequest::NextFrame);
             }
         }
         let surface = ViewportSurface {
@@ -1856,11 +1870,12 @@ mod tests {
     use super::{
         EditorShowcase, EditorTool, ICON_ASSETS, ICON_ATLAS, ICON_ATLAS_CELL_SIZE,
         ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE, TOOLBAR_ICON_SIZE, TOOLBAR_Y,
-        icon_atlas_image, inspector_label_width, register_resources,
+        icon_atlas_image, inspector_label_width, item_id, register_resources,
     };
     use kinetik_ui::core::{
         FrameContext, PhysicalSize, Point, PointerButtonState, PointerInput, Primitive, Rect,
-        ScaleFactor, Size, TimeInfo, UiInput, UiMemory, ViewportInfo, default_dark_theme,
+        RepaintRequest, ScaleFactor, Size, TimeInfo, UiInput, UiMemory, ViewportInfo,
+        default_dark_theme,
     };
     use kinetik_ui::render::RenderResources;
     use kinetik_ui::widgets::Ui;
@@ -1927,6 +1942,37 @@ mod tests {
         assert!(output.primitives.iter().any(|primitive| {
             matches!(primitive, Primitive::Text(text) if text.text == "Select tool active")
         }));
+    }
+
+    #[test]
+    fn scene_expander_flips_arrow_and_requests_repaint_same_frame() {
+        let mut editor = EditorShowcase::new();
+        let mut memory = UiMemory::new();
+        let theme = default_dark_theme();
+
+        let mut ui = Ui::begin_frame(
+            editor_test_context(pointer_input_at(38.0, 176.0, true, true, false)),
+            &mut memory,
+            &theme,
+        );
+        editor.render(&mut ui, 0);
+        let _ = ui.finish_output();
+
+        let mut ui = Ui::begin_frame(
+            editor_test_context(pointer_input_at(38.0, 176.0, false, false, true)),
+            &mut memory,
+            &theme,
+        );
+        editor.render(&mut ui, 0);
+        let output = ui.finish_output();
+
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+        assert!(!editor.scene_expansion.is_expanded(item_id(2)));
+        assert!(
+            output.primitives.iter().any(|primitive| {
+                matches!(primitive, Primitive::Text(text) if text.text == ">")
+            })
+        );
     }
 
     #[test]

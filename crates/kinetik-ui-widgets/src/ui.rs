@@ -578,7 +578,7 @@ impl<'a> Ui<'a> {
         value: T,
         disabled: bool,
     ) -> Response {
-        let response = self.image_icon_selectable_button(
+        let mut response = self.image_icon_selectable_button(
             key,
             rect,
             image,
@@ -588,6 +588,7 @@ impl<'a> Ui<'a> {
         );
         if response.clicked {
             *selected = value;
+            response.state.selected = true;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -606,7 +607,7 @@ impl<'a> Ui<'a> {
         value: T,
         disabled: bool,
     ) -> Response {
-        let response = self.image_icon_selectable_button_sized(
+        let mut response = self.image_icon_selectable_button_sized(
             key,
             rect,
             image,
@@ -617,6 +618,7 @@ impl<'a> Ui<'a> {
         );
         if response.clicked {
             *selected = value;
+            response.state.selected = true;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -648,9 +650,10 @@ impl<'a> Ui<'a> {
         value: T,
         disabled: bool,
     ) -> Response {
-        let response = self.tab_button(key, rect, text, *selected == value, disabled);
+        let mut response = self.tab_button(key, rect, text, *selected == value, disabled);
         if response.clicked {
             *selected = value;
+            response.state.selected = true;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -682,9 +685,10 @@ impl<'a> Ui<'a> {
         value: T,
         disabled: bool,
     ) -> Response {
-        let response = self.list_row(key, rect, text, *selected == value, disabled);
+        let mut response = self.list_row(key, rect, text, *selected == value, disabled);
         if response.clicked {
             *selected = value;
+            response.state.selected = true;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -713,9 +717,10 @@ impl<'a> Ui<'a> {
         checked: &mut bool,
         disabled: bool,
     ) -> Response {
-        let response = self.checkbox(key, rect, *checked, disabled);
+        let mut response = self.checkbox(key, rect, *checked, disabled);
         if response.clicked {
             *checked = !*checked;
+            response.state.selected = *checked;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -747,9 +752,10 @@ impl<'a> Ui<'a> {
         checked: &mut bool,
         disabled: bool,
     ) -> Response {
-        let response = self.checkbox_with_label(key, rect, label, *checked, disabled);
+        let mut response = self.checkbox_with_label(key, rect, label, *checked, disabled);
         if response.clicked {
             *checked = !*checked;
+            response.state.selected = *checked;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -779,9 +785,10 @@ impl<'a> Ui<'a> {
         value: T,
         disabled: bool,
     ) -> Response {
-        let response = self.radio_button(key, rect, *selected == value, disabled);
+        let mut response = self.radio_button(key, rect, *selected == value, disabled);
         if response.clicked {
             *selected = value;
+            response.state.selected = true;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -815,9 +822,11 @@ impl<'a> Ui<'a> {
         value: T,
         disabled: bool,
     ) -> Response {
-        let response = self.radio_button_with_label(key, rect, label, *selected == value, disabled);
+        let mut response =
+            self.radio_button_with_label(key, rect, label, *selected == value, disabled);
         if response.clicked {
             *selected = value;
+            response.state.selected = true;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -840,9 +849,10 @@ impl<'a> Ui<'a> {
         on: &mut bool,
         disabled: bool,
     ) -> Response {
-        let response = self.toggle(key, rect, *on, disabled);
+        let mut response = self.toggle(key, rect, *on, disabled);
         if response.clicked {
             *on = !*on;
+            response.state.selected = *on;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -873,9 +883,10 @@ impl<'a> Ui<'a> {
         on: &mut bool,
         disabled: bool,
     ) -> Response {
-        let response = self.toggle_with_label(key, rect, label, *on, disabled);
+        let mut response = self.toggle_with_label(key, rect, label, *on, disabled);
         if response.clicked {
             *on = !*on;
+            response.state.selected = *on;
             self.request_repaint(RepaintRequest::NextFrame);
         }
         response
@@ -1575,6 +1586,62 @@ mod tests {
         assert!(clicked.clicked);
         assert!(clicked.state.selected);
         assert!(value);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_labeled_value_helpers_return_mutated_state_same_frame() {
+        let theme = default_dark_theme();
+        let rect = Rect::new(0.0, 0.0, 120.0, 28.0);
+
+        let mut checked = false;
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.checkbox_value_with_label("checkbox", rect, "Checkbox", &mut checked, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let checkbox =
+            ui.checkbox_value_with_label("checkbox", rect, "Checkbox", &mut checked, false);
+        let output = ui.finish_output();
+        assert!(checkbox.clicked);
+        assert!(checkbox.state.selected);
+        assert!(checked);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut on = false;
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.toggle_value_with_label("toggle", rect, "Toggle", &mut on, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let toggle = ui.toggle_value_with_label("toggle", rect, "Toggle", &mut on, false);
+        let output = ui.finish_output();
+        assert!(toggle.clicked);
+        assert!(toggle.state.selected);
+        assert!(on);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut selected = 0_usize;
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.radio_button_value_with_label("radio", rect, "Radio", &mut selected, 1, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let radio =
+            ui.radio_button_value_with_label("radio", rect, "Radio", &mut selected, 1, false);
+        let output = ui.finish_output();
+        assert!(radio.clicked);
+        assert!(radio.state.selected);
+        assert_eq!(selected, 1);
         assert_eq!(output.repaint, RepaintRequest::NextFrame);
     }
 
