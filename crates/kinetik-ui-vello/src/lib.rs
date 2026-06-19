@@ -1201,14 +1201,13 @@ fn encode_text_command(
     color: Color,
     device_scale: f64,
 ) {
-    if let Some(layout) = layout.and_then(|id| resources.text_layout(id)) {
-        let physical_layout =
-            physical_text_layout(text_engine, transform, text, family, size, line_height);
+    if let Some(resource) = layout.and_then(|id| resources.text_layout_resource(id)) {
+        let physical_layout = physical_text_layout_for_key(text_engine, transform, &resource.key);
         encode_text_layout(
             scene,
             transform,
             origin,
-            layout,
+            &resource.layout,
             physical_layout.as_ref(),
             color,
             device_scale,
@@ -1397,7 +1396,17 @@ fn shape_fallback_text(
     size: f32,
     line_height: f32,
 ) -> ShapedTextLayout {
-    shape_text_with_metrics(text_engine, text, family, size, line_height)
+    shape_text_with_key(
+        text_engine,
+        &TextLayoutKey::new(text, TextStyle::new(family, size, line_height), 0.0, false),
+    )
+}
+
+fn shape_text_with_key(
+    text_engine: &mut CosmicTextEngine,
+    key: &TextLayoutKey,
+) -> ShapedTextLayout {
+    text_engine.shape_text(key)
 }
 
 fn shape_text_with_metrics(
@@ -1407,12 +1416,42 @@ fn shape_text_with_metrics(
     size: f32,
     line_height: f32,
 ) -> ShapedTextLayout {
-    text_engine.shape_text(&TextLayoutKey::new(
-        text,
-        TextStyle::new(family, size, line_height),
-        0.0,
-        false,
-    ))
+    shape_text_with_key(
+        text_engine,
+        &TextLayoutKey::new(text, TextStyle::new(family, size, line_height), 0.0, false),
+    )
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn physical_text_layout_for_key(
+    text_engine: &mut CosmicTextEngine,
+    transform: Affine,
+    key: &TextLayoutKey,
+) -> Option<ShapedTextLayout> {
+    let scale = uniform_axis_aligned_scale(transform)?;
+    let physical_size = (f64::from(key.style.size()) * scale) as f32;
+    let physical_line_height = (f64::from(key.style.line_height()) * scale) as f32;
+    let physical_width = (f64::from(key.width()) * scale) as f32;
+    (physical_size.is_finite()
+        && physical_size > 0.0
+        && physical_line_height.is_finite()
+        && physical_line_height > 0.0
+        && physical_width.is_finite())
+    .then(|| {
+        shape_text_with_key(
+            text_engine,
+            &TextLayoutKey::new(
+                key.text.clone(),
+                TextStyle::new(
+                    key.style.family.clone(),
+                    physical_size,
+                    physical_line_height,
+                ),
+                physical_width,
+                key.wrap,
+            ),
+        )
+    })
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
@@ -1427,15 +1466,19 @@ fn physical_text_layout(
     let scale = uniform_axis_aligned_scale(transform)?;
     let physical_size = (f64::from(size) * scale) as f32;
     let physical_line_height = (f64::from(line_height) * scale) as f32;
-    (physical_size.is_finite() && physical_size > 0.0).then(|| {
-        shape_text_with_metrics(
-            text_engine,
-            text,
-            family,
-            physical_size,
-            physical_line_height,
-        )
-    })
+    (physical_size.is_finite()
+        && physical_size > 0.0
+        && physical_line_height.is_finite()
+        && physical_line_height > 0.0)
+        .then(|| {
+            shape_text_with_metrics(
+                text_engine,
+                text,
+                family,
+                physical_size,
+                physical_line_height,
+            )
+        })
 }
 
 fn encode_text_layout(
@@ -1847,8 +1890,8 @@ mod tests {
         ImageResource, RenderCommand, RenderCommandKind, RenderDiagnostic, RenderFrameInput,
         RenderImage, RenderImageSampling, RenderResources, RendererBackend, TextLayoutResource,
         TextureResource, VelloRenderer, image_quality, physical_text_layout,
-        quantize_stroke_width_to_device, render_translation_snapshot, root_transform,
-        snap_axis_aligned_translation, snap_point_to_device, snap_rect_to_device,
+        physical_text_layout_for_key, quantize_stroke_width_to_device, render_translation_snapshot,
+        root_transform, snap_axis_aligned_translation, snap_point_to_device, snap_rect_to_device,
         snap_stroke_center_to_device, snap_stroked_line_to_device, snap_stroked_rect_to_device,
         translate_primitives, viewport_device_scale,
     };
@@ -1911,13 +1954,9 @@ mod tests {
 
     fn text_layout_resource(id: TextLayoutId, text: &str) -> TextLayoutResource {
         let mut engine = CosmicTextEngine::new();
-        let layout = engine.shape_text(&TextLayoutKey::new(
-            text,
-            TextStyle::new("sans-serif", 12.0, 16.0),
-            200.0,
-            false,
-        ));
-        TextLayoutResource { id, layout }
+        let key = TextLayoutKey::new(text, TextStyle::new("sans-serif", 12.0, 16.0), 200.0, false);
+        let layout = engine.shape_text(&key);
+        TextLayoutResource { id, key, layout }
     }
 
     fn clip_rects(command: &RenderCommand) -> Vec<Rect> {
@@ -2921,6 +2960,44 @@ mod tests {
         )
         .expect("axis-aligned physical layout");
 
+        assert!(
+            layout
+                .runs
+                .iter()
+                .all(|run| (run.font_size - 18.0).abs() < f32::EPSILON)
+        );
+        assert!(
+            layout
+                .lines
+                .iter()
+                .all(|line| (line.height - 25.5).abs() < f32::EPSILON)
+        );
+    }
+
+    #[test]
+    fn physical_text_layout_for_key_preserves_wrap_width_at_device_scale() {
+        let key = TextLayoutKey::new(
+            "alpha beta gamma delta epsilon",
+            TextStyle::new("sans-serif", 12.0, 17.0),
+            68.0,
+            true,
+        );
+        let mut expected_engine = CosmicTextEngine::new();
+        let expected = expected_engine.shape_text(&TextLayoutKey::new(
+            key.text.clone(),
+            TextStyle::new("sans-serif", 18.0, 25.5),
+            102.0,
+            true,
+        ));
+        let mut engine = CosmicTextEngine::new();
+
+        let layout = physical_text_layout_for_key(&mut engine, root_transform(1.5), &key)
+            .expect("axis-aligned physical layout");
+
+        assert_eq!(layout.line_count, expected.line_count);
+        assert_eq!(layout.lines.len(), expected.lines.len());
+        assert!(layout.line_count > 1);
+        assert_approx(layout.size.width, expected.size.width);
         assert!(
             layout
                 .runs
