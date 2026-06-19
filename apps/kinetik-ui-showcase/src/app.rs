@@ -2174,6 +2174,26 @@ mod tests {
     }
 
     #[test]
+    fn render_resources_share_cached_static_texture_payloads() {
+        let app = ShowcaseApp::new();
+        let resources = app.render_resources();
+        let static_texture = app
+            .static_resources
+            .texture(TextureId::from_raw(9_001))
+            .and_then(|resource| resource.snapshot.as_ref())
+            .expect("static editor texture");
+        let frame_texture = resources
+            .texture(TextureId::from_raw(9_001))
+            .and_then(|resource| resource.snapshot.as_ref())
+            .expect("frame editor texture");
+
+        assert!(std::sync::Arc::ptr_eq(
+            &static_texture.data,
+            &frame_texture.data
+        ));
+    }
+
+    #[test]
     fn clicking_navigation_changes_page() {
         let mut app = ShowcaseApp::new();
         app.set_page(ShowcasePage::Components);
