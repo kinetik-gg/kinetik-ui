@@ -136,6 +136,7 @@ pub enum RenderCommandKind {
 pub struct VelloRenderer {
     scene: Scene,
     text_engine: CosmicTextEngine,
+    text_cache: ShapedTextCache,
     image_cache: ImageDataCache,
 }
 
@@ -146,6 +147,7 @@ impl VelloRenderer {
         Self {
             scene: Scene::new(),
             text_engine: CosmicTextEngine::new(),
+            text_cache: ShapedTextCache::default(),
             image_cache: ImageDataCache::default(),
         }
     }
@@ -161,6 +163,11 @@ impl VelloRenderer {
         self.image_cache.len()
     }
 
+    #[cfg(test)]
+    fn cached_text_layout_count(&self) -> usize {
+        self.text_cache.len()
+    }
+
     /// Submits a frame for translation.
     pub fn submit_frame(&mut self, input: RenderFrameInput<'_>) -> RenderFrameOutput {
         let translated = translate_primitives(input.primitives, input.resources);
@@ -170,6 +177,7 @@ impl VelloRenderer {
             &translated.commands,
             input.resources,
             &mut self.text_engine,
+            &mut self.text_cache,
             &mut self.image_cache,
             viewport_device_scale(input.viewport),
         );
@@ -275,6 +283,38 @@ impl RendererBackend for VelloRenderer {
 
 /// Translation result used by tests and renderer internals.
 pub type Translation = RenderTranslation<RenderCommand>;
+
+const MAX_CACHED_TEXT_LAYOUTS: usize = 4096;
+
+#[derive(Debug, Default)]
+struct ShapedTextCache {
+    layouts: HashMap<TextLayoutKey, Arc<ShapedTextLayout>>,
+}
+
+impl ShapedTextCache {
+    fn layout(
+        &mut self,
+        text_engine: &mut CosmicTextEngine,
+        key: TextLayoutKey,
+    ) -> Arc<ShapedTextLayout> {
+        if let Some(layout) = self.layouts.get(&key) {
+            return Arc::clone(layout);
+        }
+
+        if self.layouts.len() >= MAX_CACHED_TEXT_LAYOUTS {
+            self.layouts.clear();
+        }
+
+        let layout = Arc::new(shape_text_with_key(text_engine, &key));
+        self.layouts.insert(key, Arc::clone(&layout));
+        layout
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.layouts.len()
+    }
+}
 
 /// Translates primitives into deterministic renderer commands.
 #[must_use]
@@ -1180,6 +1220,7 @@ fn encode_scene(
     commands: &[RenderCommand],
     resources: &RenderResources,
     text_engine: &mut CosmicTextEngine,
+    text_cache: &mut ShapedTextCache,
     image_cache: &mut ImageDataCache,
     device_scale: f64,
 ) {
@@ -1198,6 +1239,7 @@ fn encode_scene(
             command,
             resources,
             text_engine,
+            text_cache,
             image_cache,
             device_scale,
         );
@@ -1213,6 +1255,7 @@ fn encode_command(
     command: &RenderCommand,
     resources: &RenderResources,
     text_engine: &mut CosmicTextEngine,
+    text_cache: &mut ShapedTextCache,
     image_cache: &mut ImageDataCache,
     device_scale: f64,
 ) {
@@ -1278,6 +1321,7 @@ fn encode_command(
             transform,
             resources,
             text_engine,
+            text_cache,
             *layout,
             *origin,
             text,
@@ -1360,6 +1404,7 @@ fn encode_text_command(
     transform: Affine,
     resources: &RenderResources,
     text_engine: &mut CosmicTextEngine,
+    text_cache: &mut ShapedTextCache,
     layout: Option<TextLayoutId>,
     origin: Point,
     text: &str,
@@ -1370,26 +1415,43 @@ fn encode_text_command(
     device_scale: f64,
 ) {
     if let Some(resource) = layout.and_then(|id| resources.text_layout_resource(id)) {
-        let physical_layout = physical_text_layout_for_key(text_engine, transform, &resource.key);
+        let physical_layout =
+            physical_text_layout_for_key(text_engine, text_cache, transform, &resource.key);
         encode_text_layout(
             scene,
             transform,
             origin,
             &resource.layout,
-            physical_layout.as_ref(),
+            physical_layout.as_deref(),
             color,
             device_scale,
         );
-    } else {
-        let layout = shape_fallback_text(text_engine, text, family, size, line_height);
-        let physical_layout =
-            physical_text_layout(text_engine, transform, text, family, size, line_height);
+    } else if let Some(physical_layout) = physical_text_layout(
+        text_engine,
+        text_cache,
+        transform,
+        text,
+        family,
+        size,
+        line_height,
+    ) {
         encode_text_layout(
             scene,
             transform,
             origin,
-            &layout,
             physical_layout.as_ref(),
+            Some(physical_layout.as_ref()),
+            color,
+            device_scale,
+        );
+    } else {
+        let layout = shape_fallback_text(text_engine, text_cache, text, family, size, line_height);
+        encode_text_layout(
+            scene,
+            transform,
+            origin,
+            layout.as_ref(),
+            None,
             color,
             device_scale,
         );
@@ -1592,14 +1654,15 @@ fn bez_path(elements: &[PathElement]) -> BezPath {
 
 fn shape_fallback_text(
     text_engine: &mut CosmicTextEngine,
+    text_cache: &mut ShapedTextCache,
     text: &str,
     family: &str,
     size: f32,
     line_height: f32,
-) -> ShapedTextLayout {
-    shape_text_with_key(
+) -> Arc<ShapedTextLayout> {
+    text_cache.layout(
         text_engine,
-        &TextLayoutKey::new(text, TextStyle::new(family, size, line_height), 0.0, false),
+        TextLayoutKey::new(text, TextStyle::new(family, size, line_height), 0.0, false),
     )
 }
 
@@ -1610,25 +1673,13 @@ fn shape_text_with_key(
     text_engine.shape_text(key)
 }
 
-fn shape_text_with_metrics(
-    text_engine: &mut CosmicTextEngine,
-    text: &str,
-    family: &str,
-    size: f32,
-    line_height: f32,
-) -> ShapedTextLayout {
-    shape_text_with_key(
-        text_engine,
-        &TextLayoutKey::new(text, TextStyle::new(family, size, line_height), 0.0, false),
-    )
-}
-
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn physical_text_layout_for_key(
     text_engine: &mut CosmicTextEngine,
+    text_cache: &mut ShapedTextCache,
     transform: Affine,
     key: &TextLayoutKey,
-) -> Option<ShapedTextLayout> {
+) -> Option<Arc<ShapedTextLayout>> {
     let scale = uniform_axis_aligned_scale(transform)?;
     let physical_size = (f64::from(key.style.size()) * scale) as f32;
     let physical_line_height = (f64::from(key.style.line_height()) * scale) as f32;
@@ -1639,9 +1690,9 @@ fn physical_text_layout_for_key(
         && physical_line_height > 0.0
         && physical_width.is_finite())
     .then(|| {
-        shape_text_with_key(
+        text_cache.layout(
             text_engine,
-            &TextLayoutKey::new(
+            TextLayoutKey::new(
                 key.text.clone(),
                 TextStyle::new(
                     key.style.family.clone(),
@@ -1658,12 +1709,13 @@ fn physical_text_layout_for_key(
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn physical_text_layout(
     text_engine: &mut CosmicTextEngine,
+    text_cache: &mut ShapedTextCache,
     transform: Affine,
     text: &str,
     family: &str,
     size: f32,
     line_height: f32,
-) -> Option<ShapedTextLayout> {
+) -> Option<Arc<ShapedTextLayout>> {
     let scale = uniform_axis_aligned_scale(transform)?;
     let physical_size = (f64::from(size) * scale) as f32;
     let physical_line_height = (f64::from(line_height) * scale) as f32;
@@ -1672,12 +1724,14 @@ fn physical_text_layout(
         && physical_line_height.is_finite()
         && physical_line_height > 0.0)
         .then(|| {
-            shape_text_with_metrics(
+            text_cache.layout(
                 text_engine,
-                text,
-                family,
-                physical_size,
-                physical_line_height,
+                TextLayoutKey::new(
+                    text,
+                    TextStyle::new(family, physical_size, physical_line_height),
+                    0.0,
+                    false,
+                ),
             )
         })
 }
@@ -2185,12 +2239,13 @@ mod tests {
     use super::{
         ImageAtlasRegion, ImageDataCache, ImageResource, RenderCommand, RenderCommandKind,
         RenderDiagnostic, RenderFrameInput, RenderImage, RenderImageSampling, RenderResources,
-        RendererBackend, TextLayoutResource, TextureResource, VelloRenderer, image_quality,
-        physical_text_layout, physical_text_layout_for_key, quantize_stroke_width_to_device,
-        render_translation_snapshot, root_transform, snap_axis_aligned_translation,
-        snap_image_rect_to_device, snap_point_to_device, snap_rect_to_device,
-        snap_stroke_center_to_device, snap_stroked_line_to_device, snap_stroked_rect_to_device,
-        snap_text_origin_to_device, translate_primitives, viewport_device_scale,
+        RendererBackend, ShapedTextCache, TextLayoutResource, TextureResource, VelloRenderer,
+        image_quality, physical_text_layout, physical_text_layout_for_key,
+        quantize_stroke_width_to_device, render_translation_snapshot, root_transform,
+        snap_axis_aligned_translation, snap_image_rect_to_device, snap_point_to_device,
+        snap_rect_to_device, snap_stroke_center_to_device, snap_stroked_line_to_device,
+        snap_stroked_rect_to_device, snap_text_origin_to_device, translate_primitives,
+        viewport_device_scale,
     };
     use kinetik_ui_core::render::TexturePrimitive;
     use kinetik_ui_core::{
@@ -3504,8 +3559,10 @@ mod tests {
     #[test]
     fn physical_text_layout_shapes_at_device_font_size() {
         let mut engine = CosmicTextEngine::new();
+        let mut cache = ShapedTextCache::default();
         let layout = physical_text_layout(
             &mut engine,
+            &mut cache,
             root_transform(1.5),
             "Label",
             "monospace",
@@ -3544,9 +3601,11 @@ mod tests {
             true,
         ));
         let mut engine = CosmicTextEngine::new();
+        let mut cache = ShapedTextCache::default();
 
-        let layout = physical_text_layout_for_key(&mut engine, root_transform(1.5), &key)
-            .expect("axis-aligned physical layout");
+        let layout =
+            physical_text_layout_for_key(&mut engine, &mut cache, root_transform(1.5), &key)
+                .expect("axis-aligned physical layout");
 
         assert_eq!(layout.line_count, expected.line_count);
         assert_eq!(layout.lines.len(), expected.lines.len());
@@ -3642,6 +3701,76 @@ mod tests {
         assert!(glyph_run.hint);
         assert_approx(glyph.x, 5.0);
         assert_approx(glyph.y, 21.0);
+    }
+
+    #[test]
+    fn repeated_registered_text_reuses_cached_physical_layout() {
+        let layout = TextLayoutId::from_raw(46);
+        let mut resources = RenderResources::new();
+        resources.register_text_layout(text_layout_resource(layout, "Label"));
+        let primitives = vec![Primitive::Text(TextPrimitive {
+            layout: Some(layout),
+            origin: Point::new(4.0, 16.0),
+            text: "Label".to_owned(),
+            family: "sans-serif".to_owned(),
+            size: 12.0,
+            line_height: 16.0,
+            brush: Brush::Solid(Color::WHITE),
+        })];
+        let viewport = ViewportInfo::new(
+            Size::new(100.0, 100.0),
+            kinetik_ui_core::PhysicalSize::new(125, 125),
+            ScaleFactor::new(1.25),
+        );
+        let mut renderer = VelloRenderer::new();
+
+        renderer.submit_frame(RenderFrameInput {
+            viewport,
+            primitives: &primitives,
+            resources: &resources,
+        });
+        assert_eq!(renderer.cached_text_layout_count(), 1);
+
+        renderer.submit_frame(RenderFrameInput {
+            viewport,
+            primitives: &primitives,
+            resources: &resources,
+        });
+        assert_eq!(renderer.cached_text_layout_count(), 1);
+    }
+
+    #[test]
+    fn repeated_fallback_text_reuses_cached_physical_layout() {
+        let resources = RenderResources::new();
+        let primitives = vec![Primitive::Text(TextPrimitive {
+            layout: None,
+            origin: Point::new(4.0, 16.0),
+            text: "Fallback".to_owned(),
+            family: "sans-serif".to_owned(),
+            size: 12.0,
+            line_height: 16.0,
+            brush: Brush::Solid(Color::WHITE),
+        })];
+        let viewport = ViewportInfo::new(
+            Size::new(100.0, 100.0),
+            kinetik_ui_core::PhysicalSize::new(125, 125),
+            ScaleFactor::new(1.25),
+        );
+        let mut renderer = VelloRenderer::new();
+
+        renderer.submit_frame(RenderFrameInput {
+            viewport,
+            primitives: &primitives,
+            resources: &resources,
+        });
+        assert_eq!(renderer.cached_text_layout_count(), 1);
+
+        renderer.submit_frame(RenderFrameInput {
+            viewport,
+            primitives: &primitives,
+            resources: &resources,
+        });
+        assert_eq!(renderer.cached_text_layout_count(), 1);
     }
 
     #[test]
