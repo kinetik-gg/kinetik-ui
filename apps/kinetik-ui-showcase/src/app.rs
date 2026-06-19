@@ -1316,7 +1316,7 @@ impl ShowcaseApp {
             }),
             clip: ClipId::from_raw(99),
         };
-        ui.extend(composition.primitives());
+        ui.extend(composition.primitives_at(ui.viewport().scale_factor));
         text(
             ui,
             surface.x,
@@ -1816,7 +1816,7 @@ fn static_render_resources() -> RenderResources {
     resources.register_texture(TextureResource {
         id: TextureId::from_raw(99),
         size: Size::new(384.0, 216.0),
-        sampling: RenderImageSampling::Smooth,
+        sampling: RenderImageSampling::Pixelated,
         snapshot: Some(viewport_texture()),
     });
     resources.register_texture(TextureResource {
@@ -2180,7 +2180,7 @@ mod tests {
         assert!(resources.texture(texture).is_some());
         assert_eq!(
             resources.texture(texture).map(|resource| resource.sampling),
-            Some(RenderImageSampling::Smooth)
+            Some(RenderImageSampling::Pixelated)
         );
         assert!(
             resources
@@ -2238,20 +2238,20 @@ mod tests {
             );
         }
 
-        assert_eq!(
-            resources
-                .texture(TextureId::from_raw(9_001))
-                .map(|resource| resource.sampling),
-            Some(RenderImageSampling::Smooth)
-        );
-
-        for texture in [TextureId::from_raw(99), TextureId::from_raw(101)] {
+        for texture in [TextureId::from_raw(9_001), TextureId::from_raw(99)] {
             assert_eq!(
                 resources.texture(texture).map(|resource| resource.sampling),
-                Some(RenderImageSampling::Smooth),
+                Some(RenderImageSampling::Pixelated),
                 "{texture:?}"
             );
         }
+
+        assert_eq!(
+            resources
+                .texture(TextureId::from_raw(101))
+                .map(|resource| resource.sampling),
+            Some(RenderImageSampling::Smooth)
+        );
     }
 
     #[test]
