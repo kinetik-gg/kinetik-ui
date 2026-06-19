@@ -217,6 +217,10 @@ impl ApplicationHandler for LiveShowcase {
                 self.input.pointer_moved(position);
                 self.request_interactive_redraw();
             }
+            WindowEvent::CursorLeft { .. } => {
+                self.input.pointer_left();
+                self.request_interactive_redraw();
+            }
             WindowEvent::MouseInput { button, state, .. } => {
                 self.input.mouse_button(button, state, 1);
                 self.request_interactive_redraw();

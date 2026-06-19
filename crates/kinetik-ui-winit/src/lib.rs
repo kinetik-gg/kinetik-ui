@@ -302,7 +302,7 @@ impl WinitInputAdapter {
     pub fn set_window_focused(&mut self, focused: bool) {
         if !focused {
             self.input.release_pointer_buttons();
-            self.last_pointer_position = None;
+            self.clear_pointer_position();
         }
         self.input.window_focused = focused;
     }
@@ -319,6 +319,11 @@ impl WinitInputAdapter {
             self.input.pointer.delta.y + delta.y,
         );
         self.last_pointer_position = Some(point);
+    }
+
+    /// Applies a pointer leave event.
+    pub fn pointer_left(&mut self) {
+        self.clear_pointer_position();
     }
 
     /// Applies a mouse button event.
@@ -343,6 +348,12 @@ impl WinitInputAdapter {
             self.input.pointer.wheel_delta.x + delta.x,
             self.input.pointer.wheel_delta.y + delta.y,
         );
+    }
+
+    fn clear_pointer_position(&mut self) {
+        self.input.pointer.position = None;
+        self.input.pointer.delta = Vec2::ZERO;
+        self.last_pointer_position = None;
     }
 
     /// Applies a keyboard event.
@@ -738,9 +749,10 @@ mod tests {
     };
     use kinetik_ui_core::{
         ClipboardText, CursorShape, FrameOutput, Key, KeyState, Modifiers,
-        MouseButton as CoreMouseButton, PhysicalKey, PlatformRequest, Rect, RepaintRequest,
+        MouseButton as CoreMouseButton, PhysicalKey, PlatformRequest, Point, Rect, RepaintRequest,
         ScaleFactor, SemanticAction, SemanticActionKind, SemanticNode, SemanticRole,
-        SemanticTreeError, SemanticValue, TextInputEvent, TextRange, TimeInfo, UiInput, WidgetId,
+        SemanticTreeError, SemanticValue, TextInputEvent, TextRange, TimeInfo, UiInput, Vec2,
+        WidgetId,
     };
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::event::{ElementState, Ime, MouseButton as WinitMouseButton, MouseScrollDelta};
@@ -876,6 +888,27 @@ mod tests {
     }
 
     #[test]
+    fn pointer_leave_clears_hover_and_resets_next_move_delta() {
+        let mut adapter = WinitInputAdapter::new(ScaleFactor::ONE);
+
+        adapter.pointer_moved(PhysicalPosition::new(20.0, 10.0));
+        adapter.mouse_button(WinitMouseButton::Left, ElementState::Pressed, 1);
+        adapter.pointer_left();
+
+        assert_eq!(adapter.input().pointer.position, None);
+        assert_eq!(adapter.input().pointer.delta, Vec2::ZERO);
+        assert!(adapter.input().pointer.primary.down);
+
+        adapter.pointer_moved(PhysicalPosition::new(25.0, 12.0));
+
+        assert_eq!(
+            adapter.input().pointer.position,
+            Some(Point::new(25.0, 12.0))
+        );
+        assert_eq!(adapter.input().pointer.delta, Vec2::ZERO);
+    }
+
+    #[test]
     fn begin_frame_clears_transient_input() {
         let mut adapter = WinitInputAdapter::new(ScaleFactor::ONE);
         adapter.mouse_button(WinitMouseButton::Left, ElementState::Pressed, 1);
@@ -918,6 +951,7 @@ mod tests {
 
         assert!(!adapter.input().pointer.primary.down);
         assert!(adapter.input().pointer.primary.released);
+        assert_eq!(adapter.input().pointer.position, None);
     }
 
     #[test]
