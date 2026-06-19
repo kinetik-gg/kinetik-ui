@@ -5,7 +5,7 @@
 //! backends such as Vello consume this contract and keep backend-specific
 //! encoding details in their own crates.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use kinetik_ui_core::{ImageId, Primitive, Rect, Size, TextLayoutId, TextureId, ViewportInfo};
 use kinetik_ui_text::{ShapedTextLayout, StoredTextLayout, TextLayoutKey};
@@ -69,7 +69,7 @@ pub struct RenderImage {
     /// Pixel height.
     pub height: u32,
     /// Pixel bytes.
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
     /// Pixel format.
     pub format: RenderImageFormat,
     /// Alpha representation.
@@ -114,7 +114,7 @@ impl RenderImage {
         (data.len() == expected_len).then_some(Self {
             width,
             height,
-            data,
+            data: data.into(),
             format,
             alpha,
         })
@@ -635,6 +635,14 @@ mod tests {
     fn render_image_validates_pixel_byte_length() {
         assert!(RenderImage::rgba8(2, 2, vec![0; 16]).is_some());
         assert!(RenderImage::rgba8(2, 2, vec![0; 15]).is_none());
+    }
+
+    #[test]
+    fn render_image_clones_share_pixel_payloads() {
+        let image = RenderImage::rgba8(2, 2, vec![1; 16]).expect("valid image");
+        let clone = image.clone();
+
+        assert!(std::sync::Arc::ptr_eq(&image.data, &clone.data));
     }
 
     #[test]

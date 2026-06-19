@@ -243,7 +243,7 @@ fn image_signature(image: &RenderImage) -> ImageSignature {
 
 fn image_data_from_render_image(image: &RenderImage) -> ImageData {
     ImageData {
-        data: Blob::from(image.data.clone()),
+        data: Blob::from(image.data.to_vec()),
         format: image_format(image.format),
         alpha_type: image_alpha(image.alpha),
         width: image.width,
