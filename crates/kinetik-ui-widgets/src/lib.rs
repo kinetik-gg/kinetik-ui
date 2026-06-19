@@ -476,6 +476,7 @@ fn single_line_text_primitives(
     rect: Rect,
     state: &TextEditState,
     focused: bool,
+    caret_visible: bool,
     recipe: &TextFieldRecipe,
     layout: Option<&ShapedTextLayout>,
 ) -> Vec<Primitive> {
@@ -551,7 +552,7 @@ fn single_line_text_primitives(
         }
     }
 
-    if focused {
+    if focused && caret_visible {
         let caret_rect = layout.map_or_else(
             || {
                 Rect::new(
@@ -586,6 +587,7 @@ fn multi_line_text_primitives(
     rect: Rect,
     state: &TextEditState,
     focused: bool,
+    caret_visible: bool,
     recipe: &TextFieldRecipe,
     layout: Option<&ShapedTextLayout>,
 ) -> Vec<Primitive> {
@@ -640,7 +642,7 @@ fn multi_line_text_primitives(
             }
         }
 
-        if focused {
+        if focused && caret_visible {
             primitives.push(Primitive::Rect(RectPrimitive {
                 rect: layout
                     .caret_rect(display_caret)
@@ -714,7 +716,7 @@ fn multi_line_text_primitives(
             }
         }
 
-        if focused && (*line_start..=line_end).contains(&display_caret) {
+        if focused && caret_visible && (*line_start..=line_end).contains(&display_caret) {
             let caret_x =
                 content_x + byte_prefix_width(line, display_caret - *line_start, recipe.font.size);
             primitives.push(Primitive::Rect(RectPrimitive {
@@ -1866,7 +1868,33 @@ pub fn text_field_with_text_layouts(
     memory: &mut UiMemory,
     theme: &Theme,
     disabled: bool,
+    text_layouts: Option<&mut TextLayoutStore>,
+) -> TextFieldOutput {
+    text_field_with_text_layouts_and_caret_visibility(
+        id,
+        rect,
+        state,
+        input,
+        memory,
+        theme,
+        disabled,
+        text_layouts,
+        true,
+    )
+}
+
+/// Emits a single-line text field with explicit caret visibility.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn text_field_with_text_layouts_and_caret_visibility(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
     mut text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
 ) -> TextFieldOutput {
     let before = state.text.clone();
     let mut response = focusable(id, rect, input, memory, disabled);
@@ -1926,6 +1954,7 @@ pub fn text_field_with_text_layouts(
         rect,
         state,
         response.state.focused && !disabled,
+        caret_visible,
         &recipe,
         layout,
     ));
@@ -1979,7 +2008,33 @@ pub fn multi_line_text_field_with_text_layouts(
     memory: &mut UiMemory,
     theme: &Theme,
     disabled: bool,
+    text_layouts: Option<&mut TextLayoutStore>,
+) -> MultiLineTextFieldOutput {
+    multi_line_text_field_with_text_layouts_and_caret_visibility(
+        id,
+        rect,
+        state,
+        input,
+        memory,
+        theme,
+        disabled,
+        text_layouts,
+        true,
+    )
+}
+
+/// Emits a multi-line text field with explicit caret visibility.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn multi_line_text_field_with_text_layouts_and_caret_visibility(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
     mut text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
 ) -> MultiLineTextFieldOutput {
     let before = state.text.clone();
     let mut response = focusable(id, rect, input, memory, disabled);
@@ -2046,6 +2101,7 @@ pub fn multi_line_text_field_with_text_layouts(
         rect,
         state,
         response.state.focused && !disabled,
+        caret_visible,
         &recipe,
         layout,
     ));
@@ -2102,7 +2158,7 @@ pub fn numeric_input_with_text_layouts(
     disabled: bool,
     text_layouts: Option<&mut TextLayoutStore>,
 ) -> NumericInputOutput {
-    let field = text_field_with_text_layouts(
+    numeric_input_with_text_layouts_and_caret_visibility(
         id,
         rect,
         state,
@@ -2111,6 +2167,33 @@ pub fn numeric_input_with_text_layouts(
         theme,
         disabled,
         text_layouts,
+        true,
+    )
+}
+
+/// Emits a numeric input field with explicit caret visibility.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn numeric_input_with_text_layouts_and_caret_visibility(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> NumericInputOutput {
+    let field = text_field_with_text_layouts_and_caret_visibility(
+        id,
+        rect,
+        state,
+        input,
+        memory,
+        theme,
+        disabled,
+        text_layouts,
+        caret_visible,
     );
     let value = state.text.trim().parse::<f32>().ok();
 
@@ -2157,7 +2240,7 @@ pub fn search_field_with_text_layouts(
     disabled: bool,
     text_layouts: Option<&mut TextLayoutStore>,
 ) -> SearchFieldOutput {
-    let mut field = text_field_with_text_layouts(
+    search_field_with_text_layouts_and_caret_visibility(
         id,
         rect,
         state,
@@ -2166,6 +2249,33 @@ pub fn search_field_with_text_layouts(
         theme,
         disabled,
         text_layouts,
+        true,
+    )
+}
+
+/// Emits a search-oriented text field with explicit caret visibility.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_field_with_text_layouts_and_caret_visibility(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> SearchFieldOutput {
+    let mut field = text_field_with_text_layouts_and_caret_visibility(
+        id,
+        rect,
+        state,
+        input,
+        memory,
+        theme,
+        disabled,
+        text_layouts,
+        caret_visible,
     );
     let query = state.text.clone();
     for node in &mut field.widget.semantics {
