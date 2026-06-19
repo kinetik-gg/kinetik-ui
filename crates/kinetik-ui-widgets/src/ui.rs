@@ -909,7 +909,7 @@ impl<'a> Ui<'a> {
 
     fn push_interactive(&mut self, output: WidgetOutput) -> Response {
         let response = output.response.expect("interactive widget response");
-        if response_requests_followup_repaint(response) {
+        if response_requests_followup_repaint(response, self.runtime.input()) {
             self.runtime.request_repaint(RepaintRequest::NextFrame);
         }
         self.extend(output.primitives);
@@ -937,13 +937,13 @@ impl<'a> Ui<'a> {
     }
 }
 
-fn response_requests_followup_repaint(response: Response) -> bool {
+fn response_requests_followup_repaint(response: Response, input: &UiInput) -> bool {
     response.clicked
         || response.secondary_clicked
         || response.dragged
         || response.keyboard_activated
         || response.context_requested
-        || response.state.pressed
+        || (response.state.pressed && input.pointer.primary.pressed)
 }
 
 fn text_layout_key(text: &TextPrimitive) -> TextLayoutKey {
@@ -975,6 +975,17 @@ mod tests {
             pointer: PointerInput {
                 position: Some(Point::new(x, y)),
                 primary: PointerButtonState::new(true, true, false),
+                ..PointerInput::default()
+            },
+            ..UiInput::default()
+        }
+    }
+
+    fn held_at(x: f32, y: f32) -> UiInput {
+        UiInput {
+            pointer: PointerInput {
+                position: Some(Point::new(x, y)),
+                primary: PointerButtonState::new(true, false, false),
                 ..PointerInput::default()
             },
             ..UiInput::default()
@@ -1361,6 +1372,12 @@ mod tests {
         let mut ui = Ui::new(&input, &mut memory, &theme);
         ui.button("run", rect, "Run", false);
         assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = held_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let held = ui.button("run", rect, "Run", false);
+        assert!(held.state.pressed);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::None);
 
         let input = released_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
