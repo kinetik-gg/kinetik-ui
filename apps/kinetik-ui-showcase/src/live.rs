@@ -293,8 +293,17 @@ impl LiveVelloRenderer {
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) {
+        self.resize_surface(size, SurfaceResizeMode::IfChanged);
+    }
+
+    fn reconfigure(&mut self, size: PhysicalSize<u32>) {
+        self.resize_surface(size, SurfaceResizeMode::Force);
+    }
+
+    fn resize_surface(&mut self, size: PhysicalSize<u32>, mode: SurfaceResizeMode) {
         let size = sanitize_physical_size(size);
-        if self.surface.config.width == size.width && self.surface.config.height == size.height {
+        let current = PhysicalSize::new(self.surface.config.width, self.surface.config.height);
+        if !surface_resize_required(current, size, mode) {
             return;
         }
         self.context
@@ -430,12 +439,11 @@ fn handle_surface_status(
     renderer: &mut LiveVelloRenderer,
     size: PhysicalSize<u32>,
 ) {
-    match status {
-        SurfaceStatus::Outdated | SurfaceStatus::Lost => renderer.resize(size),
-        SurfaceStatus::Timeout | SurfaceStatus::Occluded => {}
-        SurfaceStatus::Validation => {
-            eprintln!("surface validation error while acquiring the next frame");
-        }
+    if surface_status_forces_reconfigure(status) {
+        renderer.reconfigure(size);
+    }
+    if matches!(status, SurfaceStatus::Validation) {
+        eprintln!("surface validation error while acquiring the next frame");
     }
 }
 
@@ -513,6 +521,26 @@ fn blit_extents_match(target: PhysicalSize<u32>, surface: PhysicalSize<u32>) -> 
     target.width == surface.width && target.height == surface.height
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SurfaceResizeMode {
+    IfChanged,
+    Force,
+}
+
+fn surface_resize_required(
+    current: PhysicalSize<u32>,
+    requested: PhysicalSize<u32>,
+    mode: SurfaceResizeMode,
+) -> bool {
+    mode == SurfaceResizeMode::Force
+        || current.width != requested.width
+        || current.height != requested.height
+}
+
+fn surface_status_forces_reconfigure(status: SurfaceStatus) -> bool {
+    matches!(status, SurfaceStatus::Outdated | SurfaceStatus::Lost)
+}
+
 fn live_antialiasing_method() -> AaConfig {
     AaConfig::Msaa16
 }
@@ -524,9 +552,9 @@ fn live_present_mode() -> PresentMode {
 #[cfg(test)]
 mod tests {
     use super::{
-        LiveShowcase, PresentMode, RepaintSchedule, SurfaceStatus, blit_extents_match,
-        live_antialiasing_method, live_present_mode, resolve_repaint_schedule,
-        surface_status_requests_redraw,
+        LiveShowcase, PresentMode, RepaintSchedule, SurfaceResizeMode, SurfaceStatus,
+        blit_extents_match, live_antialiasing_method, live_present_mode, resolve_repaint_schedule,
+        surface_resize_required, surface_status_forces_reconfigure, surface_status_requests_redraw,
     };
     use kinetik_ui::core::RepaintRequest;
     use std::time::{Duration, Instant};
@@ -603,6 +631,38 @@ mod tests {
     fn transient_surface_timeout_requests_another_redraw() {
         assert!(surface_status_requests_redraw(SurfaceStatus::Timeout));
         assert!(!surface_status_requests_redraw(SurfaceStatus::Occluded));
+    }
+
+    #[test]
+    fn lost_and_outdated_surfaces_force_reconfiguration() {
+        assert!(surface_status_forces_reconfigure(SurfaceStatus::Lost));
+        assert!(surface_status_forces_reconfigure(SurfaceStatus::Outdated));
+        assert!(!surface_status_forces_reconfigure(SurfaceStatus::Timeout));
+        assert!(!surface_status_forces_reconfigure(SurfaceStatus::Occluded));
+        assert!(!surface_status_forces_reconfigure(
+            SurfaceStatus::Validation
+        ));
+    }
+
+    #[test]
+    fn forced_surface_resize_reconfigures_even_when_size_matches() {
+        let current = PhysicalSize::new(800, 600);
+
+        assert!(!surface_resize_required(
+            current,
+            PhysicalSize::new(800, 600),
+            SurfaceResizeMode::IfChanged,
+        ));
+        assert!(surface_resize_required(
+            current,
+            PhysicalSize::new(801, 600),
+            SurfaceResizeMode::IfChanged,
+        ));
+        assert!(surface_resize_required(
+            current,
+            PhysicalSize::new(800, 600),
+            SurfaceResizeMode::Force,
+        ));
     }
 
     #[test]
