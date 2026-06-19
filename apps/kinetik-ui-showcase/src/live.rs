@@ -133,7 +133,9 @@ impl LiveShowcase {
             }
             Err(LiveRenderError::Surface(status)) => {
                 handle_surface_status(status, renderer, size);
-                window.request_redraw();
+                if surface_status_requests_redraw(status) {
+                    window.request_redraw();
+                }
             }
             Err(error) => {
                 eprintln!("showcase render error: {error}");
@@ -335,7 +337,12 @@ impl LiveVelloRenderer {
                 surface_is_suboptimal = true;
                 texture
             }
-            CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => return Ok(()),
+            CurrentSurfaceTexture::Timeout => {
+                return Err(LiveRenderError::Surface(SurfaceStatus::Timeout));
+            }
+            CurrentSurfaceTexture::Occluded => {
+                return Err(LiveRenderError::Surface(SurfaceStatus::Occluded));
+            }
             CurrentSurfaceTexture::Outdated => {
                 return Err(LiveRenderError::Surface(SurfaceStatus::Outdated));
             }
@@ -382,6 +389,8 @@ impl LiveVelloRenderer {
 
 #[derive(Debug, Clone, Copy)]
 enum SurfaceStatus {
+    Timeout,
+    Occluded,
     Outdated,
     Lost,
     Validation,
@@ -417,9 +426,20 @@ fn handle_surface_status(
 ) {
     match status {
         SurfaceStatus::Outdated | SurfaceStatus::Lost => renderer.resize(size),
+        SurfaceStatus::Timeout | SurfaceStatus::Occluded => {}
         SurfaceStatus::Validation => {
             eprintln!("surface validation error while acquiring the next frame");
         }
+    }
+}
+
+fn surface_status_requests_redraw(status: SurfaceStatus) -> bool {
+    match status {
+        SurfaceStatus::Timeout
+        | SurfaceStatus::Outdated
+        | SurfaceStatus::Lost
+        | SurfaceStatus::Validation => true,
+        SurfaceStatus::Occluded => false,
     }
 }
 
@@ -498,8 +518,9 @@ fn live_present_mode() -> PresentMode {
 #[cfg(test)]
 mod tests {
     use super::{
-        LiveShowcase, PresentMode, RepaintSchedule, blit_extents_match, live_antialiasing_method,
-        live_present_mode, resolve_repaint_schedule,
+        LiveShowcase, PresentMode, RepaintSchedule, SurfaceStatus, blit_extents_match,
+        live_antialiasing_method, live_present_mode, resolve_repaint_schedule,
+        surface_status_requests_redraw,
     };
     use kinetik_ui::core::RepaintRequest;
     use std::time::{Duration, Instant};
@@ -570,6 +591,12 @@ mod tests {
     #[test]
     fn live_renderer_prefers_low_latency_present_mode() {
         assert_eq!(live_present_mode(), PresentMode::AutoNoVsync);
+    }
+
+    #[test]
+    fn transient_surface_timeout_requests_another_redraw() {
+        assert!(surface_status_requests_redraw(SurfaceStatus::Timeout));
+        assert!(!surface_status_requests_redraw(SurfaceStatus::Occluded));
     }
 
     #[test]
