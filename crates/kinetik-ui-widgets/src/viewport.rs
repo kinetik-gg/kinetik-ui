@@ -1,8 +1,8 @@
 //! Viewport texture surfaces and editor overlay primitives.
 
 use kinetik_ui_core::{
-    Brush, ClipId, Color, LinePrimitive, Point, Primitive, Rect, Size, Stroke, TextPrimitive,
-    TextureId, TexturePrimitive, Vec2,
+    Brush, ClipId, Color, LinePrimitive, Point, Primitive, Rect, ScaleFactor, Size, Stroke,
+    TextPrimitive, TextureId, TexturePrimitive, Vec2,
 };
 
 /// How viewport content should fit inside its bounds.
@@ -108,33 +108,51 @@ impl ViewportSurface {
     /// Computes the effective content-to-screen scale.
     #[must_use]
     pub fn content_scale(self) -> f32 {
+        self.content_scale_at(ScaleFactor::ONE)
+    }
+
+    /// Computes the effective content-to-screen scale for a viewport scale factor.
+    #[must_use]
+    pub fn content_scale_at(self, scale_factor: ScaleFactor) -> f32 {
         let Some(source) = self.effective_source_size() else {
             return 0.0;
         };
         let bounds = self.effective_bounds().size();
+        let native_scale = native_logical_pixel_scale(scale_factor);
         match self.pan_zoom.fit {
             ViewportFit::Fit => fit_scale(source, bounds),
             ViewportFit::Fill => fill_scale(source, bounds),
-            ViewportFit::ActualSize => 1.0,
-            ViewportFit::Zoom => finite_positive(self.pan_zoom.zoom).unwrap_or(1.0).max(0.01),
+            ViewportFit::ActualSize => native_scale,
+            ViewportFit::Zoom => {
+                finite_positive(self.pan_zoom.zoom).unwrap_or(1.0).max(0.01) * native_scale
+            }
         }
     }
 
     /// Computes the destination rectangle for the texture.
     #[must_use]
     pub fn content_rect(self) -> Rect {
+        self.content_rect_at(ScaleFactor::ONE)
+    }
+
+    /// Computes the scale-aware destination rectangle for the texture.
+    #[must_use]
+    pub fn content_rect_at(self, scale_factor: ScaleFactor) -> Rect {
         let bounds = self.effective_bounds();
         let Some(source) = self.effective_source_size() else {
             return Rect::new(bounds.x, bounds.y, 0.0, 0.0);
         };
-        let scale = self.content_scale();
+        let scale = self.content_scale_at(scale_factor);
         let width = source.width * scale;
         let height = source.height * scale;
-        Rect::new(
-            bounds.x + (bounds.width - width) * 0.5 + finite_or_zero(self.pan_zoom.pan.x),
-            bounds.y + (bounds.height - height) * 0.5 + finite_or_zero(self.pan_zoom.pan.y),
-            width,
-            height,
+        snap_rect_to_scale(
+            Rect::new(
+                bounds.x + (bounds.width - width) * 0.5 + finite_or_zero(self.pan_zoom.pan.x),
+                bounds.y + (bounds.height - height) * 0.5 + finite_or_zero(self.pan_zoom.pan.y),
+                width,
+                height,
+            ),
+            scale_factor,
         )
     }
 
@@ -159,9 +177,15 @@ impl ViewportSurface {
     /// Converts a UI-space point to content coordinates.
     #[must_use]
     pub fn screen_to_content(self, point: Point) -> Option<Point> {
+        self.screen_to_content_at(point, ScaleFactor::ONE)
+    }
+
+    /// Converts a UI-space point to content coordinates for a viewport scale factor.
+    #[must_use]
+    pub fn screen_to_content_at(self, point: Point, scale_factor: ScaleFactor) -> Option<Point> {
         let point = finite_point(point)?;
-        let scale = finite_positive(self.content_scale())?;
-        let rect = self.content_rect();
+        let scale = finite_positive(self.content_scale_at(scale_factor))?;
+        let rect = self.content_rect_at(scale_factor);
         Some(Point::new(
             (point.x - rect.x) / scale,
             (point.y - rect.y) / scale,
@@ -175,12 +199,25 @@ impl ViewportSurface {
             .and_then(|point| self.screen_to_content(point))
     }
 
+    /// Converts viewport-local coordinates to content coordinates for a viewport scale factor.
+    #[must_use]
+    pub fn viewport_to_content_at(self, point: Point, scale_factor: ScaleFactor) -> Option<Point> {
+        self.viewport_to_screen(point)
+            .and_then(|point| self.screen_to_content_at(point, scale_factor))
+    }
+
     /// Converts a content-space point to UI-space.
     #[must_use]
     pub fn content_to_screen(self, point: Point) -> Option<Point> {
+        self.content_to_screen_at(point, ScaleFactor::ONE)
+    }
+
+    /// Converts a content-space point to UI-space for a viewport scale factor.
+    #[must_use]
+    pub fn content_to_screen_at(self, point: Point, scale_factor: ScaleFactor) -> Option<Point> {
         let point = finite_point(point)?;
-        let scale = finite_positive(self.content_scale())?;
-        let rect = self.content_rect();
+        let scale = finite_positive(self.content_scale_at(scale_factor))?;
+        let rect = self.content_rect_at(scale_factor);
         Some(Point::new(
             rect.x + point.x * scale,
             rect.y + point.y * scale,
@@ -190,8 +227,14 @@ impl ViewportSurface {
     /// Converts a content-space rectangle to UI-space.
     #[must_use]
     pub fn content_rect_to_screen(self, rect: Rect) -> Option<Rect> {
-        let scale = finite_positive(self.content_scale())?;
-        let origin = self.content_to_screen(rect.origin())?;
+        self.content_rect_to_screen_at(rect, ScaleFactor::ONE)
+    }
+
+    /// Converts a content-space rectangle to UI-space for a viewport scale factor.
+    #[must_use]
+    pub fn content_rect_to_screen_at(self, rect: Rect, scale_factor: ScaleFactor) -> Option<Rect> {
+        let scale = finite_positive(self.content_scale_at(scale_factor))?;
+        let origin = self.content_to_screen_at(rect.origin(), scale_factor)?;
         Some(Rect::new(
             origin.x,
             origin.y,
@@ -221,10 +264,16 @@ impl ViewportSurface {
     /// Emits the texture primitive.
     #[must_use]
     pub fn texture_primitive(self) -> Primitive {
+        self.texture_primitive_at(ScaleFactor::ONE)
+    }
+
+    /// Emits the texture primitive for a viewport scale factor.
+    #[must_use]
+    pub fn texture_primitive_at(self, scale_factor: ScaleFactor) -> Primitive {
         let source_size = self.effective_source_size().unwrap_or(Size::ZERO);
         Primitive::Texture(TexturePrimitive {
             texture: self.texture,
-            rect: self.content_rect(),
+            rect: self.content_rect_at(scale_factor),
             source_size,
         })
     }
@@ -232,12 +281,23 @@ impl ViewportSurface {
     /// Emits guide line primitives for content-space guide positions.
     #[must_use]
     pub fn content_guide_primitives(self, guides: &[Guide], color: Color) -> Vec<Primitive> {
-        let content_rect = self.content_rect();
+        self.content_guide_primitives_at(guides, color, ScaleFactor::ONE)
+    }
+
+    /// Emits guide line primitives for content-space guide positions at a viewport scale factor.
+    #[must_use]
+    pub fn content_guide_primitives_at(
+        self,
+        guides: &[Guide],
+        color: Color,
+        scale_factor: ScaleFactor,
+    ) -> Vec<Primitive> {
+        let content_rect = self.content_rect_at(scale_factor);
         guides
             .iter()
             .filter_map(|guide| match *guide {
                 Guide::Horizontal(y) => {
-                    let from = self.content_to_screen(Point::new(0.0, y))?;
+                    let from = self.content_to_screen_at(Point::new(0.0, y), scale_factor)?;
                     Some(Primitive::Line(LinePrimitive {
                         from: Point::new(content_rect.x, from.y),
                         to: Point::new(content_rect.max_x(), from.y),
@@ -245,7 +305,7 @@ impl ViewportSurface {
                     }))
                 }
                 Guide::Vertical(x) => {
-                    let from = self.content_to_screen(Point::new(x, 0.0))?;
+                    let from = self.content_to_screen_at(Point::new(x, 0.0), scale_factor)?;
                     Some(Primitive::Line(LinePrimitive {
                         from: Point::new(from.x, content_rect.y),
                         to: Point::new(from.x, content_rect.max_y()),
@@ -259,10 +319,20 @@ impl ViewportSurface {
     /// Emits a content-space crosshair overlay.
     #[must_use]
     pub fn content_crosshair_primitives(self, crosshair: &Crosshair) -> Vec<Primitive> {
+        self.content_crosshair_primitives_at(crosshair, ScaleFactor::ONE)
+    }
+
+    /// Emits a content-space crosshair overlay for a viewport scale factor.
+    #[must_use]
+    pub fn content_crosshair_primitives_at(
+        self,
+        crosshair: &Crosshair,
+        scale_factor: ScaleFactor,
+    ) -> Vec<Primitive> {
         if !crosshair.visible || !self.contains_content_point(crosshair.position) {
             return Vec::new();
         }
-        let Some(position) = self.content_to_screen(crosshair.position) else {
+        let Some(position) = self.content_to_screen_at(crosshair.position, scale_factor) else {
             return Vec::new();
         };
         if !self.contains_screen_point(position) {
@@ -478,23 +548,65 @@ impl ViewportComposition {
     /// Emits primitives in deterministic viewport order.
     #[must_use]
     pub fn primitives(&self) -> Vec<Primitive> {
+        self.primitives_at(ScaleFactor::ONE)
+    }
+
+    /// Emits primitives in deterministic viewport order for a viewport scale factor.
+    #[must_use]
+    pub fn primitives_at(&self, scale_factor: ScaleFactor) -> Vec<Primitive> {
         let mut primitives = vec![
             Primitive::ClipBegin {
                 id: self.clip,
                 rect: self.surface.bounds,
             },
-            self.surface.texture_primitive(),
+            self.surface.texture_primitive_at(scale_factor),
         ];
-        primitives.extend(
-            self.surface
-                .content_guide_primitives(&self.guides, Color::rgba(1.0, 1.0, 1.0, 0.35)),
-        );
+        primitives.extend(self.surface.content_guide_primitives_at(
+            &self.guides,
+            Color::rgba(1.0, 1.0, 1.0, 0.35),
+            scale_factor,
+        ));
         if let Some(crosshair) = &self.crosshair {
-            primitives.extend(self.surface.content_crosshair_primitives(crosshair));
+            primitives.extend(
+                self.surface
+                    .content_crosshair_primitives_at(crosshair, scale_factor),
+            );
         }
         primitives.push(Primitive::ClipEnd { id: self.clip });
         primitives
     }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn native_logical_pixel_scale(scale_factor: ScaleFactor) -> f32 {
+    if scale_factor.is_valid() {
+        (1.0 / scale_factor.value()) as f32
+    } else {
+        1.0
+    }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn snap_rect_to_scale(rect: Rect, scale_factor: ScaleFactor) -> Rect {
+    if !rect.x.is_finite()
+        || !rect.y.is_finite()
+        || !rect.width.is_finite()
+        || !rect.height.is_finite()
+        || !scale_factor.is_valid()
+    {
+        return rect;
+    }
+    let scale = scale_factor.value();
+    let left = (f64::from(rect.min_x()) * scale).round() / scale;
+    let top = (f64::from(rect.min_y()) * scale).round() / scale;
+    let right = (f64::from(rect.max_x()) * scale).round() / scale;
+    let bottom = (f64::from(rect.max_y()) * scale).round() / scale;
+    Rect::new(
+        left as f32,
+        top as f32,
+        (right - left) as f32,
+        (bottom - top) as f32,
+    )
 }
 
 #[cfg(test)]
@@ -503,7 +615,9 @@ mod tests {
         Crosshair, Guide, PanZoom, ViewportComposition, ViewportFit, ViewportSurface,
         guide_primitives, ruler_ticks,
     };
-    use kinetik_ui_core::{ClipId, Color, Point, Primitive, Rect, Size, TextureId, Vec2};
+    use kinetik_ui_core::{
+        ClipId, Color, Point, Primitive, Rect, ScaleFactor, Size, TextureId, Vec2,
+    };
 
     fn assert_approx(actual: f32, expected: f32) {
         assert!(
@@ -555,6 +669,30 @@ mod tests {
         assert_eq!(surface.pan_zoom.fit, ViewportFit::Zoom);
         assert_approx(rect.x, 10.0);
         assert_approx(rect.y, 55.0);
+    }
+
+    #[test]
+    fn actual_size_maps_source_pixels_to_physical_pixels() {
+        let mut surface = surface();
+        surface.pan_zoom.actual_size();
+        let rect = surface.content_rect_at(ScaleFactor::new(2.0));
+
+        assert_approx(surface.content_scale_at(ScaleFactor::new(2.0)), 0.5);
+        assert_approx(rect.width, 200.0);
+        assert_approx(rect.height, 100.0);
+        assert_approx(rect.x, 0.0);
+        assert_approx(rect.y, 50.0);
+        assert_approx(rect.width * 2.0, 400.0);
+        assert_approx(rect.height * 2.0, 200.0);
+    }
+
+    #[test]
+    fn zoom_mode_maps_zoom_to_physical_scale() {
+        let mut surface = surface();
+        surface.pan_zoom.set_zoom(1.0);
+
+        assert_approx(surface.content_scale_at(ScaleFactor::new(2.0)), 0.5);
+        assert_approx(surface.content_rect_at(ScaleFactor::new(2.0)).width, 200.0);
     }
 
     #[test]
@@ -623,6 +761,20 @@ mod tests {
     }
 
     #[test]
+    fn texture_surface_emits_scale_aware_native_rect() {
+        let mut surface = surface();
+        surface.pan_zoom.actual_size();
+
+        let Primitive::Texture(texture) = surface.texture_primitive_at(ScaleFactor::new(2.0))
+        else {
+            panic!("expected texture primitive");
+        };
+
+        assert_approx(texture.rect.width, 200.0);
+        assert_approx(texture.rect.height, 100.0);
+    }
+
+    #[test]
     fn ruler_ticks_change_with_zoom() {
         assert!(ruler_ticks(0.0, 100.0, 2.0).len() > ruler_ticks(0.0, 100.0, 0.5).len());
     }
@@ -685,6 +837,31 @@ mod tests {
         };
         assert_approx(horizontal.from.y, 100.0);
         assert_approx(horizontal.to.y, 100.0);
+    }
+
+    #[test]
+    fn scale_aware_content_overlays_share_texture_rect() {
+        let mut surface = surface();
+        surface.bounds = Rect::new(0.25, 0.25, 201.0, 201.0);
+        surface.pan_zoom.actual_size();
+
+        let Primitive::Texture(texture) = surface.texture_primitive_at(ScaleFactor::new(1.5))
+        else {
+            panic!("expected texture primitive");
+        };
+        let guide = surface.content_guide_primitives_at(
+            &[Guide::Vertical(200.0)],
+            Color::WHITE,
+            ScaleFactor::new(1.5),
+        );
+        let Primitive::Line(line) = &guide[0] else {
+            panic!("expected guide line");
+        };
+
+        assert_approx(line.from.y, texture.rect.y);
+        assert_approx(line.to.y, texture.rect.max_y());
+        assert!(line.from.x >= texture.rect.x);
+        assert!(line.from.x <= texture.rect.max_x());
     }
 
     #[test]

@@ -1285,7 +1285,7 @@ impl EditorShowcase {
             crosshair: None,
             clip: ClipId::from_raw(8_001),
         };
-        ui.extend(composition.primitives());
+        ui.extend(composition.primitives_at(ui.viewport().scale_factor));
         self.viewport_overlays(ui, surface, surface_bounds);
 
         let timeline = Rect::new(body.x + 10.0, body.max_y() - 24.0, body.width - 20.0, 14.0);
@@ -1300,7 +1300,7 @@ impl EditorShowcase {
 
     fn viewport_overlays(&self, ui: &mut Ui<'_>, surface: ViewportSurface, bounds: Rect) {
         if self.grid_visible {
-            let content = surface.content_rect();
+            let content = surface.content_rect_at(ui.viewport().scale_factor);
             let step = (content.width / 8.0).max(1.0);
             for i in 1..8 {
                 let x = content.x + step * i as f32;
@@ -1666,7 +1666,7 @@ pub fn register_resources(resources: &mut RenderResources) {
         resources.register_texture(TextureResource {
             id: VIEWPORT_TEXTURE,
             size: VIEWPORT_SIZE,
-            sampling: RenderImageSampling::Smooth,
+            sampling: RenderImageSampling::Pixelated,
             snapshot: Some(snapshot),
         });
     }
