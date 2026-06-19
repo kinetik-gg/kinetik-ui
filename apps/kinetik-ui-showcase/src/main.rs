@@ -29,6 +29,14 @@ use vello::{
 const DEFAULT_WIDTH: usize = 1440;
 const DEFAULT_HEIGHT: usize = 900;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RenderOnceTarget {
+    physical_width: usize,
+    physical_height: usize,
+    logical_size: Size,
+    scale_factor: f64,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "--list") {
@@ -43,16 +51,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(path) = render_once_path(&args) {
-        let width = usize_arg(&args, "--width").unwrap_or(DEFAULT_WIDTH);
-        let height = usize_arg(&args, "--height").unwrap_or(DEFAULT_HEIGHT);
-        let scale_factor = f64_arg(&args, "--scale").unwrap_or(1.0);
+        let target = render_once_target(&args)?;
         let mut app = ShowcaseApp::new();
-        app.set_viewport_size(logical_size_from_pixels(width, height, scale_factor));
+        app.set_viewport_size(target.logical_size);
         if let Some(page) = page_arg(&args).and_then(ShowcaseApp::page_from_name) {
             app.set_page(page);
         }
 
-        let frame = pollster::block_on(render_once_vello_frame(&app, width, height, scale_factor))?;
+        let frame = pollster::block_on(render_once_vello_frame(
+            &app,
+            target.physical_width,
+            target.physical_height,
+            target.scale_factor,
+        ))?;
         write_bmp(&frame, path)?;
         return Ok(());
     }
@@ -81,6 +92,41 @@ fn f64_arg(args: &[String], name: &str) -> Option<f64> {
     args.windows(2)
         .find_map(|window| (window[0] == name).then(|| window[1].parse().ok()))
         .flatten()
+}
+
+fn render_once_target(args: &[String]) -> Result<RenderOnceTarget, RenderOnceVelloError> {
+    let scale_factor = f64_arg(args, "--scale").unwrap_or(1.0);
+    let scale = ScaleFactor::new(scale_factor);
+    if !scale.is_valid() {
+        return Err(RenderOnceVelloError::InvalidScaleFactor);
+    }
+
+    if usize_arg(args, "--logical-width").is_some() || usize_arg(args, "--logical-height").is_some()
+    {
+        let logical_size = Size::new(
+            pixel_to_f32(usize_arg(args, "--logical-width").unwrap_or(DEFAULT_WIDTH)),
+            pixel_to_f32(usize_arg(args, "--logical-height").unwrap_or(DEFAULT_HEIGHT)),
+        );
+        let physical_size = scale.logical_size_to_physical(logical_size);
+        return Ok(RenderOnceTarget {
+            physical_width: usize::try_from(physical_size.width).unwrap_or(usize::MAX),
+            physical_height: usize::try_from(physical_size.height).unwrap_or(usize::MAX),
+            logical_size,
+            scale_factor,
+        });
+    }
+
+    let physical_width = usize_arg(args, "--width").unwrap_or(DEFAULT_WIDTH);
+    let physical_height = usize_arg(args, "--height").unwrap_or(DEFAULT_HEIGHT);
+    Ok(RenderOnceTarget {
+        physical_width,
+        physical_height,
+        logical_size: scale.physical_size_to_logical(PhysicalSize::new(
+            pixel_to_u32(physical_width),
+            pixel_to_u32(physical_height),
+        )),
+        scale_factor,
+    })
 }
 
 fn submit_render_once_to_vello(
@@ -296,6 +342,7 @@ fn render_once_viewport(
     ))
 }
 
+#[cfg(test)]
 fn logical_size_from_pixels(width: usize, height: usize, scale_factor: f64) -> Size {
     let scale_factor = ScaleFactor::new(scale_factor);
     if scale_factor.is_valid() {
@@ -353,13 +400,13 @@ impl From<vello::Error> for RenderOnceVelloError {
 #[cfg(test)]
 mod tests {
     use super::{
-        align_to, f64_arg, logical_size_from_pixels, render_once_viewport,
-        submit_render_once_to_vello, usize_arg,
+        Size, align_to, f64_arg, logical_size_from_pixels, render_once_target,
+        render_once_viewport, submit_render_once_to_vello, usize_arg,
     };
     use kinetik_ui_showcase::app::ShowcaseApp;
 
     #[test]
-    fn render_once_cli_parses_scale_and_dimensions() {
+    fn render_once_cli_parses_physical_scale_and_dimensions() {
         let args = [
             "showcase".to_owned(),
             "--render-once".to_owned(),
@@ -378,6 +425,50 @@ mod tests {
     }
 
     #[test]
+    fn render_once_target_defaults_to_physical_dimensions() {
+        let args = [
+            "showcase".to_owned(),
+            "--render-once".to_owned(),
+            "frame.bmp".to_owned(),
+            "--width".to_owned(),
+            "1440".to_owned(),
+            "--height".to_owned(),
+            "900".to_owned(),
+            "--scale".to_owned(),
+            "1.25".to_owned(),
+        ];
+
+        let target = render_once_target(&args).expect("render-once target");
+
+        assert_eq!(target.physical_width, 1440);
+        assert_eq!(target.physical_height, 900);
+        assert_eq!(target.logical_size, Size::new(1152.0, 720.0));
+        assert_approx_f64(target.scale_factor, 1.25);
+    }
+
+    #[test]
+    fn render_once_target_accepts_live_logical_dimensions() {
+        let args = [
+            "showcase".to_owned(),
+            "--render-once".to_owned(),
+            "frame.bmp".to_owned(),
+            "--logical-width".to_owned(),
+            "1440".to_owned(),
+            "--logical-height".to_owned(),
+            "900".to_owned(),
+            "--scale".to_owned(),
+            "1.25".to_owned(),
+        ];
+
+        let target = render_once_target(&args).expect("render-once target");
+
+        assert_eq!(target.physical_width, 1800);
+        assert_eq!(target.physical_height, 1125);
+        assert_eq!(target.logical_size, Size::new(1440.0, 900.0));
+        assert_approx_f64(target.scale_factor, 1.25);
+    }
+
+    #[test]
     fn render_once_viewport_uses_scaled_logical_size() {
         let mut app = ShowcaseApp::new();
         app.set_viewport_size(logical_size_from_pixels(1440, 900, 1.25));
@@ -393,7 +484,15 @@ mod tests {
     #[test]
     fn render_once_rejects_invalid_scale_factor() {
         let app = ShowcaseApp::new();
+        let args = [
+            "showcase".to_owned(),
+            "--render-once".to_owned(),
+            "frame.bmp".to_owned(),
+            "--scale".to_owned(),
+            "0".to_owned(),
+        ];
 
+        assert!(render_once_target(&args).is_err());
         assert!(render_once_viewport(&app, 1440, 900, 0.0).is_err());
         assert!(render_once_viewport(&app, 1440, 900, f64::NAN).is_err());
     }
@@ -430,10 +529,52 @@ mod tests {
     }
 
     #[test]
+    fn live_logical_render_once_submits_matching_physical_text_size() {
+        let args = [
+            "showcase".to_owned(),
+            "--render-once".to_owned(),
+            "frame.bmp".to_owned(),
+            "--logical-width".to_owned(),
+            "1440".to_owned(),
+            "--logical-height".to_owned(),
+            "900".to_owned(),
+            "--scale".to_owned(),
+            "1.25".to_owned(),
+        ];
+        let target = render_once_target(&args).expect("render-once target");
+        let mut app = ShowcaseApp::new();
+        app.set_viewport_size(target.logical_size);
+
+        let (renderer, viewport) = submit_render_once_to_vello(
+            &app,
+            target.physical_width,
+            target.physical_height,
+            target.scale_factor,
+        )
+        .expect("vello submission");
+        let encoding = renderer.scene().encoding();
+        let first_run = encoding.resources.glyph_runs.first().expect("glyph run");
+
+        assert_eq!(viewport.logical_size, Size::new(1440.0, 900.0));
+        assert_eq!(viewport.physical_size.width, 1800);
+        assert_eq!(viewport.physical_size.height, 1125);
+        assert!(first_run.hint);
+        assert_approx_f32(first_run.font_size.round(), first_run.font_size);
+    }
+
+    #[test]
     fn render_once_readback_rows_align_to_wgpu_copy_pitch() {
         assert_eq!(align_to(0, 256), 0);
         assert_eq!(align_to(4, 256), 256);
         assert_eq!(align_to(1024, 256), 1024);
         assert_eq!(align_to(1025, 256), 1280);
+    }
+
+    fn assert_approx_f32(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() <= f32::EPSILON);
+    }
+
+    fn assert_approx_f64(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() <= f64::EPSILON);
     }
 }
