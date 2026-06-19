@@ -1,6 +1,6 @@
 //! Immediate-mode composition wrapper for widget primitives.
 
-use std::hash::Hash;
+use std::{hash::Hash, time::Duration};
 
 use kinetik_ui_core::{
     ActionContext, ActionDescriptor, ActionId, ActionInvocation, ActionSource, ClipId,
@@ -26,15 +26,18 @@ use crate::{
     image_icon_selectable_button as image_icon_selectable_button_widget,
     image_icon_selectable_button_sized as image_icon_selectable_button_sized_widget,
     image_semantics, label as label_widget, label_semantics, list_row as list_row_widget,
-    multi_line_text_field_with_text_layouts as multi_line_text_field_widget,
-    numeric_input_with_text_layouts as numeric_input_widget, panel as panel_widget,
-    panel_semantics, radio_button as radio_button_widget,
+    multi_line_text_field_with_text_layouts_and_caret_visibility as multi_line_text_field_widget,
+    numeric_input_with_text_layouts_and_caret_visibility as numeric_input_widget,
+    panel as panel_widget, panel_semantics, radio_button as radio_button_widget,
     radio_button_with_label as radio_button_with_label_widget,
-    search_field_with_text_layouts as search_field_widget, separator as separator_widget,
-    slider as slider_widget, slider_with_label as slider_with_label_widget,
-    tab_button as tab_button_widget, text_field_with_text_layouts as text_field_widget,
+    search_field_with_text_layouts_and_caret_visibility as search_field_widget,
+    separator as separator_widget, slider as slider_widget,
+    slider_with_label as slider_with_label_widget, tab_button as tab_button_widget,
+    text_field_with_text_layouts_and_caret_visibility as text_field_widget,
     toggle as toggle_widget, toggle_with_label as toggle_with_label_widget,
 };
+
+const TEXT_CARET_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 fn rect_key(prefix: &str, rect: Rect) -> String {
     format!(
@@ -988,8 +991,9 @@ impl<'a> Ui<'a> {
     ) -> TextFieldOutput {
         let id = self.id(key);
         let theme = self.theme;
-        let text_layouts = self.text_layouts.as_deref_mut();
         let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
+        let text_layouts = self.text_layouts.as_deref_mut();
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = text_field_widget(
             id,
@@ -1000,8 +1004,10 @@ impl<'a> Ui<'a> {
             theme,
             disabled,
             text_layouts,
+            caret_visible,
         );
         self.push_widget_output(&output.widget);
+        self.request_text_caret_blink_repaint(&output.widget);
         self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
@@ -1016,8 +1022,9 @@ impl<'a> Ui<'a> {
     ) -> MultiLineTextFieldOutput {
         let id = self.id(key);
         let theme = self.theme;
-        let text_layouts = self.text_layouts.as_deref_mut();
         let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
+        let text_layouts = self.text_layouts.as_deref_mut();
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = multi_line_text_field_widget(
             id,
@@ -1028,8 +1035,10 @@ impl<'a> Ui<'a> {
             theme,
             disabled,
             text_layouts,
+            caret_visible,
         );
         self.push_widget_output(&output.widget);
+        self.request_text_caret_blink_repaint(&output.widget);
         self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
@@ -1044,8 +1053,9 @@ impl<'a> Ui<'a> {
     ) -> NumericInputOutput {
         let id = self.id(key);
         let theme = self.theme;
-        let text_layouts = self.text_layouts.as_deref_mut();
         let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
+        let text_layouts = self.text_layouts.as_deref_mut();
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = numeric_input_widget(
             id,
@@ -1056,8 +1066,10 @@ impl<'a> Ui<'a> {
             theme,
             disabled,
             text_layouts,
+            caret_visible,
         );
         self.push_widget_output(&output.field.widget);
+        self.request_text_caret_blink_repaint(&output.field.widget);
         self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
@@ -1072,8 +1084,9 @@ impl<'a> Ui<'a> {
     ) -> SearchFieldOutput {
         let id = self.id(key);
         let theme = self.theme;
-        let text_layouts = self.text_layouts.as_deref_mut();
         let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
+        let text_layouts = self.text_layouts.as_deref_mut();
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = search_field_widget(
             id,
@@ -1084,8 +1097,10 @@ impl<'a> Ui<'a> {
             theme,
             disabled,
             text_layouts,
+            caret_visible,
         );
         self.push_widget_output(&output.field.widget);
+        self.request_text_caret_blink_repaint(&output.field.widget);
         self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
@@ -1130,6 +1145,18 @@ impl<'a> Ui<'a> {
         }
     }
 
+    fn request_text_caret_blink_repaint(&mut self, output: &WidgetOutput) {
+        if output
+            .response
+            .is_some_and(|response| response.state.focused && !response.state.disabled)
+        {
+            self.runtime
+                .request_repaint(RepaintRequest::After(text_caret_next_blink_delay(
+                    self.time(),
+                )));
+        }
+    }
+
     fn attach_text_layout(&mut self, primitive: &mut Primitive) {
         let Some(text_layouts) = self.text_layouts.as_deref_mut() else {
             return;
@@ -1171,6 +1198,20 @@ fn response_requests_followup_repaint(response: Response, input: &UiInput) -> bo
         || (response.state.pressed && input.pointer.primary.pressed)
 }
 
+fn text_caret_visible(time: TimeInfo) -> bool {
+    let interval = TEXT_CARET_BLINK_INTERVAL.as_millis().max(1);
+    (time.now.as_millis() / interval).is_multiple_of(2)
+}
+
+fn text_caret_next_blink_delay(time: TimeInfo) -> Duration {
+    let interval_ms = u64::try_from(TEXT_CARET_BLINK_INTERVAL.as_millis())
+        .unwrap_or(u64::MAX)
+        .max(1);
+    let elapsed_ms = u64::try_from(time.now.as_millis()).unwrap_or(u64::MAX);
+    let remainder = elapsed_ms % interval_ms;
+    Duration::from_millis((interval_ms - remainder).max(1))
+}
+
 fn text_layout_key(text: &TextPrimitive) -> TextLayoutKey {
     TextLayoutKey::new(
         text.text.clone(),
@@ -1188,11 +1229,11 @@ mod tests {
     use crate::{IconGraphic, IconLibrary, IconPath};
     use kinetik_ui_core::{
         ActionContext, ActionDescriptor, ActionSource, Brush, Color, CursorShape, FrameContext,
-        FrameWarning, IconId, ImageId, Insets, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
-        PathElement, PhysicalSize, PlatformRequest, Point, PointerButtonState, PointerInput,
-        Primitive, Rect, RepaintRequest, ScaleFactor, SemanticNode, SemanticRole, Size,
-        TextInputEvent, TextPrimitive, TextRange, TimeInfo, UiInput, UiMemory, Vec2, ViewportInfo,
-        WidgetId, default_dark_theme,
+        FrameOutput, FrameWarning, IconId, ImageId, Insets, Key, KeyEvent, KeyState, KeyboardInput,
+        Modifiers, PathElement, PhysicalSize, PlatformRequest, Point, PointerButtonState,
+        PointerInput, Primitive, Rect, RepaintRequest, ScaleFactor, SemanticNode, SemanticRole,
+        Size, TextInputEvent, TextPrimitive, TextRange, TimeInfo, UiInput, UiMemory, Vec2,
+        ViewportInfo, WidgetId, default_dark_theme,
     };
     use kinetik_ui_text::{TextEditState, TextLayoutKey, TextLayoutStore, TextStyle};
 
@@ -1277,6 +1318,10 @@ mod tests {
     }
 
     fn frame_context() -> FrameContext {
+        frame_context_at(Duration::from_millis(32))
+    }
+
+    fn frame_context_at(now: Duration) -> FrameContext {
         FrameContext::new(
             ViewportInfo::new(
                 Size::new(1280.0, 720.0),
@@ -1284,8 +1329,19 @@ mod tests {
                 ScaleFactor::new(2.0),
             ),
             UiInput::default(),
-            TimeInfo::new(Duration::from_millis(32), Duration::from_millis(16), 2),
+            TimeInfo::new(now, Duration::from_millis(16), 2),
         )
+    }
+
+    fn text_field_has_caret(output: &FrameOutput) -> bool {
+        output.primitives.iter().any(|primitive| {
+            matches!(
+                primitive,
+                Primitive::Rect(rect)
+                    if (rect.rect.width - 1.0).abs() < f32::EPSILON
+                        && rect.rect.height > 8.0
+            )
+        })
     }
 
     #[test]
@@ -2252,6 +2308,64 @@ mod tests {
         assert_eq!(state.text, "abc");
         assert!(state.composition.is_some());
         assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_text_field_blinks_caret_and_schedules_repaint() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let field = WidgetId::from_key("root").child("field");
+        memory.focus(field);
+
+        let mut state = TextEditState::new("abc");
+        let mut ui = Ui::begin_frame(
+            frame_context_at(Duration::from_millis(0)),
+            &mut memory,
+            &theme,
+        );
+        ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+        let output = ui.finish_output();
+        assert!(text_field_has_caret(&output));
+        assert_eq!(
+            output.repaint,
+            RepaintRequest::After(Duration::from_millis(500))
+        );
+
+        let mut ui = Ui::begin_frame(
+            frame_context_at(Duration::from_millis(500)),
+            &mut memory,
+            &theme,
+        );
+        ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+        let output = ui.finish_output();
+        assert!(!text_field_has_caret(&output));
+        assert_eq!(
+            output.repaint,
+            RepaintRequest::After(Duration::from_millis(500))
+        );
+    }
+
+    #[test]
+    fn ui_text_field_schedules_partial_blink_delay() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let field = WidgetId::from_key("root").child("field");
+        memory.focus(field);
+        let mut state = TextEditState::new("abc");
+        let mut ui = Ui::begin_frame(
+            frame_context_at(Duration::from_millis(750)),
+            &mut memory,
+            &theme,
+        );
+
+        ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+        let output = ui.finish_output();
+
+        assert!(!text_field_has_caret(&output));
+        assert_eq!(
+            output.repaint,
+            RepaintRequest::After(Duration::from_millis(250))
+        );
     }
 
     #[test]
