@@ -52,6 +52,7 @@ const ICON_ATLAS_CELL_SIZE: u32 = ICON_SIZE + ICON_ATLAS_PADDING * 2;
 const ICON_ATLAS_COLUMNS: u32 = 7;
 const ICON_ATLAS_ROWS: u32 = 4;
 const DENSE_ICON_SIZE: f32 = 16.0;
+const TOOLBAR_ICON_SIZE: f32 = 24.0;
 const ASSET_ICON_SIZE: f32 = 24.0;
 
 const ICON_CURSOR: ImageId = ImageId::from_raw(7_001);
@@ -752,11 +753,12 @@ impl EditorShowcase {
             ),
         ] {
             let button = Rect::new(x, 33.0, 28.0, 26.0);
-            let response = ui.image_icon_button_value(
+            let response = ui.image_icon_button_value_sized(
                 ("editor.tool", action),
                 button,
                 icon,
                 label,
+                TOOLBAR_ICON_SIZE,
                 &mut self.selected_tool,
                 tool,
                 false,
@@ -789,11 +791,12 @@ impl EditorShowcase {
             (ICON_CROSSHAIR, "Frame selected", ACTION_PALETTE),
             (ICON_RESET, "Reset view", ACTION_PALETTE),
         ] {
-            let response = ui.image_icon_button(
+            let response = ui.image_icon_button_sized(
                 ("editor.viewport-tool", action, icon.raw()),
                 Rect::new(x, 33.0, 28.0, 26.0),
                 icon,
                 label,
+                TOOLBAR_ICON_SIZE,
                 false,
             );
             if response.clicked {
@@ -813,11 +816,12 @@ impl EditorShowcase {
         .into_iter()
         .enumerate()
         {
-            let response = ui.image_icon_button(
+            let response = ui.image_icon_button_sized(
                 ("editor.run", action, index),
                 Rect::new(right + index as f32 * 36.0, 33.0, 30.0, 26.0),
                 icon,
                 label,
+                TOOLBAR_ICON_SIZE,
                 false,
             );
             if response.clicked {
@@ -1842,8 +1846,8 @@ fn inspector_label_width(grid_width: f32) -> f32 {
 mod tests {
     use super::{
         EditorShowcase, EditorTool, ICON_ASSETS, ICON_ATLAS, ICON_ATLAS_CELL_SIZE,
-        ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE, icon_atlas_image, inspector_label_width,
-        register_resources,
+        ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE, TOOLBAR_ICON_SIZE, icon_atlas_image,
+        inspector_label_width, register_resources,
     };
     use kinetik_ui::core::{
         FrameContext, PhysicalSize, Point, PointerButtonState, PointerInput, Primitive, Rect,
@@ -1998,6 +2002,37 @@ mod tests {
                     "icon rect {rect:?} is fractional at {scale}x"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn editor_toolbar_icons_use_larger_targets_than_dense_panel_icons() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let context = editor_test_context(UiInput::default());
+        let mut ui = Ui::begin_frame(context, &mut memory, &theme);
+        let mut editor = EditorShowcase::new();
+
+        editor.render(&mut ui, 0);
+        let output = ui.finish_output();
+        let toolbar_icons = output
+            .primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Image(image)
+                    if is_editor_icon(image.image)
+                        && (image.rect.y - 34.0).abs() <= f32::EPSILON =>
+                {
+                    Some(image.rect)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(toolbar_icons.len(), 12);
+        for rect in toolbar_icons {
+            assert_eq!(rect.width, TOOLBAR_ICON_SIZE);
+            assert_eq!(rect.height, TOOLBAR_ICON_SIZE);
         }
     }
 

@@ -19,8 +19,10 @@ use crate::{
     icon_button_with_label as fallback_icon_button_with_label_widget,
     icon_button_with_library as icon_button_with_library_widget, image as image_widget,
     image_icon_button as image_icon_button_widget,
-    image_icon_selectable_button as image_icon_selectable_button_widget, image_semantics,
-    label as label_widget, label_semantics, list_row as list_row_widget,
+    image_icon_button_sized as image_icon_button_sized_widget,
+    image_icon_selectable_button as image_icon_selectable_button_widget,
+    image_icon_selectable_button_sized as image_icon_selectable_button_sized_widget,
+    image_semantics, label as label_widget, label_semantics, list_row as list_row_widget,
     multi_line_text_field_with_text_layouts as multi_line_text_field_widget,
     numeric_input_with_text_layouts as numeric_input_widget, panel as panel_widget,
     panel_semantics, radio_button as radio_button_widget,
@@ -505,6 +507,25 @@ impl<'a> Ui<'a> {
         self.push_interactive(output)
     }
 
+    /// Emits a bitmap-backed icon button with an explicit icon side length.
+    pub fn image_icon_button_sized(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        icon_size: f32,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = image_icon_button_sized_widget(
+            id, rect, image, label, icon_size, input, memory, theme, disabled,
+        );
+        self.push_interactive(output)
+    }
+
     /// Emits a selectable bitmap-backed icon button with an accessible label.
     pub fn image_icon_selectable_button(
         &mut self,
@@ -520,6 +541,27 @@ impl<'a> Ui<'a> {
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = image_icon_selectable_button_widget(
             id, rect, image, label, selected, input, memory, theme, disabled,
+        );
+        self.push_interactive(output)
+    }
+
+    /// Emits a selectable bitmap-backed icon button with an explicit icon side length.
+    #[allow(clippy::too_many_arguments)]
+    pub fn image_icon_selectable_button_sized(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        selected: bool,
+        icon_size: f32,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = image_icon_selectable_button_sized_widget(
+            id, rect, image, label, selected, icon_size, input, memory, theme, disabled,
         );
         self.push_interactive(output)
     }
@@ -542,6 +584,35 @@ impl<'a> Ui<'a> {
             image,
             label,
             *selected == value,
+            disabled,
+        );
+        if response.clicked {
+            *selected = value;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
+    /// Emits a selectable bitmap-backed icon button with explicit icon size and assigns the value.
+    #[allow(clippy::too_many_arguments)]
+    pub fn image_icon_button_value_sized<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        icon_size: f32,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let response = self.image_icon_selectable_button_sized(
+            key,
+            rect,
+            image,
+            label,
+            *selected == value,
+            icon_size,
             disabled,
         );
         if response.clicked {
@@ -1602,6 +1673,47 @@ mod tests {
         assert!(icon.clicked);
         assert!(icon.state.selected);
         assert_eq!(selected, 5);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_sized_image_icon_value_helper_mutates_and_reflects_clicked_state_same_frame() {
+        let theme = default_dark_theme();
+        let rect = Rect::new(0.0, 0.0, 120.0, 28.0);
+        let mut selected = 0_usize;
+        let mut memory = UiMemory::new();
+
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.image_icon_button_value_sized(
+            "image-icon-sized",
+            rect,
+            ImageId::from_raw(8),
+            "Sized tool",
+            24.0,
+            &mut selected,
+            6,
+            false,
+        );
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let icon = ui.image_icon_button_value_sized(
+            "image-icon-sized",
+            rect,
+            ImageId::from_raw(8),
+            "Sized tool",
+            24.0,
+            &mut selected,
+            6,
+            false,
+        );
+        let output = ui.finish_output();
+
+        assert!(icon.clicked);
+        assert!(icon.state.selected);
+        assert_eq!(selected, 6);
         assert_eq!(output.repaint, RepaintRequest::NextFrame);
     }
 

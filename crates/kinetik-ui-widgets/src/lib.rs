@@ -1000,8 +1000,34 @@ pub fn image_icon_button(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
-    image_icon_selectable_button(
-        id, rect, image, label, false, input, memory, theme, disabled,
+    image_icon_button_sized(
+        id,
+        rect,
+        image,
+        label,
+        theme.controls.icon_size,
+        input,
+        memory,
+        theme,
+        disabled,
+    )
+}
+
+/// Emits a bitmap icon button with an explicit icon side length.
+#[allow(clippy::too_many_arguments)]
+pub fn image_icon_button_sized(
+    id: WidgetId,
+    rect: Rect,
+    image: ImageId,
+    label: impl Into<String>,
+    icon_size: f32,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    image_icon_selectable_button_sized(
+        id, rect, image, label, false, icon_size, input, memory, theme, disabled,
     )
 }
 
@@ -1018,6 +1044,34 @@ pub fn image_icon_selectable_button(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
+    image_icon_selectable_button_sized(
+        id,
+        rect,
+        image,
+        label,
+        selected,
+        theme.controls.icon_size,
+        input,
+        memory,
+        theme,
+        disabled,
+    )
+}
+
+/// Emits a selectable bitmap icon button with an explicit icon side length.
+#[allow(clippy::too_many_arguments)]
+pub fn image_icon_selectable_button_sized(
+    id: WidgetId,
+    rect: Rect,
+    image: ImageId,
+    label: impl Into<String>,
+    selected: bool,
+    icon_size: f32,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
     let mut response = focusable(id, rect, input, memory, disabled);
     let selected = clicked_select_state(selected, response.clicked);
     response.state.selected = selected;
@@ -1028,9 +1082,10 @@ pub fn image_icon_selectable_button(
         disabled,
         selected,
     });
+    let icon_size = sanitized_icon_size(icon_size, theme.controls.icon_size);
     let icon_rect = fit_box(
         rect,
-        kinetik_ui_core::Size::new(theme.controls.icon_size, theme.controls.icon_size),
+        kinetik_ui_core::Size::new(icon_size, icon_size),
         kinetik_ui_core::Alignment::Center,
         kinetik_ui_core::Alignment::Center,
     );
@@ -1057,6 +1112,14 @@ pub fn image_icon_selectable_button(
         &response,
         CursorShape::PointingHand,
     )
+}
+
+fn sanitized_icon_size(size: f32, fallback: f32) -> f32 {
+    if size.is_finite() && size > 0.0 {
+        size
+    } else {
+        fallback
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2124,10 +2187,10 @@ mod tests {
     use super::{
         IconId, PanelFrame, button, button_semantics, checkbox, checkbox_semantics,
         checkbox_with_label, icon_button, icon_button_with_label, icon_button_with_library, image,
-        image_icon_button, image_icon_selectable_button, label, list_row, multi_line_text_field,
-        multi_line_text_field_with_text_layouts, numeric_input, panel, panel_semantics,
-        radio_button_with_label, search_field, search_field_semantics, slider, slider_semantics,
-        slider_with_label, tab_button, text_field, text_field_semantics,
+        image_icon_button, image_icon_button_sized, image_icon_selectable_button, label, list_row,
+        multi_line_text_field, multi_line_text_field_with_text_layouts, numeric_input, panel,
+        panel_semantics, radio_button_with_label, search_field, search_field_semantics, slider,
+        slider_semantics, slider_with_label, tab_button, text_field, text_field_semantics,
         text_field_with_text_layouts, toggle, toggle_with_label,
     };
     use crate::{IconGraphic, IconLibrary, IconPath};
@@ -2299,6 +2362,33 @@ mod tests {
 
         assert_approx(image.rect.width, 16.0);
         assert_approx(image.rect.height, 16.0);
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            assert_approx((image.rect.width * scale).fract(), 0.0);
+            assert_approx((image.rect.height * scale).fract(), 0.0);
+        }
+    }
+
+    #[test]
+    fn sized_image_icon_button_uses_requested_common_scale_icon_size() {
+        let output = image_icon_button_sized(
+            WidgetId::from_key("bitmap-icon"),
+            Rect::new(0.0, 0.0, 30.0, 26.0),
+            ImageId::from_raw(99),
+            "Save project",
+            24.0,
+            &UiInput::default(),
+            &mut UiMemory::new(),
+            &default_dark_theme(),
+            false,
+        );
+        let Primitive::Image(image) = output.primitives[1] else {
+            panic!("expected image primitive");
+        };
+
+        assert_approx(image.rect.width, 24.0);
+        assert_approx(image.rect.height, 24.0);
+        assert_approx(image.rect.x, 3.0);
+        assert_approx(image.rect.y, 1.0);
         for scale in [1.0_f32, 1.25, 1.5, 2.0] {
             assert_approx((image.rect.width * scale).fract(), 0.0);
             assert_approx((image.rect.height * scale).fract(), 0.0);
