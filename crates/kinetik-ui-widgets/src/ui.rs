@@ -943,6 +943,7 @@ fn response_requests_followup_repaint(response: Response) -> bool {
         || response.dragged
         || response.keyboard_activated
         || response.context_requested
+        || response.state.pressed
 }
 
 fn text_layout_key(text: &TextPrimitive) -> TextLayoutKey {
@@ -1351,7 +1352,7 @@ mod tests {
     }
 
     #[test]
-    fn ui_interactive_click_requests_followup_repaint() {
+    fn ui_interactive_press_and_click_request_followup_repaint() {
         let theme = default_dark_theme();
         let rect = Rect::new(0.0, 0.0, 80.0, 28.0);
         let mut memory = UiMemory::new();
@@ -1359,7 +1360,7 @@ mod tests {
         let input = pressed_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
         ui.button("run", rect, "Run", false);
-        assert_eq!(ui.finish_output().repaint, RepaintRequest::None);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
 
         let input = released_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
@@ -1394,7 +1395,7 @@ mod tests {
         let pressed = ui.toggle_value("toggle", rect, &mut value, false);
         assert!(pressed.state.pressed);
         assert!(!value);
-        assert_eq!(ui.finish_output().repaint, RepaintRequest::None);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
 
         let input = released_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
@@ -1417,7 +1418,7 @@ mod tests {
         let input = pressed_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
         ui.list_row_value("row", rect, "Row", &mut selected, 1, false);
-        assert_eq!(ui.finish_output().repaint, RepaintRequest::None);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
 
         let input = released_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
@@ -1432,7 +1433,7 @@ mod tests {
         let input = pressed_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
         ui.tab_button_value("tab", rect, "Tab", &mut selected, 2, false);
-        assert_eq!(ui.finish_output().repaint, RepaintRequest::None);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
 
         let input = released_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
