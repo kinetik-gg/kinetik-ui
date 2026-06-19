@@ -81,6 +81,11 @@ impl LiveShowcase {
         }
     }
 
+    fn request_interactive_redraw(&mut self) {
+        self.next_redraw_at = None;
+        self.request_redraw();
+    }
+
     fn resize_renderer(&mut self, size: PhysicalSize<u32>) {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.resize(sanitize_physical_size(size));
@@ -195,28 +200,28 @@ impl ApplicationHandler for LiveShowcase {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Focused(focused) => {
                 self.input.set_window_focused(focused);
-                self.request_redraw();
+                self.request_interactive_redraw();
             }
             WindowEvent::Resized(size) => {
                 self.resize_renderer(size);
-                self.request_redraw();
+                self.request_interactive_redraw();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.input
                     .set_scale_factor(scale_factor_from_winit(scale_factor));
-                self.request_redraw();
+                self.request_interactive_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.input.pointer_moved(position);
-                self.request_redraw();
+                self.request_interactive_redraw();
             }
             WindowEvent::MouseInput { button, state, .. } => {
                 self.input.mouse_button(button, state, 1);
-                self.request_redraw();
+                self.request_interactive_redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 self.input.mouse_wheel(delta);
-                self.request_redraw();
+                self.request_interactive_redraw();
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
@@ -229,11 +234,11 @@ impl ApplicationHandler for LiveShowcase {
                     self.modifiers,
                     event.repeat,
                 );
-                self.request_redraw();
+                self.request_interactive_redraw();
             }
             WindowEvent::Ime(event) => {
                 self.input.ime_event(event);
-                self.request_redraw();
+                self.request_interactive_redraw();
             }
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
@@ -489,7 +494,8 @@ fn live_antialiasing_method() -> AaConfig {
 #[cfg(test)]
 mod tests {
     use super::{
-        RepaintSchedule, blit_extents_match, live_antialiasing_method, resolve_repaint_schedule,
+        LiveShowcase, RepaintSchedule, blit_extents_match, live_antialiasing_method,
+        resolve_repaint_schedule,
     };
     use kinetik_ui::core::RepaintRequest;
     use std::time::{Duration, Instant};
@@ -555,5 +561,15 @@ mod tests {
     #[test]
     fn live_renderer_uses_area_antialiasing_for_crisper_ui_edges() {
         assert!(matches!(live_antialiasing_method(), AaConfig::Area));
+    }
+
+    #[test]
+    fn interactive_redraw_clears_delayed_repaint_deadline() {
+        let mut app = LiveShowcase::new(None);
+        app.next_redraw_at = Some(Instant::now() + Duration::from_secs(1));
+
+        app.request_interactive_redraw();
+
+        assert_eq!(app.next_redraw_at, None);
     }
 }
