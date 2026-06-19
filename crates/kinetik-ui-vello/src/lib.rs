@@ -308,6 +308,7 @@ impl RendererBackend for VelloRenderer {
 pub type Translation = RenderTranslation<RenderCommand>;
 
 const MAX_CACHED_TEXT_LAYOUTS: usize = 4096;
+const TEXT_TRANSFORM_EPSILON: f64 = 0.0001;
 const VIEWPORT_SCALE_EPSILON: f64 = 0.001;
 
 #[derive(Debug, Default)]
@@ -2052,7 +2053,8 @@ fn non_uniform_axis_aligned_glyph_transform(
     }
 
     let x_ratio = scale_x / effective_y_scale;
-    ((x_ratio - 1.0).abs() > f64::EPSILON).then(|| Affine::scale_non_uniform(x_ratio, 1.0))
+    ((x_ratio - 1.0).abs() > TEXT_TRANSFORM_EPSILON)
+        .then(|| Affine::scale_non_uniform(x_ratio, 1.0))
 }
 
 fn snap_text_origin_to_device(origin: Point) -> Point {
@@ -2078,7 +2080,7 @@ fn snap_text_transform_origin_to_device(transform: Affine, origin: Point) -> Aff
 
 fn uniform_axis_aligned_scale(transform: Affine) -> Option<f64> {
     let (scale_x, scale_y) = axis_aligned_scale(transform)?;
-    ((scale_x - scale_y).abs() <= f64::EPSILON).then_some(scale_x)
+    ((scale_x - scale_y).abs() <= TEXT_TRANSFORM_EPSILON).then_some((scale_x + scale_y) * 0.5)
 }
 
 fn axis_aligned_scale(transform: Affine) -> Option<(f64, f64)> {
@@ -2087,8 +2089,8 @@ fn axis_aligned_scale(transform: Affine) -> Option<(f64, f64)> {
     let skew_y = coeffs[1];
     let skew_x = coeffs[2];
     let scale_y = coeffs[3];
-    if skew_y.abs() <= f64::EPSILON
-        && skew_x.abs() <= f64::EPSILON
+    if skew_y.abs() <= TEXT_TRANSFORM_EPSILON
+        && skew_x.abs() <= TEXT_TRANSFORM_EPSILON
         && scale_x.is_finite()
         && scale_y.is_finite()
         && scale_x > 0.0
@@ -4835,6 +4837,151 @@ mod tests {
                 .all(|glyph| (glyph.y - glyph.y.round()).abs() <= 0.001),
             "registered text should snap glyph baselines under translation"
         );
+    }
+
+    #[test]
+    fn near_uniform_registered_text_uses_physical_hinted_layout() {
+        let layout = TextLayoutId::from_raw(57);
+        let mut resources = RenderResources::new();
+        resources.register_text_layout(text_layout_resource(layout, "Label"));
+        let primitives = vec![
+            Primitive::TransformBegin(Transform {
+                m11: 1.250_01,
+                m22: 1.249_99,
+                ..Transform::IDENTITY
+            }),
+            Primitive::Text(TextPrimitive {
+                layout: Some(layout),
+                origin: Point::new(4.3, 16.4),
+                text: "Label".to_owned(),
+                family: "sans-serif".to_owned(),
+                size: 12.0,
+                line_height: 16.0,
+                brush: Brush::Solid(Color::WHITE),
+            }),
+            Primitive::TransformEnd,
+        ];
+        let mut renderer = VelloRenderer::new();
+
+        let output = renderer.submit_frame(RenderFrameInput {
+            viewport: ViewportInfo::new(
+                Size::new(100.0, 100.0),
+                kinetik_ui_core::PhysicalSize::new(100, 100),
+                ScaleFactor::ONE,
+            ),
+            primitives: &primitives,
+            resources: &resources,
+        });
+        let glyph_run = renderer
+            .scene()
+            .encoding()
+            .resources
+            .glyph_runs
+            .first()
+            .expect("glyph run");
+
+        assert!(output.diagnostics.is_empty());
+        assert_eq!(renderer.cached_text_layout_count(), 1);
+        assert_approx(glyph_run.font_size, 15.0);
+        assert!(glyph_run.hint);
+        assert!(glyph_run.glyph_transform.is_none());
+    }
+
+    #[test]
+    fn tiny_axis_aligned_skew_still_uses_device_text_path() {
+        let layout = TextLayoutId::from_raw(58);
+        let mut resources = RenderResources::new();
+        resources.register_text_layout(text_layout_resource(layout, "Label"));
+        let primitives = vec![
+            Primitive::TransformBegin(Transform {
+                m11: 1.25,
+                m12: 0.000_01,
+                m21: -0.000_01,
+                m22: 1.25,
+                ..Transform::IDENTITY
+            }),
+            Primitive::Text(TextPrimitive {
+                layout: Some(layout),
+                origin: Point::new(4.3, 16.4),
+                text: "Label".to_owned(),
+                family: "sans-serif".to_owned(),
+                size: 12.0,
+                line_height: 16.0,
+                brush: Brush::Solid(Color::WHITE),
+            }),
+            Primitive::TransformEnd,
+        ];
+        let mut renderer = VelloRenderer::new();
+
+        let output = renderer.submit_frame(RenderFrameInput {
+            viewport: ViewportInfo::new(
+                Size::new(100.0, 100.0),
+                kinetik_ui_core::PhysicalSize::new(100, 100),
+                ScaleFactor::ONE,
+            ),
+            primitives: &primitives,
+            resources: &resources,
+        });
+        let glyph_run = renderer
+            .scene()
+            .encoding()
+            .resources
+            .glyph_runs
+            .first()
+            .expect("glyph run");
+
+        assert!(output.diagnostics.is_empty());
+        assert_eq!(renderer.cached_text_layout_count(), 1);
+        assert!(glyph_run.hint);
+    }
+
+    #[test]
+    fn meaningful_rotation_keeps_general_text_path() {
+        let layout = TextLayoutId::from_raw(59);
+        let mut resources = RenderResources::new();
+        resources.register_text_layout(text_layout_resource(layout, "Label"));
+        let angle = 0.01_f32;
+        let primitives = vec![
+            Primitive::TransformBegin(Transform {
+                m11: angle.cos(),
+                m12: angle.sin(),
+                m21: -angle.sin(),
+                m22: angle.cos(),
+                ..Transform::IDENTITY
+            }),
+            Primitive::Text(TextPrimitive {
+                layout: Some(layout),
+                origin: Point::new(4.3, 16.4),
+                text: "Label".to_owned(),
+                family: "sans-serif".to_owned(),
+                size: 12.0,
+                line_height: 16.0,
+                brush: Brush::Solid(Color::WHITE),
+            }),
+            Primitive::TransformEnd,
+        ];
+        let mut renderer = VelloRenderer::new();
+
+        let output = renderer.submit_frame(RenderFrameInput {
+            viewport: ViewportInfo::new(
+                Size::new(100.0, 100.0),
+                kinetik_ui_core::PhysicalSize::new(100, 100),
+                ScaleFactor::ONE,
+            ),
+            primitives: &primitives,
+            resources: &resources,
+        });
+        let glyph_run = renderer
+            .scene()
+            .encoding()
+            .resources
+            .glyph_runs
+            .first()
+            .expect("glyph run");
+
+        assert!(output.diagnostics.is_empty());
+        assert_eq!(renderer.cached_text_layout_count(), 0);
+        assert!(!glyph_run.hint);
     }
 
     #[test]
