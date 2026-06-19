@@ -308,6 +308,7 @@ impl RendererBackend for VelloRenderer {
 pub type Translation = RenderTranslation<RenderCommand>;
 
 const MAX_CACHED_TEXT_LAYOUTS: usize = 4096;
+const VIEWPORT_SCALE_EPSILON: f64 = 0.001;
 
 #[derive(Debug, Default)]
 struct ShapedTextCache {
@@ -2289,12 +2290,40 @@ fn transform_to_affine(transform: Transform) -> Affine {
 }
 
 fn viewport_device_scale(viewport: ViewportInfo) -> f64 {
+    if let Some(scale) = viewport_size_device_scale(viewport) {
+        return scale;
+    }
+
     let scale = viewport.scale_factor.value();
     if scale.is_finite() && scale > 0.0 {
         scale
     } else {
         1.0
     }
+}
+
+fn viewport_size_device_scale(viewport: ViewportInfo) -> Option<f64> {
+    if viewport.physical_size.width == 0
+        || viewport.physical_size.height == 0
+        || !viewport.logical_size.width.is_finite()
+        || !viewport.logical_size.height.is_finite()
+        || viewport.logical_size.width <= 0.0
+        || viewport.logical_size.height <= 0.0
+    {
+        return None;
+    }
+
+    let scale_x = f64::from(viewport.physical_size.width) / f64::from(viewport.logical_size.width);
+    let scale_y =
+        f64::from(viewport.physical_size.height) / f64::from(viewport.logical_size.height);
+    if !scale_x.is_finite() || !scale_y.is_finite() || scale_x <= 0.0 || scale_y <= 0.0 {
+        return None;
+    }
+    if (scale_x - scale_y).abs() > VIEWPORT_SCALE_EPSILON {
+        return None;
+    }
+
+    Some((scale_x + scale_y) * 0.5)
 }
 
 fn root_transform(device_scale: f64) -> Affine {
@@ -2553,7 +2582,7 @@ mod tests {
         snap_stroked_path_elements_to_device, snap_stroked_rect_to_device,
         snap_text_glyph_baseline_to_device, snap_text_origin_to_device,
         snap_text_transform_origin_to_device, snapped_image_region_transform, transform_point,
-        translate_primitives, viewport_device_scale,
+        translate_primitives, viewport_device_scale, viewport_size_device_scale,
     };
     use kinetik_ui_core::render::TexturePrimitive;
     use kinetik_ui_core::{
@@ -3548,6 +3577,33 @@ mod tests {
     }
 
     #[test]
+    fn viewport_device_scale_prefers_uniform_framebuffer_scale() {
+        let viewport = ViewportInfo::new(
+            Size::new(800.0, 600.0),
+            kinetik_ui_core::PhysicalSize::new(1000, 750),
+            ScaleFactor::new(1.0),
+        );
+
+        assert_approx64(
+            viewport_size_device_scale(viewport).expect("size scale"),
+            1.25,
+        );
+        assert_approx64(viewport_device_scale(viewport), 1.25);
+    }
+
+    #[test]
+    fn viewport_device_scale_falls_back_when_framebuffer_axes_disagree() {
+        let viewport = ViewportInfo::new(
+            Size::new(800.0, 600.0),
+            kinetik_ui_core::PhysicalSize::new(1000, 720),
+            ScaleFactor::new(1.5),
+        );
+
+        assert_eq!(viewport_size_device_scale(viewport), None);
+        assert_approx64(viewport_device_scale(viewport), 1.5);
+    }
+
+    #[test]
     fn renderer_snaps_geometry_to_device_pixel_grid() {
         let point = snap_point_to_device(Point::new(10.2, 20.6), 2.0);
         let rect = snap_rect_to_device(Rect::new(1.2, 2.2, 9.1, 10.1), 2.0);
@@ -4265,6 +4321,50 @@ mod tests {
                 "scale {scale} should snap glyph baselines"
             );
         }
+    }
+
+    #[test]
+    fn physical_text_uses_uniform_framebuffer_scale_when_declared_scale_is_stale() {
+        let mut renderer = VelloRenderer::new();
+        let resources = RenderResources::new();
+        let primitives = vec![Primitive::Text(TextPrimitive {
+            layout: None,
+            origin: Point::new(4.3, 16.4),
+            text: "Kinetik".to_owned(),
+            family: "sans-serif".to_owned(),
+            size: 13.0,
+            line_height: 18.0,
+            brush: Brush::Solid(Color::WHITE),
+        })];
+
+        let output = renderer.submit_frame(RenderFrameInput {
+            viewport: ViewportInfo::new(
+                Size::new(100.0, 100.0),
+                kinetik_ui_core::PhysicalSize::new(125, 125),
+                ScaleFactor::new(1.0),
+            ),
+            primitives: &primitives,
+            resources: &resources,
+        });
+        let encoding = renderer.scene().encoding();
+        let glyph_run = encoding.resources.glyph_runs.first().expect("glyph run");
+        let glyphs = &encoding.resources.glyphs;
+
+        assert!(output.diagnostics.is_empty());
+        assert_approx(glyph_run.font_size, 16.0);
+        assert!(glyph_run.hint);
+        assert!(
+            glyphs
+                .iter()
+                .all(|glyph| (glyph.x - glyph.x.round()).abs() <= 0.001),
+            "framebuffer-derived scale should snap glyph x positions"
+        );
+        assert!(
+            glyphs
+                .iter()
+                .all(|glyph| (glyph.y - glyph.y.round()).abs() <= 0.001),
+            "framebuffer-derived scale should snap glyph baselines"
+        );
     }
 
     #[test]
