@@ -476,6 +476,7 @@ fn single_line_text_primitives(
     rect: Rect,
     state: &TextEditState,
     focused: bool,
+    caret_visible: bool,
     recipe: &TextFieldRecipe,
     layout: Option<&ShapedTextLayout>,
 ) -> Vec<Primitive> {
@@ -523,7 +524,9 @@ fn single_line_text_primitives(
         layout: None,
         origin: Point::new(content_x, baseline),
         text: display_text.clone(),
+        family: recipe.font.family.to_owned(),
         size: recipe.font.size,
+        line_height: recipe.font.line_height,
         brush: Brush::Solid(recipe.foreground),
     }));
 
@@ -549,7 +552,7 @@ fn single_line_text_primitives(
         }
     }
 
-    if focused {
+    if focused && caret_visible {
         let caret_rect = layout.map_or_else(
             || {
                 Rect::new(
@@ -584,6 +587,7 @@ fn multi_line_text_primitives(
     rect: Rect,
     state: &TextEditState,
     focused: bool,
+    caret_visible: bool,
     recipe: &TextFieldRecipe,
     layout: Option<&ShapedTextLayout>,
 ) -> Vec<Primitive> {
@@ -620,7 +624,9 @@ fn multi_line_text_primitives(
                 layout: None,
                 origin: Point::new(content_x, baseline),
                 text: (*line).to_owned(),
+                family: recipe.font.family.to_owned(),
                 size: recipe.font.size,
+                line_height: recipe.font.line_height,
                 brush: Brush::Solid(recipe.foreground),
             }));
         }
@@ -636,7 +642,7 @@ fn multi_line_text_primitives(
             }
         }
 
-        if focused {
+        if focused && caret_visible {
             primitives.push(Primitive::Rect(RectPrimitive {
                 rect: layout
                     .caret_rect(display_caret)
@@ -688,7 +694,9 @@ fn multi_line_text_primitives(
             layout: None,
             origin: Point::new(content_x, baseline),
             text: (*line).to_owned(),
+            family: recipe.font.family.to_owned(),
             size: recipe.font.size,
+            line_height: recipe.font.line_height,
             brush: Brush::Solid(recipe.foreground),
         }));
 
@@ -708,7 +716,7 @@ fn multi_line_text_primitives(
             }
         }
 
-        if focused && (*line_start..=line_end).contains(&display_caret) {
+        if focused && caret_visible && (*line_start..=line_end).contains(&display_caret) {
             let caret_x =
                 content_x + byte_prefix_width(line, display_caret - *line_start, recipe.font.size);
             primitives.push(Primitive::Rect(RectPrimitive {
@@ -734,7 +742,9 @@ pub fn label(rect: Rect, text: impl Into<String>, theme: &Theme) -> WidgetOutput
             layout: None,
             origin: Point::new(rect.x, label_baseline(rect, theme, TextRole::Body)),
             text: text.into(),
+            family: recipe.font.family.to_owned(),
             size: recipe.font.size,
+            line_height: recipe.font.line_height,
             brush: Brush::Solid(recipe.foreground),
         })],
     )
@@ -774,7 +784,9 @@ pub fn button(
                     layout: None,
                     origin: control_text_origin(rect, theme),
                     text: text.clone(),
+                    family: theme.font(TextRole::Label).family.to_owned(),
                     size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
                     brush: Brush::Solid(recipe.foreground),
                 }),
             ],
@@ -800,7 +812,9 @@ pub fn tab_button(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
-    let response = selectable(id, rect, input, memory, selected, disabled);
+    let mut response = selectable(id, rect, input, memory, selected, disabled);
+    let selected = clicked_select_state(selected, response.clicked);
+    response.state.selected = selected;
     let recipe = theme.tab(ComponentState {
         hovered: response.state.hovered,
         pressed: response.state.pressed,
@@ -831,7 +845,9 @@ pub fn tab_button(
                     layout: None,
                     origin: control_text_origin(rect, theme),
                     text,
+                    family: theme.font(TextRole::Label).family.to_owned(),
                     size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
                     brush: Brush::Solid(recipe.foreground),
                 }),
                 Primitive::Rect(RectPrimitive {
@@ -865,7 +881,9 @@ pub fn list_row(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
-    let response = selectable(id, rect, input, memory, selected, disabled);
+    let mut response = selectable(id, rect, input, memory, selected, disabled);
+    let selected = clicked_select_state(selected, response.clicked);
+    response.state.selected = selected;
     let recipe = theme.row(ComponentState {
         hovered: response.state.hovered,
         pressed: response.state.pressed,
@@ -896,7 +914,9 @@ pub fn list_row(
                     layout: None,
                     origin: control_text_origin(rect, theme),
                     text,
+                    family: theme.font(TextRole::Label).family.to_owned(),
                     size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
                     brush: Brush::Solid(recipe.foreground),
                 }),
             ],
@@ -968,6 +988,140 @@ pub fn icon_button_with_library(
         theme,
         disabled,
     )
+}
+
+/// Emits an icon button backed by a bitmap image resource.
+#[allow(clippy::too_many_arguments)]
+pub fn image_icon_button(
+    id: WidgetId,
+    rect: Rect,
+    image: ImageId,
+    label: impl Into<String>,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    image_icon_button_sized(
+        id,
+        rect,
+        image,
+        label,
+        theme.controls.icon_size,
+        input,
+        memory,
+        theme,
+        disabled,
+    )
+}
+
+/// Emits a bitmap icon button with an explicit icon side length.
+#[allow(clippy::too_many_arguments)]
+pub fn image_icon_button_sized(
+    id: WidgetId,
+    rect: Rect,
+    image: ImageId,
+    label: impl Into<String>,
+    icon_size: f32,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    image_icon_selectable_button_sized(
+        id, rect, image, label, false, icon_size, input, memory, theme, disabled,
+    )
+}
+
+/// Emits a selectable icon button backed by a bitmap image resource.
+#[allow(clippy::too_many_arguments)]
+pub fn image_icon_selectable_button(
+    id: WidgetId,
+    rect: Rect,
+    image: ImageId,
+    label: impl Into<String>,
+    selected: bool,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    image_icon_selectable_button_sized(
+        id,
+        rect,
+        image,
+        label,
+        selected,
+        theme.controls.icon_size,
+        input,
+        memory,
+        theme,
+        disabled,
+    )
+}
+
+/// Emits a selectable bitmap icon button with an explicit icon side length.
+#[allow(clippy::too_many_arguments)]
+pub fn image_icon_selectable_button_sized(
+    id: WidgetId,
+    rect: Rect,
+    image: ImageId,
+    label: impl Into<String>,
+    selected: bool,
+    icon_size: f32,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    let mut response = focusable(id, rect, input, memory, disabled);
+    let selected = clicked_select_state(selected, response.clicked);
+    response.state.selected = selected;
+    let recipe = theme.button(ComponentState {
+        hovered: response.state.hovered,
+        pressed: response.state.pressed,
+        focused: response.state.focused,
+        disabled,
+        selected,
+    });
+    let icon_size = sanitized_icon_size(icon_size, theme.controls.icon_size);
+    let icon_rect = fit_box(
+        rect,
+        kinetik_ui_core::Size::new(icon_size, icon_size),
+        kinetik_ui_core::Alignment::Center,
+        kinetik_ui_core::Alignment::Center,
+    );
+    let mut semantics = icon_button_semantics(id, rect, label, disabled);
+    semantics.state.selected = selected;
+
+    with_hover_cursor(
+        WidgetOutput::new(
+            Some(response),
+            vec![
+                Primitive::Rect(RectPrimitive {
+                    rect,
+                    fill: Some(recipe.background),
+                    stroke: Some(recipe.border),
+                    radius: recipe.radius,
+                }),
+                Primitive::Image(ImagePrimitive {
+                    image,
+                    rect: icon_rect,
+                }),
+            ],
+        )
+        .with_semantic(with_response_state(semantics, &response)),
+        &response,
+        CursorShape::PointingHand,
+    )
+}
+
+fn sanitized_icon_size(size: f32, fallback: f32) -> f32 {
+    if size.is_finite() && size > 0.0 {
+        size
+    } else {
+        fallback
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1168,13 +1322,15 @@ pub fn checkbox_with_label(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
-    let response = selectable(id, rect, input, memory, checked, disabled);
+    let mut response = selectable(id, rect, input, memory, checked, disabled);
+    let selected = clicked_toggle_state(checked, response.clicked);
+    response.state.selected = selected;
     let recipe = theme.checkbox(ComponentState {
         hovered: response.state.hovered,
         pressed: response.state.pressed,
         focused: response.state.focused,
         disabled,
-        selected: checked,
+        selected,
     });
     let box_rect = Rect::new(rect.x, rect.y, recipe.size, recipe.size);
 
@@ -1189,7 +1345,7 @@ pub fn checkbox_with_label(
             })],
         )
         .with_semantic(with_response_state(
-            checkbox_semantics(id, rect, label, checked, disabled),
+            checkbox_semantics(id, rect, label, selected, disabled),
             &response,
         )),
         &response,
@@ -1232,6 +1388,16 @@ pub fn radio_button_with_label(
     disabled: bool,
 ) -> WidgetOutput {
     let mut output = checkbox_with_label(id, rect, label, selected, input, memory, theme, disabled);
+    let display_selected = clicked_select_state(
+        selected,
+        output
+            .response
+            .as_ref()
+            .is_some_and(|response| response.clicked),
+    );
+    if let Some(response) = output.response.as_mut() {
+        response.state.selected = display_selected;
+    }
     let recipe = theme.radio_button(ComponentState {
         hovered: output
             .response
@@ -1246,14 +1412,15 @@ pub fn radio_button_with_label(
             .as_ref()
             .is_some_and(|response| response.state.focused),
         disabled,
-        selected,
+        selected: display_selected,
     });
     if let Some(Primitive::Rect(primitive)) = output.primitives.first_mut() {
         primitive.radius = recipe.radius;
     }
     for node in &mut output.semantics {
         node.role = SemanticRole::RadioButton;
-        node.state.selected = selected;
+        node.state.selected = display_selected;
+        node.state.checked = Some(display_selected);
     }
     output
 }
@@ -1283,15 +1450,17 @@ pub fn toggle_with_label(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
-    let response = selectable(id, rect, input, memory, on, disabled);
+    let mut response = selectable(id, rect, input, memory, on, disabled);
+    let selected = clicked_toggle_state(on, response.clicked);
+    response.state.selected = selected;
     let recipe = theme.toggle(ComponentState {
         hovered: response.state.hovered,
         pressed: response.state.pressed,
         focused: response.state.focused,
         disabled,
-        selected: on,
+        selected,
     });
-    let knob_x = if on {
+    let knob_x = if selected {
         rect.max_x() - rect.height
     } else {
         rect.x
@@ -1321,12 +1490,20 @@ pub fn toggle_with_label(
             ],
         )
         .with_semantic(with_response_state(
-            toggle_semantics(id, rect, label, on, disabled),
+            toggle_semantics(id, rect, label, selected, disabled),
             &response,
         )),
         &response,
         CursorShape::PointingHand,
     )
+}
+
+fn clicked_toggle_state(selected: bool, clicked: bool) -> bool {
+    if clicked { !selected } else { selected }
+}
+
+fn clicked_select_state(selected: bool, clicked: bool) -> bool {
+    selected || clicked
 }
 
 /// Emits a slider and updates its value while active.
@@ -1364,14 +1541,14 @@ pub fn slider_with_label(
         && (response.state.active || response.clicked)
         && let Some(position) = input.pointer.position
     {
-        let t = ((position.x - rect.x) / rect.width).clamp(0.0, 1.0);
         let start = *range.start();
         let end = *range.end();
-        *value = start + (end - start) * t;
+        let t = slider_position_fraction(position.x, rect);
+        *value = slider_value_from_fraction(start, end, t);
     }
     let start = *range.start();
     let end = *range.end();
-    let t = ((*value - start) / (end - start)).clamp(0.0, 1.0);
+    let t = slider_value_fraction(*value, start, end);
     let fill_rect = Rect::new(rect.x, rect.y, rect.width * t, rect.height);
     let recipe = theme.slider(ComponentState {
         hovered: response.state.hovered,
@@ -1406,6 +1583,34 @@ pub fn slider_with_label(
         &response,
         CursorShape::ResizeHorizontal,
     )
+}
+
+fn slider_position_fraction(position_x: f32, rect: Rect) -> f32 {
+    if !position_x.is_finite() || !rect.x.is_finite() || !rect.width.is_finite() {
+        return 0.0;
+    }
+    if rect.width <= f32::EPSILON {
+        return 0.0;
+    }
+    ((position_x - rect.x) / rect.width).clamp(0.0, 1.0)
+}
+
+fn slider_value_fraction(value: f32, start: f32, end: f32) -> f32 {
+    let span = end - start;
+    if !value.is_finite() || !start.is_finite() || !span.is_finite() {
+        return 0.0;
+    }
+    if span.abs() <= f32::EPSILON {
+        return 0.0;
+    }
+    ((value - start) / span).clamp(0.0, 1.0)
+}
+
+fn slider_value_from_fraction(start: f32, end: f32, fraction: f32) -> f32 {
+    if !start.is_finite() || !end.is_finite() || !fraction.is_finite() {
+        return start;
+    }
+    start + (end - start) * fraction.clamp(0.0, 1.0)
 }
 
 /// Emits a passive panel surface.
@@ -1663,7 +1868,33 @@ pub fn text_field_with_text_layouts(
     memory: &mut UiMemory,
     theme: &Theme,
     disabled: bool,
+    text_layouts: Option<&mut TextLayoutStore>,
+) -> TextFieldOutput {
+    text_field_with_text_layouts_and_caret_visibility(
+        id,
+        rect,
+        state,
+        input,
+        memory,
+        theme,
+        disabled,
+        text_layouts,
+        true,
+    )
+}
+
+/// Emits a single-line text field with explicit caret visibility.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn text_field_with_text_layouts_and_caret_visibility(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
     mut text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
 ) -> TextFieldOutput {
     let before = state.text.clone();
     let mut response = focusable(id, rect, input, memory, disabled);
@@ -1723,6 +1954,7 @@ pub fn text_field_with_text_layouts(
         rect,
         state,
         response.state.focused && !disabled,
+        caret_visible,
         &recipe,
         layout,
     ));
@@ -1776,7 +2008,33 @@ pub fn multi_line_text_field_with_text_layouts(
     memory: &mut UiMemory,
     theme: &Theme,
     disabled: bool,
+    text_layouts: Option<&mut TextLayoutStore>,
+) -> MultiLineTextFieldOutput {
+    multi_line_text_field_with_text_layouts_and_caret_visibility(
+        id,
+        rect,
+        state,
+        input,
+        memory,
+        theme,
+        disabled,
+        text_layouts,
+        true,
+    )
+}
+
+/// Emits a multi-line text field with explicit caret visibility.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn multi_line_text_field_with_text_layouts_and_caret_visibility(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
     mut text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
 ) -> MultiLineTextFieldOutput {
     let before = state.text.clone();
     let mut response = focusable(id, rect, input, memory, disabled);
@@ -1843,6 +2101,7 @@ pub fn multi_line_text_field_with_text_layouts(
         rect,
         state,
         response.state.focused && !disabled,
+        caret_visible,
         &recipe,
         layout,
     ));
@@ -1899,7 +2158,7 @@ pub fn numeric_input_with_text_layouts(
     disabled: bool,
     text_layouts: Option<&mut TextLayoutStore>,
 ) -> NumericInputOutput {
-    let field = text_field_with_text_layouts(
+    numeric_input_with_text_layouts_and_caret_visibility(
         id,
         rect,
         state,
@@ -1908,6 +2167,33 @@ pub fn numeric_input_with_text_layouts(
         theme,
         disabled,
         text_layouts,
+        true,
+    )
+}
+
+/// Emits a numeric input field with explicit caret visibility.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn numeric_input_with_text_layouts_and_caret_visibility(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> NumericInputOutput {
+    let field = text_field_with_text_layouts_and_caret_visibility(
+        id,
+        rect,
+        state,
+        input,
+        memory,
+        theme,
+        disabled,
+        text_layouts,
+        caret_visible,
     );
     let value = state.text.trim().parse::<f32>().ok();
 
@@ -1954,7 +2240,7 @@ pub fn search_field_with_text_layouts(
     disabled: bool,
     text_layouts: Option<&mut TextLayoutStore>,
 ) -> SearchFieldOutput {
-    let mut field = text_field_with_text_layouts(
+    search_field_with_text_layouts_and_caret_visibility(
         id,
         rect,
         state,
@@ -1963,6 +2249,33 @@ pub fn search_field_with_text_layouts(
         theme,
         disabled,
         text_layouts,
+        true,
+    )
+}
+
+/// Emits a search-oriented text field with explicit caret visibility.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_field_with_text_layouts_and_caret_visibility(
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> SearchFieldOutput {
+    let mut field = text_field_with_text_layouts_and_caret_visibility(
+        id,
+        rect,
+        state,
+        input,
+        memory,
+        theme,
+        disabled,
+        text_layouts,
+        caret_visible,
     );
     let query = state.text.clone();
     for node in &mut field.widget.semantics {
@@ -1984,17 +2297,18 @@ mod tests {
     use super::{
         IconId, PanelFrame, button, button_semantics, checkbox, checkbox_semantics,
         checkbox_with_label, icon_button, icon_button_with_label, icon_button_with_library, image,
-        label, list_row, multi_line_text_field, multi_line_text_field_with_text_layouts,
-        numeric_input, panel, panel_semantics, radio_button_with_label, search_field,
-        search_field_semantics, slider, slider_semantics, slider_with_label, tab_button,
-        text_field, text_field_semantics, text_field_with_text_layouts, toggle, toggle_with_label,
+        image_icon_button, image_icon_button_sized, image_icon_selectable_button, label, list_row,
+        multi_line_text_field, multi_line_text_field_with_text_layouts, numeric_input, panel,
+        panel_semantics, radio_button_with_label, search_field, search_field_semantics, slider,
+        slider_semantics, slider_with_label, tab_button, text_field, text_field_semantics,
+        text_field_with_text_layouts, toggle, toggle_with_label,
     };
     use crate::{IconGraphic, IconLibrary, IconPath};
     use kinetik_ui_core::{
         ClipboardText, ImageId, Insets, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
         PathElement, PlatformRequest, Point, PointerButtonState, PointerInput, Primitive, Rect,
-        SemanticActionKind, SemanticRole, SemanticValue, UiInput, UiMemory, WidgetId,
-        default_dark_theme,
+        RectPrimitive, SemanticActionKind, SemanticRole, SemanticValue, UiInput, UiMemory,
+        WidgetId, default_dark_theme,
     };
     use kinetik_ui_text::{TextEditState, TextLayoutStore, TextSelection};
 
@@ -2022,6 +2336,13 @@ mod tests {
             },
             ..UiInput::default()
         }
+    }
+
+    fn assert_approx(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < f32::EPSILON,
+            "expected {actual} to equal {expected}"
+        );
     }
 
     fn check_icon() -> IconGraphic {
@@ -2114,6 +2435,77 @@ mod tests {
     }
 
     #[test]
+    fn image_icon_button_emits_button_surface_and_image() {
+        let output = image_icon_button(
+            WidgetId::from_key("bitmap-icon"),
+            Rect::new(0.0, 0.0, 24.0, 24.0),
+            ImageId::from_raw(99),
+            "Save project",
+            &UiInput::default(),
+            &mut UiMemory::new(),
+            &default_dark_theme(),
+            false,
+        );
+
+        assert_eq!(output.primitives.len(), 2);
+        assert!(matches!(output.primitives[0], Primitive::Rect(_)));
+        assert!(matches!(output.primitives[1], Primitive::Image(_)));
+        assert_eq!(output.semantics[0].role, SemanticRole::IconButton);
+        assert_eq!(output.semantics[0].label.as_deref(), Some("Save project"));
+    }
+
+    #[test]
+    fn image_icon_button_uses_common_scale_integer_icon_size() {
+        let output = image_icon_button(
+            WidgetId::from_key("bitmap-icon"),
+            Rect::new(0.0, 0.0, 28.0, 28.0),
+            ImageId::from_raw(99),
+            "Save project",
+            &UiInput::default(),
+            &mut UiMemory::new(),
+            &default_dark_theme(),
+            false,
+        );
+        let Primitive::Image(image) = output.primitives[1] else {
+            panic!("expected image primitive");
+        };
+
+        assert_approx(image.rect.width, 16.0);
+        assert_approx(image.rect.height, 16.0);
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            assert_approx((image.rect.width * scale).fract(), 0.0);
+            assert_approx((image.rect.height * scale).fract(), 0.0);
+        }
+    }
+
+    #[test]
+    fn sized_image_icon_button_uses_requested_common_scale_icon_size() {
+        let output = image_icon_button_sized(
+            WidgetId::from_key("bitmap-icon"),
+            Rect::new(0.0, 0.0, 30.0, 26.0),
+            ImageId::from_raw(99),
+            "Save project",
+            24.0,
+            &UiInput::default(),
+            &mut UiMemory::new(),
+            &default_dark_theme(),
+            false,
+        );
+        let Primitive::Image(image) = output.primitives[1] else {
+            panic!("expected image primitive");
+        };
+
+        assert_approx(image.rect.width, 24.0);
+        assert_approx(image.rect.height, 24.0);
+        assert_approx(image.rect.x, 3.0);
+        assert_approx(image.rect.y, 1.0);
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            assert_approx((image.rect.width * scale).fract(), 0.0);
+            assert_approx((image.rect.height * scale).fract(), 0.0);
+        }
+    }
+
+    #[test]
     fn icon_button_uses_registered_vector_icon() {
         let mut icons = IconLibrary::new();
         let icon = IconId::from_raw(7);
@@ -2169,6 +2561,108 @@ mod tests {
     }
 
     #[test]
+    fn tab_and_row_reflect_clicked_selection_same_frame() {
+        let theme = default_dark_theme();
+        let mut tab_memory = UiMemory::new();
+        let tab_id = WidgetId::from_key("tab");
+        let tab_rect = Rect::new(0.0, 0.0, 90.0, 28.0);
+        let mut input = input_at(4.0, 4.0);
+        input.pointer.primary = PointerButtonState::new(true, true, false);
+        tab_button(
+            tab_id,
+            tab_rect,
+            "Tab",
+            false,
+            &input,
+            &mut tab_memory,
+            &theme,
+            false,
+        );
+        input.pointer.primary = PointerButtonState::new(false, false, true);
+        let tab = tab_button(
+            tab_id,
+            tab_rect,
+            "Tab",
+            false,
+            &input,
+            &mut tab_memory,
+            &theme,
+            false,
+        );
+
+        let tab_response = tab.response.expect("tab response");
+        assert!(tab_response.clicked);
+        assert!(tab_response.state.selected);
+        assert!(tab.semantics[0].state.selected);
+
+        let mut row_memory = UiMemory::new();
+        let row_id = WidgetId::from_key("row");
+        let row_rect = Rect::new(0.0, 32.0, 140.0, 26.0);
+        let mut input = input_at(4.0, 36.0);
+        input.pointer.primary = PointerButtonState::new(true, true, false);
+        list_row(
+            row_id,
+            row_rect,
+            "Row",
+            false,
+            &input,
+            &mut row_memory,
+            &theme,
+            false,
+        );
+        input.pointer.primary = PointerButtonState::new(false, false, true);
+        let row = list_row(
+            row_id,
+            row_rect,
+            "Row",
+            false,
+            &input,
+            &mut row_memory,
+            &theme,
+            false,
+        );
+
+        let row_response = row.response.expect("row response");
+        assert!(row_response.clicked);
+        assert!(row_response.state.selected);
+        assert!(row.semantics[0].state.selected);
+
+        let mut icon_memory = UiMemory::new();
+        let icon_id = WidgetId::from_key("image-icon");
+        let icon_rect = Rect::new(0.0, 64.0, 28.0, 28.0);
+        let mut input = input_at(4.0, 68.0);
+        input.pointer.primary = PointerButtonState::new(true, true, false);
+        image_icon_selectable_button(
+            icon_id,
+            icon_rect,
+            ImageId::from_raw(7),
+            "Tool",
+            false,
+            &input,
+            &mut icon_memory,
+            &theme,
+            false,
+        );
+        input.pointer.primary = PointerButtonState::new(false, false, true);
+        let icon = image_icon_selectable_button(
+            icon_id,
+            icon_rect,
+            ImageId::from_raw(7),
+            "Tool",
+            false,
+            &input,
+            &mut icon_memory,
+            &theme,
+            false,
+        );
+
+        let icon_response = icon.response.expect("icon response");
+        assert!(icon_response.clicked);
+        assert!(icon_response.state.selected);
+        assert!(icon.semantics[0].state.selected);
+    }
+
+    #[test]
     fn checkbox_and_toggle_reflect_selection() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
@@ -2193,6 +2687,73 @@ mod tests {
 
         assert!(checkbox.response.expect("checkbox response").state.selected);
         assert_eq!(toggle.primitives.len(), 2);
+    }
+
+    #[test]
+    fn checkbox_and_toggle_reflect_clicked_selection_same_frame() {
+        let theme = default_dark_theme();
+        let mut checkbox_memory = UiMemory::new();
+        let check_id = WidgetId::from_key("check");
+        let check_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+        let mut input = input_at(10.0, 10.0);
+        input.pointer.primary = PointerButtonState::new(true, true, false);
+        checkbox(
+            check_id,
+            check_rect,
+            false,
+            &input,
+            &mut checkbox_memory,
+            &theme,
+            false,
+        );
+        input.pointer.primary = PointerButtonState::new(false, false, true);
+        let checkbox = checkbox(
+            check_id,
+            check_rect,
+            false,
+            &input,
+            &mut checkbox_memory,
+            &theme,
+            false,
+        );
+
+        let checkbox_response = checkbox.response.expect("checkbox response");
+        assert!(checkbox_response.clicked);
+        assert!(checkbox_response.state.selected);
+        assert_eq!(checkbox.semantics[0].state.checked, Some(true));
+
+        let mut toggle_memory = UiMemory::new();
+        let toggle_id = WidgetId::from_key("toggle");
+        let toggle_rect = Rect::new(0.0, 0.0, 36.0, 18.0);
+        input.pointer.primary = PointerButtonState::new(true, true, false);
+        toggle(
+            toggle_id,
+            toggle_rect,
+            false,
+            &input,
+            &mut toggle_memory,
+            &theme,
+            false,
+        );
+        input.pointer.primary = PointerButtonState::new(false, false, true);
+        let toggle = toggle(
+            toggle_id,
+            toggle_rect,
+            false,
+            &input,
+            &mut toggle_memory,
+            &theme,
+            false,
+        );
+
+        let toggle_response = toggle.response.expect("toggle response");
+        assert!(toggle_response.clicked);
+        assert!(toggle_response.state.selected);
+        assert_eq!(toggle.semantics[0].state.checked, Some(true));
+        assert!(matches!(
+            toggle.primitives[1],
+            Primitive::Rect(RectPrimitive { rect, .. }) if rect.x > toggle_rect.x
+        ));
     }
 
     #[test]
@@ -2276,6 +2837,50 @@ mod tests {
         );
 
         assert!((value - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn slider_degenerate_geometry_and_range_stay_finite() {
+        let theme = default_dark_theme();
+        let id = WidgetId::from_key("slider");
+        let mut memory = UiMemory::new();
+        let mut input = input_at(50.0, 6.0);
+        input.pointer.primary = PointerButtonState::new(true, true, false);
+
+        let mut zero_width_value = 15.0;
+        let zero_width = slider(
+            id,
+            Rect::new(0.0, 0.0, 0.0, 12.0),
+            &mut zero_width_value,
+            10.0..=20.0,
+            &input,
+            &mut memory,
+            &theme,
+            false,
+        );
+        assert!((zero_width_value - 15.0).abs() < f32::EPSILON);
+        assert!(rect_width(&zero_width.primitives[1]).is_finite());
+
+        let mut equal_range_value = 12.0;
+        let equal_range = slider(
+            WidgetId::from_key("equal_range_slider"),
+            Rect::new(0.0, 0.0, 100.0, 12.0),
+            &mut equal_range_value,
+            4.0..=4.0,
+            &input,
+            &mut memory,
+            &theme,
+            false,
+        );
+        assert!((equal_range_value - 4.0).abs() < f32::EPSILON);
+        assert!(rect_width(&equal_range.primitives[1]).abs() < f32::EPSILON);
+    }
+
+    fn rect_width(primitive: &Primitive) -> f32 {
+        match primitive {
+            Primitive::Rect(rect) => rect.rect.width,
+            _ => panic!("expected rect primitive"),
+        }
     }
 
     #[test]

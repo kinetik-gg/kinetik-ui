@@ -1,15 +1,18 @@
 //! Immediate-mode composition wrapper for widget primitives.
 
-use std::hash::Hash;
+use std::{hash::Hash, time::Duration};
 
 use kinetik_ui_core::{
     ActionContext, ActionDescriptor, ActionId, ActionInvocation, ActionSource, ClipId,
-    DropTargetResponse, FrameContext, FrameOutput, ImageId, Insets, PhysicalSize, Primitive, Rect,
-    Response, ScaleFactor, ScrollResponse, Size, TextPrimitive, Theme, TimeInfo, Transform,
-    Ui as CoreUi, UiInput, UiMemory, Vec2, ViewportInfo, WidgetId, context_menu_trigger, draggable,
-    drop_target, focusable, pressable, scrollable, selectable, tooltip_trigger,
+    DropTargetResponse, FrameContext, FrameOutput, ImageId, Insets, PhysicalSize, PlatformRequest,
+    Primitive, Rect, RepaintRequest, Response, ScaleFactor, ScrollResponse, SemanticNode, Size,
+    TextPrimitive, Theme, TimeInfo, Transform, Ui as CoreUi, UiInput, UiMemory, Vec2, ViewportInfo,
+    WidgetId, context_menu_trigger, draggable, drop_target, focusable, pressable, scrollable,
+    selectable, tooltip_trigger,
 };
-use kinetik_ui_text::{TextEditState, TextLayoutKey, TextLayoutStore, TextStyle};
+use kinetik_ui_text::{
+    TextComposition, TextEditState, TextLayoutKey, TextLayoutStore, TextSelection, TextStyle,
+};
 
 use crate::{
     IconId, IconLibrary, MultiLineTextFieldOutput, NumericInputOutput, PanelFrame,
@@ -18,16 +21,23 @@ use crate::{
     icon_button as fallback_icon_button_widget,
     icon_button_with_label as fallback_icon_button_with_label_widget,
     icon_button_with_library as icon_button_with_library_widget, image as image_widget,
+    image_icon_button as image_icon_button_widget,
+    image_icon_button_sized as image_icon_button_sized_widget,
+    image_icon_selectable_button as image_icon_selectable_button_widget,
+    image_icon_selectable_button_sized as image_icon_selectable_button_sized_widget,
     image_semantics, label as label_widget, label_semantics, list_row as list_row_widget,
-    multi_line_text_field_with_text_layouts as multi_line_text_field_widget,
-    numeric_input_with_text_layouts as numeric_input_widget, panel as panel_widget,
-    panel_semantics, radio_button as radio_button_widget,
+    multi_line_text_field_with_text_layouts_and_caret_visibility as multi_line_text_field_widget,
+    numeric_input_with_text_layouts_and_caret_visibility as numeric_input_widget,
+    panel as panel_widget, panel_semantics, radio_button as radio_button_widget,
     radio_button_with_label as radio_button_with_label_widget,
-    search_field_with_text_layouts as search_field_widget, separator as separator_widget,
-    slider as slider_widget, slider_with_label as slider_with_label_widget,
-    tab_button as tab_button_widget, text_field_with_text_layouts as text_field_widget,
+    search_field_with_text_layouts_and_caret_visibility as search_field_widget,
+    separator as separator_widget, slider as slider_widget,
+    slider_with_label as slider_with_label_widget, tab_button as tab_button_widget,
+    text_field_with_text_layouts_and_caret_visibility as text_field_widget,
     toggle as toggle_widget, toggle_with_label as toggle_with_label_widget,
 };
+
+const TEXT_CARET_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 fn rect_key(prefix: &str, rect: Rect) -> String {
     format!(
@@ -205,6 +215,21 @@ impl<'a> Ui<'a> {
         self.runtime.invoke_action(action_id, source, context);
     }
 
+    /// Requests a repaint from application code that mutates state during this frame.
+    pub fn request_repaint(&mut self, request: RepaintRequest) {
+        self.runtime.request_repaint(request);
+    }
+
+    /// Appends a semantic node for custom application-drawn UI.
+    pub fn push_semantic_node(&mut self, node: SemanticNode) {
+        self.runtime.push_semantic_node(node);
+    }
+
+    /// Adds a platform request for custom application-drawn UI.
+    pub fn push_platform_request(&mut self, request: PlatformRequest) {
+        self.runtime.push_platform_request(request);
+    }
+
     /// Invokes a visible, enabled action descriptor from the provided UI source.
     ///
     /// Returns false when the descriptor is hidden or disabled.
@@ -314,6 +339,11 @@ impl<'a> Ui<'a> {
     /// Resolves neutral press/click behavior without painting.
     pub fn pressable(&mut self, key: impl Hash, rect: Rect, disabled: bool) -> Response {
         let id = self.id(key);
+        self.pressable_with_id(id, rect, disabled)
+    }
+
+    /// Resolves neutral press/click behavior for a precomputed widget ID.
+    pub fn pressable_with_id(&mut self, id: WidgetId, rect: Rect, disabled: bool) -> Response {
         let (input, memory) = self.runtime.input_and_memory_mut();
         pressable(id, rect, input, memory, disabled)
     }
@@ -336,6 +366,24 @@ impl<'a> Ui<'a> {
         let id = self.id(key);
         let (input, memory) = self.runtime.input_and_memory_mut();
         selectable(id, rect, input, memory, selected, disabled)
+    }
+
+    /// Resolves neutral selectable behavior and assigns the value when clicked.
+    pub fn selectable_value<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.selectable(key, rect, *selected == value, disabled);
+        if response.clicked {
+            *selected = value;
+            response.state.selected = true;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
     }
 
     /// Resolves neutral draggable behavior without painting.
@@ -463,6 +511,140 @@ impl<'a> Ui<'a> {
         self.push_interactive(output)
     }
 
+    /// Emits a bitmap-backed icon button with an accessible label.
+    pub fn image_icon_button(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output =
+            image_icon_button_widget(id, rect, image, label, input, memory, theme, disabled);
+        self.push_interactive(output)
+    }
+
+    /// Emits a bitmap-backed icon button with an explicit icon side length.
+    pub fn image_icon_button_sized(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        icon_size: f32,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = image_icon_button_sized_widget(
+            id, rect, image, label, icon_size, input, memory, theme, disabled,
+        );
+        self.push_interactive(output)
+    }
+
+    /// Emits a selectable bitmap-backed icon button with an accessible label.
+    pub fn image_icon_selectable_button(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        selected: bool,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = image_icon_selectable_button_widget(
+            id, rect, image, label, selected, input, memory, theme, disabled,
+        );
+        self.push_interactive(output)
+    }
+
+    /// Emits a selectable bitmap-backed icon button with an explicit icon side length.
+    #[allow(clippy::too_many_arguments)]
+    pub fn image_icon_selectable_button_sized(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        selected: bool,
+        icon_size: f32,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = image_icon_selectable_button_sized_widget(
+            id, rect, image, label, selected, icon_size, input, memory, theme, disabled,
+        );
+        self.push_interactive(output)
+    }
+
+    /// Emits a selectable bitmap-backed icon button and assigns the value when clicked.
+    #[allow(clippy::too_many_arguments)]
+    pub fn image_icon_button_value<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.image_icon_selectable_button(
+            key,
+            rect,
+            image,
+            label,
+            *selected == value,
+            disabled,
+        );
+        if response.clicked {
+            *selected = value;
+            response.state.selected = true;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
+    /// Emits a selectable bitmap-backed icon button with explicit icon size and assigns the value.
+    #[allow(clippy::too_many_arguments)]
+    pub fn image_icon_button_value_sized<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        image: ImageId,
+        label: impl Into<String>,
+        icon_size: f32,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.image_icon_selectable_button_sized(
+            key,
+            rect,
+            image,
+            label,
+            *selected == value,
+            icon_size,
+            disabled,
+        );
+        if response.clicked {
+            *selected = value;
+            response.state.selected = true;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
     /// Emits a tab header and returns its interaction response.
     pub fn tab_button(
         &mut self,
@@ -477,6 +659,25 @@ impl<'a> Ui<'a> {
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = tab_button_widget(id, rect, text, selected, input, memory, theme, disabled);
         self.push_interactive(output)
+    }
+
+    /// Emits a tab header and assigns the value when clicked.
+    pub fn tab_button_value<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        text: impl Into<String>,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.tab_button(key, rect, text, *selected == value, disabled);
+        if response.clicked {
+            *selected = value;
+            response.state.selected = true;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
     }
 
     /// Emits a selectable list row and returns its interaction response.
@@ -495,6 +696,25 @@ impl<'a> Ui<'a> {
         self.push_interactive(output)
     }
 
+    /// Emits a selectable list row and assigns the value when clicked.
+    pub fn list_row_value<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        text: impl Into<String>,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.list_row(key, rect, text, *selected == value, disabled);
+        if response.clicked {
+            *selected = value;
+            response.state.selected = true;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
     /// Emits a checkbox and returns its interaction response.
     pub fn checkbox(
         &mut self,
@@ -508,6 +728,23 @@ impl<'a> Ui<'a> {
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = checkbox_widget(id, rect, checked, input, memory, theme, disabled);
         self.push_interactive(output)
+    }
+
+    /// Emits a checkbox, toggling the provided value when clicked.
+    pub fn checkbox_value(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        checked: &mut bool,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.checkbox(key, rect, *checked, disabled);
+        if response.clicked {
+            *checked = !*checked;
+            response.state.selected = *checked;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
     }
 
     /// Emits a checkbox with an accessible label and returns its interaction response.
@@ -527,6 +764,24 @@ impl<'a> Ui<'a> {
         self.push_interactive(output)
     }
 
+    /// Emits a labeled checkbox, toggling the provided value when clicked.
+    pub fn checkbox_value_with_label(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl Into<String>,
+        checked: &mut bool,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.checkbox_with_label(key, rect, label, *checked, disabled);
+        if response.clicked {
+            *checked = !*checked;
+            response.state.selected = *checked;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
     /// Emits a radio button and returns its interaction response.
     pub fn radio_button(
         &mut self,
@@ -540,6 +795,24 @@ impl<'a> Ui<'a> {
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = radio_button_widget(id, rect, selected, input, memory, theme, disabled);
         self.push_interactive(output)
+    }
+
+    /// Emits a radio button and assigns the value when clicked.
+    pub fn radio_button_value<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.radio_button(key, rect, *selected == value, disabled);
+        if response.clicked {
+            *selected = value;
+            response.state.selected = true;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
     }
 
     /// Emits a radio button with an accessible label and returns its interaction response.
@@ -560,6 +833,26 @@ impl<'a> Ui<'a> {
         self.push_interactive(output)
     }
 
+    /// Emits a labeled radio button and assigns the value when clicked.
+    pub fn radio_button_value_with_label<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl Into<String>,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let mut response =
+            self.radio_button_with_label(key, rect, label, *selected == value, disabled);
+        if response.clicked {
+            *selected = value;
+            response.state.selected = true;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
     /// Emits a toggle and returns its interaction response.
     pub fn toggle(&mut self, key: impl Hash, rect: Rect, on: bool, disabled: bool) -> Response {
         let id = self.id(key);
@@ -567,6 +860,23 @@ impl<'a> Ui<'a> {
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = toggle_widget(id, rect, on, input, memory, theme, disabled);
         self.push_interactive(output)
+    }
+
+    /// Emits a toggle, mutating the provided value when clicked.
+    pub fn toggle_value(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        on: &mut bool,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.toggle(key, rect, *on, disabled);
+        if response.clicked {
+            *on = !*on;
+            response.state.selected = *on;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
     }
 
     /// Emits a toggle with an accessible label and returns its interaction response.
@@ -583,6 +893,24 @@ impl<'a> Ui<'a> {
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = toggle_with_label_widget(id, rect, label, on, input, memory, theme, disabled);
         self.push_interactive(output)
+    }
+
+    /// Emits a labeled toggle, mutating the provided value when clicked.
+    pub fn toggle_value_with_label(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl Into<String>,
+        on: &mut bool,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.toggle_with_label(key, rect, label, *on, disabled);
+        if response.clicked {
+            *on = !*on;
+            response.state.selected = *on;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
     }
 
     /// Emits a slider and mutates its value while active.
@@ -632,6 +960,9 @@ impl<'a> Ui<'a> {
         let id = self.id(key);
         let (input, memory) = self.runtime.input_and_memory_mut();
         let scroll = scrollable(id, rect, content_size, input, memory, disabled);
+        if scroll.delta != Vec2::ZERO {
+            self.runtime.request_repaint(RepaintRequest::NextFrame);
+        }
         let clip = ClipId::from_raw(id.raw());
 
         self.runtime
@@ -660,6 +991,8 @@ impl<'a> Ui<'a> {
     ) -> TextFieldOutput {
         let id = self.id(key);
         let theme = self.theme;
+        let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = text_field_widget(
@@ -671,8 +1004,11 @@ impl<'a> Ui<'a> {
             theme,
             disabled,
             text_layouts,
+            caret_visible,
         );
         self.push_widget_output(&output.widget);
+        self.request_text_caret_blink_repaint(&output.widget);
+        self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
 
@@ -686,6 +1022,8 @@ impl<'a> Ui<'a> {
     ) -> MultiLineTextFieldOutput {
         let id = self.id(key);
         let theme = self.theme;
+        let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = multi_line_text_field_widget(
@@ -697,8 +1035,11 @@ impl<'a> Ui<'a> {
             theme,
             disabled,
             text_layouts,
+            caret_visible,
         );
         self.push_widget_output(&output.widget);
+        self.request_text_caret_blink_repaint(&output.widget);
+        self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
 
@@ -712,6 +1053,8 @@ impl<'a> Ui<'a> {
     ) -> NumericInputOutput {
         let id = self.id(key);
         let theme = self.theme;
+        let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = numeric_input_widget(
@@ -723,8 +1066,11 @@ impl<'a> Ui<'a> {
             theme,
             disabled,
             text_layouts,
+            caret_visible,
         );
         self.push_widget_output(&output.field.widget);
+        self.request_text_caret_blink_repaint(&output.field.widget);
+        self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
 
@@ -738,6 +1084,8 @@ impl<'a> Ui<'a> {
     ) -> SearchFieldOutput {
         let id = self.id(key);
         let theme = self.theme;
+        let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = search_field_widget(
@@ -749,12 +1097,20 @@ impl<'a> Ui<'a> {
             theme,
             disabled,
             text_layouts,
+            caret_visible,
         );
         self.push_widget_output(&output.field.widget);
+        self.request_text_caret_blink_repaint(&output.field.widget);
+        self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
 
     fn push_widget_output(&mut self, output: &WidgetOutput) {
+        if let Some(response) = output.response
+            && response_requests_followup_repaint(response, self.runtime.input())
+        {
+            self.runtime.request_repaint(RepaintRequest::NextFrame);
+        }
         self.extend(output.primitives.clone());
         for node in &output.semantics {
             self.runtime.push_semantic_node(node.clone());
@@ -766,6 +1122,9 @@ impl<'a> Ui<'a> {
 
     fn push_interactive(&mut self, output: WidgetOutput) -> Response {
         let response = output.response.expect("interactive widget response");
+        if response_requests_followup_repaint(response, self.runtime.input()) {
+            self.runtime.request_repaint(RepaintRequest::NextFrame);
+        }
         self.extend(output.primitives);
         for node in output.semantics {
             self.runtime.push_semantic_node(node);
@@ -774,6 +1133,28 @@ impl<'a> Ui<'a> {
             self.runtime.push_platform_request(request);
         }
         response
+    }
+
+    fn request_repaint_if_text_visual_changed(
+        &mut self,
+        before: &TextVisualState,
+        state: &TextEditState,
+    ) {
+        if *before != TextVisualState::from_state(state) {
+            self.runtime.request_repaint(RepaintRequest::NextFrame);
+        }
+    }
+
+    fn request_text_caret_blink_repaint(&mut self, output: &WidgetOutput) {
+        if output
+            .response
+            .is_some_and(|response| response.state.focused && !response.state.disabled)
+        {
+            self.runtime
+                .request_repaint(RepaintRequest::After(text_caret_next_blink_delay(
+                    self.time(),
+                )));
+        }
     }
 
     fn attach_text_layout(&mut self, primitive: &mut Primitive) {
@@ -791,10 +1172,50 @@ impl<'a> Ui<'a> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TextVisualState {
+    text: String,
+    selection: TextSelection,
+    composition: Option<TextComposition>,
+}
+
+impl TextVisualState {
+    fn from_state(state: &TextEditState) -> Self {
+        Self {
+            text: state.text.clone(),
+            selection: state.selection,
+            composition: state.composition.clone(),
+        }
+    }
+}
+
+fn response_requests_followup_repaint(response: Response, input: &UiInput) -> bool {
+    response.clicked
+        || response.secondary_clicked
+        || response.dragged
+        || response.keyboard_activated
+        || response.context_requested
+        || (response.state.pressed && input.pointer.primary.pressed)
+}
+
+fn text_caret_visible(time: TimeInfo) -> bool {
+    let interval = TEXT_CARET_BLINK_INTERVAL.as_millis().max(1);
+    (time.now.as_millis() / interval).is_multiple_of(2)
+}
+
+fn text_caret_next_blink_delay(time: TimeInfo) -> Duration {
+    let interval_ms = u64::try_from(TEXT_CARET_BLINK_INTERVAL.as_millis())
+        .unwrap_or(u64::MAX)
+        .max(1);
+    let elapsed_ms = u64::try_from(time.now.as_millis()).unwrap_or(u64::MAX);
+    let remainder = elapsed_ms % interval_ms;
+    Duration::from_millis((interval_ms - remainder).max(1))
+}
+
 fn text_layout_key(text: &TextPrimitive) -> TextLayoutKey {
     TextLayoutKey::new(
         text.text.clone(),
-        TextStyle::new("sans-serif", text.size, text.size + 5.0),
+        TextStyle::new(text.family.clone(), text.size, text.line_height),
         0.0,
         false,
     )
@@ -807,18 +1228,31 @@ mod tests {
     use super::Ui;
     use crate::{IconGraphic, IconLibrary, IconPath};
     use kinetik_ui_core::{
-        ActionContext, ActionDescriptor, ActionSource, CursorShape, FrameContext, FrameWarning,
-        IconId, Insets, PathElement, PhysicalSize, PlatformRequest, Point, PointerButtonState,
-        PointerInput, Primitive, Rect, ScaleFactor, SemanticRole, Size, TimeInfo, UiInput,
-        UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
+        ActionContext, ActionDescriptor, ActionSource, Brush, Color, CursorShape, FrameContext,
+        FrameOutput, FrameWarning, IconId, ImageId, Insets, Key, KeyEvent, KeyState, KeyboardInput,
+        Modifiers, PathElement, PhysicalSize, PlatformRequest, Point, PointerButtonState,
+        PointerInput, Primitive, Rect, RepaintRequest, ScaleFactor, SemanticNode, SemanticRole,
+        Size, TextInputEvent, TextPrimitive, TextRange, TimeInfo, UiInput, UiMemory, Vec2,
+        ViewportInfo, WidgetId, default_dark_theme,
     };
-    use kinetik_ui_text::{TextEditState, TextLayoutStore};
+    use kinetik_ui_text::{TextEditState, TextLayoutKey, TextLayoutStore, TextStyle};
 
     fn pressed_at(x: f32, y: f32) -> UiInput {
         UiInput {
             pointer: PointerInput {
                 position: Some(Point::new(x, y)),
                 primary: PointerButtonState::new(true, true, false),
+                ..PointerInput::default()
+            },
+            ..UiInput::default()
+        }
+    }
+
+    fn held_at(x: f32, y: f32) -> UiInput {
+        UiInput {
+            pointer: PointerInput {
+                position: Some(Point::new(x, y)),
+                primary: PointerButtonState::new(true, false, false),
                 ..PointerInput::default()
             },
             ..UiInput::default()
@@ -861,7 +1295,33 @@ mod tests {
         }
     }
 
+    fn committed_text(text: &str) -> UiInput {
+        UiInput {
+            text_events: vec![TextInputEvent::Commit(text.to_owned())],
+            ..UiInput::default()
+        }
+    }
+
+    fn pressed_key(key: Key) -> UiInput {
+        UiInput {
+            keyboard: KeyboardInput {
+                modifiers: Modifiers::default(),
+                events: vec![KeyEvent::new(
+                    key,
+                    KeyState::Pressed,
+                    Modifiers::default(),
+                    false,
+                )],
+            },
+            ..UiInput::default()
+        }
+    }
+
     fn frame_context() -> FrameContext {
+        frame_context_at(Duration::from_millis(32))
+    }
+
+    fn frame_context_at(now: Duration) -> FrameContext {
         FrameContext::new(
             ViewportInfo::new(
                 Size::new(1280.0, 720.0),
@@ -869,8 +1329,19 @@ mod tests {
                 ScaleFactor::new(2.0),
             ),
             UiInput::default(),
-            TimeInfo::new(Duration::from_millis(32), Duration::from_millis(16), 2),
+            TimeInfo::new(now, Duration::from_millis(16), 2),
         )
+    }
+
+    fn text_field_has_caret(output: &FrameOutput) -> bool {
+        output.primitives.iter().any(|primitive| {
+            matches!(
+                primitive,
+                Primitive::Rect(rect)
+                    if (rect.rect.width - 1.0).abs() < f32::EPSILON
+                        && rect.rect.height > 8.0
+            )
+        })
     }
 
     #[test]
@@ -959,6 +1430,43 @@ mod tests {
     }
 
     #[test]
+    fn ui_uses_text_primitive_style_for_attached_layouts() {
+        let theme = default_dark_theme();
+        let input = UiInput::default();
+        let mut memory = UiMemory::new();
+        let mut text_layouts = TextLayoutStore::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme).with_text_layouts(&mut text_layouts);
+
+        ui.primitive(Primitive::Text(TextPrimitive {
+            layout: None,
+            origin: Point::new(0.0, 16.0),
+            text: "Styled".to_owned(),
+            family: "monospace".to_owned(),
+            size: 12.0,
+            line_height: 17.0,
+            brush: Brush::Solid(Color::WHITE),
+        }));
+        let output = ui.finish_output();
+        let layout = output
+            .primitives
+            .iter()
+            .find_map(|primitive| match primitive {
+                Primitive::Text(text) => text.layout,
+                _ => None,
+            })
+            .expect("text layout is attached");
+        let expected = text_layouts.layout_id(TextLayoutKey::new(
+            "Styled",
+            TextStyle::new("monospace", 12.0, 17.0),
+            0.0,
+            false,
+        ));
+
+        assert_eq!(layout, expected);
+        assert_eq!(text_layouts.len(), 1);
+    }
+
+    #[test]
     fn ui_text_field_uses_shaped_text_layout_store_for_caret_geometry() {
         let theme = default_dark_theme();
         let input = UiInput::default();
@@ -1012,6 +1520,7 @@ mod tests {
             memory.scroll_offset(output.scroll.response.id),
             Vec2::new(0.0, 24.0)
         );
+        assert_eq!(frame.repaint, RepaintRequest::NextFrame);
         assert!(matches!(frame.primitives[0], Primitive::ClipBegin { .. }));
         assert!(matches!(
             frame.primitives[1],
@@ -1106,6 +1615,7 @@ mod tests {
         let mut output = ui.finish_output();
 
         assert!(clicked.clicked);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
         assert_eq!(output.actions.len(), 1);
         let invocation = output.actions.pop_front().expect("queued action");
         assert_eq!(invocation.action_id, action.id);
@@ -1154,24 +1664,341 @@ mod tests {
 
         let output = ui.finish_output();
         assert_eq!(output.actions.len(), 1);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_interactive_press_and_click_request_followup_repaint() {
+        let theme = default_dark_theme();
+        let rect = Rect::new(0.0, 0.0, 80.0, 28.0);
+        let mut memory = UiMemory::new();
+
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.button("run", rect, "Run", false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = held_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let held = ui.button("run", rect, "Run", false);
+        assert!(held.state.pressed);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::None);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let response = ui.button("run", rect, "Run", false);
+        let output = ui.finish_output();
+
+        assert!(response.clicked);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_request_repaint_exposes_app_state_dirty_path() {
+        let theme = default_dark_theme();
+        let input = UiInput::default();
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+
+        ui.request_repaint(RepaintRequest::NextFrame);
+
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_exposes_custom_semantics_and_platform_requests() {
+        let theme = default_dark_theme();
+        let input = UiInput::default();
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let id = ui.id("custom-button");
+
+        ui.push_semantic_node(
+            SemanticNode::new(
+                id,
+                SemanticRole::IconButton,
+                Rect::new(0.0, 0.0, 24.0, 24.0),
+            )
+            .with_label("Custom"),
+        );
+        ui.push_platform_request(PlatformRequest::SetCursor(CursorShape::PointingHand));
+        let output = ui.finish_output();
+
+        assert!(output.semantics.nodes().iter().any(|node| {
+            node.id == id
+                && node.role == SemanticRole::IconButton
+                && node.label.as_deref() == Some("Custom")
+        }));
+        assert!(
+            output
+                .platform_requests
+                .contains(&PlatformRequest::SetCursor(CursorShape::PointingHand))
+        );
+    }
+
+    #[test]
+    fn ui_toggle_value_mutates_and_reflects_clicked_state_same_frame() {
+        let theme = default_dark_theme();
+        let rect = Rect::new(0.0, 0.0, 54.0, 24.0);
+        let mut memory = UiMemory::new();
+        let mut value = false;
+
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let pressed = ui.toggle_value("toggle", rect, &mut value, false);
+        assert!(pressed.state.pressed);
+        assert!(!value);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let clicked = ui.toggle_value("toggle", rect, &mut value, false);
+        let output = ui.finish_output();
+
+        assert!(clicked.clicked);
+        assert!(clicked.state.selected);
+        assert!(value);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_labeled_value_helpers_return_mutated_state_same_frame() {
+        let theme = default_dark_theme();
+        let rect = Rect::new(0.0, 0.0, 120.0, 28.0);
+
+        let mut checked = false;
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.checkbox_value_with_label("checkbox", rect, "Checkbox", &mut checked, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let checkbox =
+            ui.checkbox_value_with_label("checkbox", rect, "Checkbox", &mut checked, false);
+        let output = ui.finish_output();
+        assert!(checkbox.clicked);
+        assert!(checkbox.state.selected);
+        assert!(checked);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut on = false;
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.toggle_value_with_label("toggle", rect, "Toggle", &mut on, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let toggle = ui.toggle_value_with_label("toggle", rect, "Toggle", &mut on, false);
+        let output = ui.finish_output();
+        assert!(toggle.clicked);
+        assert!(toggle.state.selected);
+        assert!(on);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut selected = 0_usize;
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.radio_button_value_with_label("radio", rect, "Radio", &mut selected, 1, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let radio =
+            ui.radio_button_value_with_label("radio", rect, "Radio", &mut selected, 1, false);
+        let output = ui.finish_output();
+        assert!(radio.clicked);
+        assert!(radio.state.selected);
+        assert_eq!(selected, 1);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_selection_value_helpers_mutate_and_reflect_clicked_state_same_frame() {
+        let theme = default_dark_theme();
+        let mut selected = 0_usize;
+
+        let mut memory = UiMemory::new();
+        let rect = Rect::new(0.0, 0.0, 120.0, 28.0);
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.list_row_value("row", rect, "Row", &mut selected, 1, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let row = ui.list_row_value("row", rect, "Row", &mut selected, 1, false);
+        let output = ui.finish_output();
+        assert!(row.clicked);
+        assert!(row.state.selected);
+        assert_eq!(selected, 1);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.tab_button_value("tab", rect, "Tab", &mut selected, 2, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let tab = ui.tab_button_value("tab", rect, "Tab", &mut selected, 2, false);
+        let output = ui.finish_output();
+        assert!(tab.clicked);
+        assert!(tab.state.selected);
+        assert_eq!(selected, 2);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.selectable_value("asset", rect, &mut selected, 3, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::None);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let asset = ui.selectable_value("asset", rect, &mut selected, 3, false);
+        let output = ui.finish_output();
+        assert!(asset.clicked);
+        assert!(asset.state.selected);
+        assert_eq!(selected, 3);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.radio_button_value("radio", rect, &mut selected, 4, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let radio = ui.radio_button_value("radio", rect, &mut selected, 4, false);
+        let output = ui.finish_output();
+        assert!(radio.clicked);
+        assert!(radio.state.selected);
+        assert_eq!(selected, 4);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut memory = UiMemory::new();
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.image_icon_button_value(
+            "image-icon",
+            rect,
+            ImageId::from_raw(7),
+            "Tool",
+            &mut selected,
+            5,
+            false,
+        );
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let icon = ui.image_icon_button_value(
+            "image-icon",
+            rect,
+            ImageId::from_raw(7),
+            "Tool",
+            &mut selected,
+            5,
+            false,
+        );
+        let output = ui.finish_output();
+        assert!(icon.clicked);
+        assert!(icon.state.selected);
+        assert_eq!(selected, 5);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_sized_image_icon_value_helper_mutates_and_reflects_clicked_state_same_frame() {
+        let theme = default_dark_theme();
+        let rect = Rect::new(0.0, 0.0, 120.0, 28.0);
+        let mut selected = 0_usize;
+        let mut memory = UiMemory::new();
+
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.image_icon_button_value_sized(
+            "image-icon-sized",
+            rect,
+            ImageId::from_raw(8),
+            "Sized tool",
+            24.0,
+            &mut selected,
+            6,
+            false,
+        );
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let icon = ui.image_icon_button_value_sized(
+            "image-icon-sized",
+            rect,
+            ImageId::from_raw(8),
+            "Sized tool",
+            24.0,
+            &mut selected,
+            6,
+            false,
+        );
+        let output = ui.finish_output();
+
+        assert!(icon.clicked);
+        assert!(icon.state.selected);
+        assert_eq!(selected, 6);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
     }
 
     #[test]
     fn ui_exposes_neutral_behavior_primitives() {
         let theme = default_dark_theme();
-        let mut memory = UiMemory::new();
         let input = pressed_at(4.0, 4.0);
-        let mut ui = Ui::new(&input, &mut memory, &theme);
 
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
         let pressed = ui.pressable("pressable", Rect::new(0.0, 0.0, 20.0, 20.0), false);
+        assert!(pressed.state.pressed);
+        assert!(ui.finish_output().primitives.is_empty());
+
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
         let selected = ui.selectable("selectable", Rect::new(0.0, 0.0, 20.0, 20.0), true, false);
+        assert!(selected.state.selected);
+        assert!(ui.finish_output().primitives.is_empty());
+
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
         let dragged = ui.draggable("draggable", Rect::new(0.0, 0.0, 20.0, 20.0), false);
+        assert!(dragged.state.active);
+        assert!(ui.finish_output().primitives.is_empty());
+    }
+
+    #[test]
+    fn ui_pressable_with_id_supports_custom_semantics_without_duplicate_warning() {
+        let theme = default_dark_theme();
+        let input = pressed_at(4.0, 4.0);
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let id = ui.id("custom-pressable");
+
+        let pressed = ui.pressable_with_id(id, Rect::new(0.0, 0.0, 20.0, 20.0), false);
+        ui.push_semantic_node(SemanticNode::new(
+            id,
+            SemanticRole::IconButton,
+            Rect::new(0.0, 0.0, 20.0, 20.0),
+        ));
         let output = ui.finish_output();
 
         assert!(pressed.state.pressed);
-        assert!(selected.state.selected);
-        assert!(dragged.state.active);
-        assert!(output.primitives.is_empty());
+        assert!(output.warnings.is_empty());
+        assert_eq!(output.semantics.nodes()[0].id, id);
     }
 
     #[test]
@@ -1328,6 +2155,33 @@ mod tests {
     }
 
     #[test]
+    fn ui_image_icon_button_uses_bitmap_icon_widget() {
+        let theme = default_dark_theme();
+        let input = UiInput::default();
+        let mut memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+
+        ui.image_icon_button(
+            "save",
+            Rect::new(0.0, 0.0, 24.0, 24.0),
+            ImageId::from_raw(7),
+            "Save project",
+            false,
+        );
+        let output = ui.finish_output();
+
+        assert!(
+            output
+                .primitives
+                .iter()
+                .any(|primitive| matches!(primitive, Primitive::Image(_)))
+        );
+        assert!(output.semantics.nodes().iter().any(|node| {
+            node.role == SemanticRole::IconButton && node.label.as_deref() == Some("Save project")
+        }));
+    }
+
+    #[test]
     fn ui_forwards_widget_platform_requests() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
@@ -1368,6 +2222,150 @@ mod tests {
                 } if *rect == Rect::new(0.0, 0.0, 120.0, 24.0)
             )
         }));
+    }
+
+    #[test]
+    fn ui_text_field_interaction_requests_followup_repaint() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let mut state = TextEditState::new("abc");
+        let rect = Rect::new(0.0, 0.0, 120.0, 24.0);
+
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.text_field("field", rect, &mut state, false);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let output = ui.text_field("field", rect, &mut state, false);
+        assert!(output.widget.response.expect("text field response").clicked);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_text_field_changes_request_followup_repaint() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let mut state = TextEditState::new("abc");
+        let rect = Rect::new(0.0, 0.0, 120.0, 24.0);
+
+        let input = pressed_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.text_field("field", rect, &mut state, false);
+        let _ = ui.finish_output();
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.text_field("field", rect, &mut state, false);
+        let _ = ui.finish_output();
+
+        let input = committed_text("d");
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let output = ui.text_field("field", rect, &mut state, false);
+
+        assert!(output.changed);
+        assert_eq!(state.text, "dabc");
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_text_field_caret_motion_requests_followup_repaint() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let mut state = TextEditState::new("abc");
+        let field = WidgetId::from_key("root").child("field");
+        memory.focus(field);
+        let input = pressed_key(Key::ArrowLeft);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+
+        let output = ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+
+        assert!(!output.changed);
+        assert_eq!(state.caret(), 2);
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_text_field_composition_requests_followup_repaint() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let mut state = TextEditState::new("abc");
+        let field = WidgetId::from_key("root").child("field");
+        memory.focus(field);
+        let input = UiInput {
+            text_events: vec![TextInputEvent::Composition {
+                text: "pre".to_owned(),
+                selection: Some(TextRange::new(1, 2)),
+            }],
+            ..UiInput::default()
+        };
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+
+        let output = ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+
+        assert!(!output.changed);
+        assert_eq!(state.text, "abc");
+        assert!(state.composition.is_some());
+        assert_eq!(ui.finish_output().repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn ui_text_field_blinks_caret_and_schedules_repaint() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let field = WidgetId::from_key("root").child("field");
+        memory.focus(field);
+
+        let mut state = TextEditState::new("abc");
+        let mut ui = Ui::begin_frame(
+            frame_context_at(Duration::from_millis(0)),
+            &mut memory,
+            &theme,
+        );
+        ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+        let output = ui.finish_output();
+        assert!(text_field_has_caret(&output));
+        assert_eq!(
+            output.repaint,
+            RepaintRequest::After(Duration::from_millis(500))
+        );
+
+        let mut ui = Ui::begin_frame(
+            frame_context_at(Duration::from_millis(500)),
+            &mut memory,
+            &theme,
+        );
+        ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+        let output = ui.finish_output();
+        assert!(!text_field_has_caret(&output));
+        assert_eq!(
+            output.repaint,
+            RepaintRequest::After(Duration::from_millis(500))
+        );
+    }
+
+    #[test]
+    fn ui_text_field_schedules_partial_blink_delay() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let field = WidgetId::from_key("root").child("field");
+        memory.focus(field);
+        let mut state = TextEditState::new("abc");
+        let mut ui = Ui::begin_frame(
+            frame_context_at(Duration::from_millis(750)),
+            &mut memory,
+            &theme,
+        );
+
+        ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+        let output = ui.finish_output();
+
+        assert!(!text_field_has_caret(&output));
+        assert_eq!(
+            output.repaint,
+            RepaintRequest::After(Duration::from_millis(250))
+        );
     }
 
     #[test]

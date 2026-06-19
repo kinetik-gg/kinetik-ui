@@ -5,10 +5,10 @@
 //! backends such as Vello consume this contract and keep backend-specific
 //! encoding details in their own crates.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use kinetik_ui_core::{ImageId, Primitive, Size, TextLayoutId, TextureId, ViewportInfo};
-use kinetik_ui_text::{ShapedTextLayout, StoredTextLayout};
+use kinetik_ui_core::{ImageId, Primitive, Rect, Size, TextLayoutId, TextureId, ViewportInfo};
+use kinetik_ui_text::{ShapedTextLayout, StoredTextLayout, TextLayoutKey};
 
 /// Static image resource known by a renderer.
 #[derive(Debug, Clone, PartialEq)]
@@ -17,8 +17,21 @@ pub struct ImageResource {
     pub id: ImageId,
     /// Image size in physical pixels.
     pub size: Size,
+    /// Sampling hint to use when drawing the image.
+    pub sampling: RenderImageSampling,
     /// Optional CPU pixel data to draw.
     pub pixels: Option<RenderImage>,
+    /// Optional source rectangle into another image resource.
+    pub atlas_region: Option<ImageAtlasRegion>,
+}
+
+/// Source rectangle inside an atlas image resource.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImageAtlasRegion {
+    /// Atlas image handle.
+    pub atlas: ImageId,
+    /// Source rectangle in atlas pixels.
+    pub source: Rect,
 }
 
 /// Dynamic texture resource known by a renderer.
@@ -28,8 +41,24 @@ pub struct TextureResource {
     pub id: TextureId,
     /// Texture size in physical pixels.
     pub size: Size,
+    /// Sampling hint to use when drawing texture snapshots.
+    pub sampling: RenderImageSampling,
     /// Optional CPU snapshot for renderers that consume image data.
     pub snapshot: Option<RenderImage>,
+}
+
+/// Sampling intent for image-like renderer resources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RenderImageSampling {
+    /// Preserve crisp texels. Best for icons, UI snapshots, and editor/game surfaces.
+    #[default]
+    Pixelated,
+    /// Preserve crisp UI icon edges while allowing renderers to use icon-specific policies.
+    UiIcon,
+    /// Smooth resampling for photographic or heavily scaled content.
+    Smooth,
+    /// Prioritize quality for previews or photographic content where scaling artifacts matter.
+    HighQuality,
 }
 
 /// CPU image data accepted by renderer boundaries.
@@ -40,7 +69,7 @@ pub struct RenderImage {
     /// Pixel height.
     pub height: u32,
     /// Pixel bytes.
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
     /// Pixel format.
     pub format: RenderImageFormat,
     /// Alpha representation.
@@ -85,7 +114,7 @@ impl RenderImage {
         (data.len() == expected_len).then_some(Self {
             width,
             height,
-            data,
+            data: data.into(),
             format,
             alpha,
         })
@@ -93,7 +122,7 @@ impl RenderImage {
 }
 
 /// CPU image pixel format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderImageFormat {
     /// 32-bit RGBA with 8-bit channels.
     Rgba8,
@@ -112,7 +141,7 @@ impl RenderImageFormat {
 }
 
 /// CPU image alpha representation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderImageAlpha {
     /// Straight alpha.
     Alpha,
@@ -125,8 +154,10 @@ pub enum RenderImageAlpha {
 pub struct TextLayoutResource {
     /// Text layout handle from core primitives.
     pub id: TextLayoutId,
-    /// Owned shaped text layout.
-    pub layout: ShapedTextLayout,
+    /// Layout request used to shape the text.
+    pub key: TextLayoutKey,
+    /// Shared shaped text layout.
+    pub layout: Arc<ShapedTextLayout>,
 }
 
 /// Resource registry used during frame translation and encoding.
@@ -134,7 +165,7 @@ pub struct TextLayoutResource {
 pub struct RenderResources {
     images: HashMap<ImageId, ImageResource>,
     textures: HashMap<TextureId, TextureResource>,
-    text_layouts: HashMap<TextLayoutId, ShapedTextLayout>,
+    text_layouts: HashMap<TextLayoutId, TextLayoutResource>,
 }
 
 impl RenderResources {
@@ -156,12 +187,24 @@ impl RenderResources {
 
     /// Registers a shaped text layout resource.
     pub fn register_text_layout(&mut self, text: TextLayoutResource) {
-        self.text_layouts.insert(text.id, text.layout);
+        self.text_layouts.insert(text.id, text);
     }
 
     /// Registers a borrowed shaped text layout resource.
-    pub fn register_text_layout_ref(&mut self, id: TextLayoutId, layout: &ShapedTextLayout) {
-        self.text_layouts.insert(id, layout.clone());
+    pub fn register_text_layout_ref(
+        &mut self,
+        id: TextLayoutId,
+        key: &TextLayoutKey,
+        layout: &ShapedTextLayout,
+    ) {
+        self.text_layouts.insert(
+            id,
+            TextLayoutResource {
+                id,
+                key: key.clone(),
+                layout: Arc::new(layout.clone()),
+            },
+        );
     }
 
     /// Registers shaped text layouts exported by a text layout store.
@@ -170,7 +213,14 @@ impl RenderResources {
         layouts: impl IntoIterator<Item = StoredTextLayout<'a>>,
     ) {
         for layout in layouts {
-            self.register_text_layout_ref(layout.id, layout.layout);
+            self.text_layouts.insert(
+                layout.id,
+                TextLayoutResource {
+                    id: layout.id,
+                    key: layout.key.clone(),
+                    layout: layout.layout,
+                },
+            );
         }
     }
 
@@ -207,6 +257,13 @@ impl RenderResources {
     /// Returns a registered shaped text layout.
     #[must_use]
     pub fn text_layout(&self, layout: TextLayoutId) -> Option<&ShapedTextLayout> {
+        self.text_layout_resource(layout)
+            .map(|resource| resource.layout.as_ref())
+    }
+
+    /// Returns a registered shaped text layout resource.
+    #[must_use]
+    pub fn text_layout_resource(&self, layout: TextLayoutId) -> Option<&TextLayoutResource> {
         self.text_layouts.get(&layout)
     }
 
@@ -242,8 +299,8 @@ impl RenderResourceSnapshot {
             .collect::<Vec<_>>();
         let mut text_layouts = resources
             .text_layouts
-            .iter()
-            .map(|(id, layout)| TextLayoutResourceSnapshot::from_layout(*id, layout))
+            .values()
+            .map(TextLayoutResourceSnapshot::from_resource)
             .collect::<Vec<_>>();
 
         images.sort_by_key(|resource| resource.id);
@@ -264,19 +321,22 @@ impl RenderResourceSnapshot {
         lines.push("resources:".to_owned());
         for image in &self.images {
             lines.push(format!(
-                "  image#{id} size={width}x{height} pixels={pixels}",
+                "  image#{id} size={width}x{height} sampling={sampling} pixels={pixels} atlas={atlas}",
                 id = image.id,
                 width = format_f32(image.width),
                 height = format_f32(image.height),
+                sampling = format_sampling(image.sampling),
                 pixels = image.has_pixels,
+                atlas = format_optional_atlas(image.atlas),
             ));
         }
         for texture in &self.textures {
             lines.push(format!(
-                "  texture#{id} size={width}x{height} snapshot={snapshot}",
+                "  texture#{id} size={width}x{height} sampling={sampling} snapshot={snapshot}",
                 id = texture.id,
                 width = format_f32(texture.width),
                 height = format_f32(texture.height),
+                sampling = format_sampling(texture.sampling),
                 snapshot = texture.has_snapshot,
             ));
         }
@@ -305,6 +365,10 @@ pub struct ImageResourceSnapshot {
     pub height: OrderedF32,
     /// Whether drawable pixel data is present.
     pub has_pixels: bool,
+    /// Sampling intent.
+    pub sampling: RenderImageSampling,
+    /// Atlas source when this resource is a region.
+    pub atlas: Option<ImageAtlasRegionSnapshot>,
 }
 
 impl ImageResourceSnapshot {
@@ -314,6 +378,37 @@ impl ImageResourceSnapshot {
             width: OrderedF32::new(resource.size.width),
             height: OrderedF32::new(resource.size.height),
             has_pixels: resource.pixels.is_some(),
+            sampling: resource.sampling,
+            atlas: resource
+                .atlas_region
+                .map(ImageAtlasRegionSnapshot::from_region),
+        }
+    }
+}
+
+/// Snapshot of one atlas region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageAtlasRegionSnapshot {
+    /// Raw atlas image handle.
+    pub atlas: u64,
+    /// Source x coordinate.
+    pub x: OrderedF32,
+    /// Source y coordinate.
+    pub y: OrderedF32,
+    /// Source width.
+    pub width: OrderedF32,
+    /// Source height.
+    pub height: OrderedF32,
+}
+
+impl ImageAtlasRegionSnapshot {
+    fn from_region(region: ImageAtlasRegion) -> Self {
+        Self {
+            atlas: region.atlas.raw(),
+            x: OrderedF32::new(region.source.x),
+            y: OrderedF32::new(region.source.y),
+            width: OrderedF32::new(region.source.width),
+            height: OrderedF32::new(region.source.height),
         }
     }
 }
@@ -329,6 +424,8 @@ pub struct TextureResourceSnapshot {
     pub height: OrderedF32,
     /// Whether a drawable CPU snapshot is present.
     pub has_snapshot: bool,
+    /// Sampling intent.
+    pub sampling: RenderImageSampling,
 }
 
 impl TextureResourceSnapshot {
@@ -338,6 +435,7 @@ impl TextureResourceSnapshot {
             width: OrderedF32::new(resource.size.width),
             height: OrderedF32::new(resource.size.height),
             has_snapshot: resource.snapshot.is_some(),
+            sampling: resource.sampling,
         }
     }
 }
@@ -358,13 +456,13 @@ pub struct TextLayoutResourceSnapshot {
 }
 
 impl TextLayoutResourceSnapshot {
-    fn from_layout(id: TextLayoutId, layout: &ShapedTextLayout) -> Self {
+    fn from_resource(resource: &TextLayoutResource) -> Self {
         Self {
-            id: id.raw(),
-            width: OrderedF32::new(layout.size.width),
-            height: OrderedF32::new(layout.size.height),
-            line_count: layout.line_count,
-            glyph_count: layout.glyph_count(),
+            id: resource.id.raw(),
+            width: OrderedF32::new(resource.layout.size.width),
+            height: OrderedF32::new(resource.layout.size.height),
+            line_count: resource.layout.line_count,
+            glyph_count: resource.layout.glyph_count(),
         }
     }
 }
@@ -390,6 +488,31 @@ impl OrderedF32 {
 
 fn format_f32(value: OrderedF32) -> String {
     format!("{:.3}", value.get())
+}
+
+fn format_optional_atlas(atlas: Option<ImageAtlasRegionSnapshot>) -> String {
+    atlas.map_or_else(
+        || "none".to_owned(),
+        |atlas| {
+            format!(
+                "{}:({},{},{},{})",
+                atlas.atlas,
+                format_f32(atlas.x),
+                format_f32(atlas.y),
+                format_f32(atlas.width),
+                format_f32(atlas.height)
+            )
+        },
+    )
+}
+
+fn format_sampling(sampling: RenderImageSampling) -> &'static str {
+    match sampling {
+        RenderImageSampling::Pixelated => "pixelated",
+        RenderImageSampling::UiIcon => "ui_icon",
+        RenderImageSampling::Smooth => "smooth",
+        RenderImageSampling::HighQuality => "high_quality",
+    }
 }
 
 fn normalize_zero(value: f32) -> f32 {
@@ -473,16 +596,19 @@ pub const fn crate_name() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
+    use std::{convert::Infallible, sync::Arc};
 
     use super::{
-        ImageResource, RenderDiagnostic, RenderFrameInput, RenderFrameOutput, RenderImage,
-        RenderResources, RendererBackend, TextLayoutResource, TextureResource,
+        ImageAtlasRegion, ImageResource, RenderDiagnostic, RenderFrameInput, RenderFrameOutput,
+        RenderImage, RenderImageSampling, RenderResources, RendererBackend, TextLayoutResource,
+        TextureResource,
     };
     use kinetik_ui_core::{
         ImageId, PhysicalSize, ScaleFactor, Size, TextLayoutId, TextureId, ViewportInfo,
     };
-    use kinetik_ui_text::{CosmicTextEngine, ShapedTextLayout, TextLayoutKey, TextStyle};
+    use kinetik_ui_text::{
+        CosmicTextEngine, ShapedTextLayout, TextLayoutKey, TextLayoutStore, TextStyle,
+    };
 
     #[derive(Default)]
     struct RecordingRenderer {
@@ -521,30 +647,46 @@ mod tests {
     }
 
     #[test]
+    fn render_image_clones_share_pixel_payloads() {
+        let image = RenderImage::rgba8(2, 2, vec![1; 16]).expect("valid image");
+        let clone = image.clone();
+
+        assert!(std::sync::Arc::ptr_eq(&image.data, &clone.data));
+    }
+
+    #[test]
     fn resources_register_images_textures_and_text_layouts() {
         let mut resources = RenderResources::new();
         let image = ImageId::from_raw(1);
         let texture = TextureId::from_raw(2);
         let text = TextLayoutId::from_raw(3);
         let mut engine = CosmicTextEngine::new();
-        let layout = engine.shape_text(&TextLayoutKey::new(
+        let key = TextLayoutKey::new(
             "Label",
             TextStyle::new("sans-serif", 12.0, 16.0),
             200.0,
             false,
-        ));
+        );
+        let layout = engine.shape_text(&key);
 
         resources.register_image(ImageResource {
             id: image,
             size: Size::new(1.0, 1.0),
+            sampling: RenderImageSampling::default(),
             pixels: None,
+            atlas_region: None,
         });
         resources.register_texture(TextureResource {
             id: texture,
             size: Size::new(1.0, 1.0),
+            sampling: RenderImageSampling::default(),
             snapshot: None,
         });
-        resources.register_text_layout(TextLayoutResource { id: text, layout });
+        resources.register_text_layout(TextLayoutResource {
+            id: text,
+            key,
+            layout: Arc::new(layout),
+        });
 
         assert!(resources.has_image(image));
         assert!(resources.has_texture(texture));
@@ -552,6 +694,33 @@ mod tests {
         assert!(resources.image(image).is_some());
         assert!(resources.texture(texture).is_some());
         assert!(resources.text_layout(text).is_some());
+    }
+
+    #[test]
+    fn resources_preserve_shared_text_layout_exports() {
+        let mut store = TextLayoutStore::new();
+        let id = store.layout_id(TextLayoutKey::new(
+            "Shared",
+            TextStyle::new("sans-serif", 12.0, 16.0),
+            200.0,
+            false,
+        ));
+        let exported = store
+            .layouts()
+            .find(|layout| layout.id == id)
+            .expect("stored layout");
+        let exported_layout = Arc::clone(&exported.layout);
+        let mut resources = RenderResources::new();
+
+        resources.register_text_layouts([exported]);
+
+        assert!(Arc::ptr_eq(
+            &exported_layout,
+            &resources
+                .text_layout_resource(id)
+                .expect("resource layout")
+                .layout
+        ));
     }
 
     #[test]
@@ -567,26 +736,47 @@ mod tests {
         resources.register_texture(TextureResource {
             id: TextureId::from_raw(9),
             size: Size::new(12.0, 8.0),
+            sampling: RenderImageSampling::default(),
             snapshot: None,
         });
         resources.register_image(ImageResource {
             id: ImageId::from_raw(2),
             size: Size::new(4.0, 3.0),
+            sampling: RenderImageSampling::default(),
             pixels: Some(RenderImage::rgba8(1, 1, vec![255; 4]).expect("valid image")),
+            atlas_region: None,
+        });
+        resources.register_image(ImageResource {
+            id: ImageId::from_raw(3),
+            size: Size::new(2.0, 2.0),
+            sampling: RenderImageSampling::default(),
+            pixels: None,
+            atlas_region: Some(ImageAtlasRegion {
+                atlas: ImageId::from_raw(2),
+                source: kinetik_ui_core::Rect::new(1.0, 0.0, 2.0, 2.0),
+            }),
         });
         resources.register_text_layout(TextLayoutResource {
             id: TextLayoutId::from_raw(5),
-            layout,
+            key: TextLayoutKey::new(
+                "Label",
+                TextStyle::new("sans-serif", 12.0, 16.0),
+                200.0,
+                false,
+            ),
+            layout: Arc::new(layout),
         });
         resources.register_image(ImageResource {
             id: ImageId::from_raw(1),
             size: Size::new(2.0, 1.0),
+            sampling: RenderImageSampling::default(),
             pixels: None,
+            atlas_region: None,
         });
 
         assert_eq!(
             resources.snapshot().to_text(),
-            "resources:\n  image#1 size=2.000x1.000 pixels=false\n  image#2 size=4.000x3.000 pixels=true\n  texture#9 size=12.000x8.000 snapshot=false\n  text_layout#5 size=20.000x10.000 lines=2 glyphs=0"
+            "resources:\n  image#1 size=2.000x1.000 sampling=pixelated pixels=false atlas=none\n  image#2 size=4.000x3.000 sampling=pixelated pixels=true atlas=none\n  image#3 size=2.000x2.000 sampling=pixelated pixels=false atlas=2:(1.000,0.000,2.000,2.000)\n  texture#9 size=12.000x8.000 sampling=pixelated snapshot=false\n  text_layout#5 size=20.000x10.000 lines=2 glyphs=0"
         );
     }
 

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, PenikoFont, Shaping, Wrap};
 use kinetik_ui_core::{
@@ -463,7 +464,7 @@ fn fallback_measure(key: &TextLayoutKey) -> TextLayout {
 pub struct TextLayoutStore {
     engine: CosmicTextEngine,
     keys: HashMap<TextLayoutKey, TextLayoutId>,
-    layouts: HashMap<TextLayoutId, ShapedTextLayout>,
+    layouts: HashMap<TextLayoutId, Arc<ShapedTextLayout>>,
 }
 
 impl TextLayoutStore {
@@ -515,21 +516,25 @@ impl TextLayoutStore {
         let id = text_layout_id(&key);
         let layout = self.engine.shape_text(&key);
         self.keys.insert(key, id);
-        self.layouts.insert(id, layout);
+        self.layouts.insert(id, Arc::new(layout));
         id
     }
 
     /// Returns a shaped layout by ID.
     #[must_use]
     pub fn layout(&self, id: TextLayoutId) -> Option<&ShapedTextLayout> {
-        self.layouts.get(&id)
+        self.layouts.get(&id).map(Arc::as_ref)
     }
 
     /// Iterates cached shaped text layouts.
     pub fn layouts(&self) -> impl Iterator<Item = StoredTextLayout<'_>> {
-        self.layouts
-            .iter()
-            .map(|(id, layout)| StoredTextLayout { id: *id, layout })
+        self.keys.iter().filter_map(|(key, id)| {
+            self.layouts.get(id).map(|layout| StoredTextLayout {
+                id: *id,
+                key,
+                layout: Arc::clone(layout),
+            })
+        })
     }
 }
 
@@ -540,12 +545,14 @@ impl Default for TextLayoutStore {
 }
 
 /// Borrowed shaped text layout entry.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StoredTextLayout<'a> {
     /// Text layout handle.
     pub id: TextLayoutId,
+    /// Layout request used to shape the text.
+    pub key: &'a TextLayoutKey,
     /// Shaped layout.
-    pub layout: &'a ShapedTextLayout,
+    pub layout: Arc<ShapedTextLayout>,
 }
 
 /// Cosmic-text backed engine handle.
@@ -1322,16 +1329,21 @@ mod tests {
             100.0,
             false,
         );
-        let id = store.layout_id(key);
+        let id = store.layout_id(key.clone());
 
         let entries = store.layouts().collect::<Vec<_>>();
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, id);
+        assert_eq!(entries[0].key, &key);
         assert_eq!(
             entries[0].layout.glyph_count(),
             store.layout(id).unwrap().glyph_count()
         );
+        assert!(std::sync::Arc::ptr_eq(
+            &entries[0].layout,
+            store.layouts.get(&id).expect("cached layout")
+        ));
     }
 
     #[test]
