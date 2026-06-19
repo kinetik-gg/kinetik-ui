@@ -1681,8 +1681,9 @@ fn physical_text_layout_for_key(
     key: &TextLayoutKey,
 ) -> Option<Arc<ShapedTextLayout>> {
     let scale = uniform_axis_aligned_scale(transform)?;
-    let physical_size = (f64::from(key.style.size()) * scale) as f32;
-    let physical_line_height = (f64::from(key.style.line_height()) * scale) as f32;
+    let physical_size = quantize_physical_text_metric(f64::from(key.style.size()) * scale);
+    let physical_line_height =
+        quantize_physical_text_metric(f64::from(key.style.line_height()) * scale);
     let physical_width = (f64::from(key.width()) * scale) as f32;
     (physical_size.is_finite()
         && physical_size > 0.0
@@ -1717,8 +1718,8 @@ fn physical_text_layout(
     line_height: f32,
 ) -> Option<Arc<ShapedTextLayout>> {
     let scale = uniform_axis_aligned_scale(transform)?;
-    let physical_size = (f64::from(size) * scale) as f32;
-    let physical_line_height = (f64::from(line_height) * scale) as f32;
+    let physical_size = quantize_physical_text_metric(f64::from(size) * scale);
+    let physical_line_height = quantize_physical_text_metric(f64::from(line_height) * scale);
     (physical_size.is_finite()
         && physical_size > 0.0
         && physical_line_height.is_finite()
@@ -1734,6 +1735,15 @@ fn physical_text_layout(
                 ),
             )
         })
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn quantize_physical_text_metric(value: f64) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value.round().max(1.0) as f32
+    } else {
+        value as f32
+    }
 }
 
 fn encode_text_layout(
@@ -3581,7 +3591,36 @@ mod tests {
             layout
                 .lines
                 .iter()
-                .all(|line| (line.height - 25.5).abs() < f32::EPSILON)
+                .all(|line| (line.height - 26.0).abs() < f32::EPSILON)
+        );
+    }
+
+    #[test]
+    fn physical_text_layout_quantizes_fractional_device_metrics() {
+        let mut engine = CosmicTextEngine::new();
+        let mut cache = ShapedTextCache::default();
+        let layout = physical_text_layout(
+            &mut engine,
+            &mut cache,
+            root_transform(1.25),
+            "Sharp",
+            "sans-serif",
+            14.0,
+            19.0,
+        )
+        .expect("axis-aligned physical layout");
+
+        assert!(
+            layout
+                .runs
+                .iter()
+                .all(|run| (run.font_size - 18.0).abs() < f32::EPSILON)
+        );
+        assert!(
+            layout
+                .lines
+                .iter()
+                .all(|line| (line.height - 24.0).abs() < f32::EPSILON)
         );
     }
 
@@ -3596,7 +3635,7 @@ mod tests {
         let mut expected_engine = CosmicTextEngine::new();
         let expected = expected_engine.shape_text(&TextLayoutKey::new(
             key.text.clone(),
-            TextStyle::new("sans-serif", 18.0, 25.5),
+            TextStyle::new("sans-serif", 18.0, 26.0),
             102.0,
             true,
         ));
@@ -3621,7 +3660,7 @@ mod tests {
             layout
                 .lines
                 .iter()
-                .all(|line| (line.height - 25.5).abs() < f32::EPSILON)
+                .all(|line| (line.height - 26.0).abs() < f32::EPSILON)
         );
     }
 
