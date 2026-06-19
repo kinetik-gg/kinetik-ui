@@ -47,6 +47,8 @@ const VIEWPORT_SIZE: Size = Size::new(1280.0, 720.0);
 
 const ICON_ATLAS: ImageId = ImageId::from_raw(7_000);
 const ICON_SIZE: u32 = 32;
+const ICON_ATLAS_PADDING: u32 = 1;
+const ICON_ATLAS_CELL_SIZE: u32 = ICON_SIZE + ICON_ATLAS_PADDING * 2;
 const ICON_ATLAS_COLUMNS: u32 = 7;
 const ICON_ATLAS_ROWS: u32 = 4;
 
@@ -1549,8 +1551,8 @@ pub fn register_resources(resources: &mut RenderResources) {
         resources.register_image(ImageResource {
             id: ICON_ATLAS,
             size: Size::new(
-                (ICON_ATLAS_COLUMNS * ICON_SIZE) as f32,
-                (ICON_ATLAS_ROWS * ICON_SIZE) as f32,
+                (ICON_ATLAS_COLUMNS * ICON_ATLAS_CELL_SIZE) as f32,
+                (ICON_ATLAS_ROWS * ICON_ATLAS_CELL_SIZE) as f32,
             ),
             sampling: RenderImageSampling::UiIcon,
             pixels: Some(atlas),
@@ -1568,8 +1570,8 @@ pub fn register_resources(resources: &mut RenderResources) {
             atlas_region: Some(ImageAtlasRegion {
                 atlas: ICON_ATLAS,
                 source: Rect::new(
-                    (column * ICON_SIZE) as f32,
-                    (row * ICON_SIZE) as f32,
+                    (column * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING) as f32,
+                    (row * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING) as f32,
                     ICON_SIZE as f32,
                     ICON_SIZE as f32,
                 ),
@@ -1579,8 +1581,8 @@ pub fn register_resources(resources: &mut RenderResources) {
 }
 
 fn icon_atlas_image() -> Option<RenderImage> {
-    let width = ICON_ATLAS_COLUMNS * ICON_SIZE;
-    let height = ICON_ATLAS_ROWS * ICON_SIZE;
+    let width = ICON_ATLAS_COLUMNS * ICON_ATLAS_CELL_SIZE;
+    let height = ICON_ATLAS_ROWS * ICON_ATLAS_CELL_SIZE;
     let mut data = vec![0; (width * height * 4) as usize];
     for (index, (_, bytes)) in ICON_ASSETS.iter().enumerate() {
         if bytes.len() != (ICON_SIZE * ICON_SIZE * 4) as usize {
@@ -1588,14 +1590,17 @@ fn icon_atlas_image() -> Option<RenderImage> {
         }
         let column = index as u32 % ICON_ATLAS_COLUMNS;
         let row = index as u32 / ICON_ATLAS_COLUMNS;
-        let x0 = column * ICON_SIZE;
-        let y0 = row * ICON_SIZE;
-        for y in 0..ICON_SIZE {
-            let source_start = (y * ICON_SIZE * 4) as usize;
-            let source_end = source_start + (ICON_SIZE * 4) as usize;
-            let dest_start = (((y0 + y) * width + x0) * 4) as usize;
-            let dest_end = dest_start + (ICON_SIZE * 4) as usize;
-            data[dest_start..dest_end].copy_from_slice(&bytes[source_start..source_end]);
+        let x0 = column * ICON_ATLAS_CELL_SIZE;
+        let y0 = row * ICON_ATLAS_CELL_SIZE;
+        for y in 0..ICON_ATLAS_CELL_SIZE {
+            let source_y = y.saturating_sub(ICON_ATLAS_PADDING).min(ICON_SIZE - 1);
+            for x in 0..ICON_ATLAS_CELL_SIZE {
+                let source_x = x.saturating_sub(ICON_ATLAS_PADDING).min(ICON_SIZE - 1);
+                let source_start = ((source_y * ICON_SIZE + source_x) * 4) as usize;
+                let dest_start = (((y0 + y) * width + x0 + x) * 4) as usize;
+                data[dest_start..dest_start + 4]
+                    .copy_from_slice(&bytes[source_start..source_start + 4]);
+            }
         }
     }
     RenderImage::rgba8(width, height, data)
@@ -1817,7 +1822,12 @@ fn inspector_label_width(grid_width: f32) -> f32 {
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::items_after_test_module)]
 mod tests {
-    use super::inspector_label_width;
+    use super::{
+        ICON_ASSETS, ICON_ATLAS_CELL_SIZE, ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE,
+        icon_atlas_image, inspector_label_width, register_resources,
+    };
+    use kinetik_ui::core::Rect;
+    use kinetik_ui::render::RenderResources;
 
     #[test]
     fn inspector_label_width_preserves_value_space_at_narrow_widths() {
@@ -1825,6 +1835,63 @@ mod tests {
         assert!((inspector_label_width(180.0) - 75.6).abs() < f32::EPSILON);
         assert_eq!(inspector_label_width(400.0), 96.0);
         assert_eq!(inspector_label_width(f32::NAN), 72.0);
+    }
+
+    #[test]
+    fn icon_atlas_duplicates_edge_pixels_into_gutters() {
+        let atlas = icon_atlas_image().expect("atlas");
+        let first_icon = ICON_ASSETS[0].1;
+        let top_left = atlas_pixel(&atlas.data, atlas.width, 0, 0);
+        let inset_top_left = atlas_pixel(
+            &atlas.data,
+            atlas.width,
+            ICON_ATLAS_PADDING,
+            ICON_ATLAS_PADDING,
+        );
+        let bottom_right = atlas_pixel(
+            &atlas.data,
+            atlas.width,
+            ICON_ATLAS_CELL_SIZE - 1,
+            ICON_ATLAS_CELL_SIZE - 1,
+        );
+
+        assert_eq!(atlas.width, 238);
+        assert_eq!(atlas.height, 136);
+        assert_eq!(top_left, &first_icon[0..4]);
+        assert_eq!(inset_top_left, &first_icon[0..4]);
+        assert_eq!(
+            bottom_right,
+            &first_icon[(((ICON_SIZE - 1) * ICON_SIZE + ICON_SIZE - 1) * 4) as usize..][..4]
+        );
+    }
+
+    #[test]
+    fn icon_atlas_regions_target_inner_unpadded_cells() {
+        let mut resources = RenderResources::new();
+
+        register_resources(&mut resources);
+
+        let region = resources
+            .image(ICON_CROSSHAIR)
+            .and_then(|resource| resource.atlas_region)
+            .expect("icon region");
+
+        assert_eq!(region.source.width, ICON_SIZE as f32);
+        assert_eq!(region.source.height, ICON_SIZE as f32);
+        assert_eq!(
+            region.source,
+            Rect::new(
+                (6 * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING) as f32,
+                (3 * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING) as f32,
+                ICON_SIZE as f32,
+                ICON_SIZE as f32,
+            )
+        );
+    }
+
+    fn atlas_pixel(data: &[u8], width: u32, x: u32, y: u32) -> &[u8] {
+        let start = ((y * width + x) * 4) as usize;
+        &data[start..start + 4]
     }
 }
 
