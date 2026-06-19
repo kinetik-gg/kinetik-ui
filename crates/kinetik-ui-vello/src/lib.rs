@@ -2039,7 +2039,8 @@ fn snap_stroked_rect_to_device(rect: Rect, stroke_width: f32, device_scale: f64)
     {
         return rect;
     }
-    let half_width = f64::from(stroke_width) * device_scale * 0.5;
+    let half_width =
+        f64::from(quantize_stroke_width_to_device(stroke_width, device_scale)) * device_scale * 0.5;
     let left = (f64::from(rect.min_x()) * device_scale).round() + half_width;
     let top = (f64::from(rect.min_y()) * device_scale).round() + half_width;
     let right = (f64::from(rect.max_x()) * device_scale).round() - half_width;
@@ -2093,7 +2094,8 @@ fn snap_stroke_center_to_device(value: f32, stroke_width: f32, device_scale: f64
     {
         return value;
     }
-    let physical_width = f64::from(stroke_width) * device_scale;
+    let physical_width =
+        f64::from(quantize_stroke_width_to_device(stroke_width, device_scale)) * device_scale;
     let physical = f64::from(value) * device_scale;
     let snapped = ((physical - physical_width * 0.5).round() + physical_width * 0.5) / device_scale;
     snapped as f32
@@ -3184,16 +3186,21 @@ mod tests {
     #[test]
     fn renderer_snaps_stroke_centers_to_physical_pixel_coverage() {
         let one_px = snap_stroke_center_to_device(10.0, 1.0, 1.0);
+        let one_px_fractional_scale = snap_stroke_center_to_device(10.0, 1.0, 1.25);
         let two_px = snap_stroke_center_to_device(10.0, 1.0, 2.0);
         let horizontal =
             snap_stroked_line_to_device(Point::new(0.2, 10.0), Point::new(20.2, 10.0), 1.0, 1.0);
         let rect = snap_stroked_rect_to_device(Rect::new(0.1, 0.1, 20.2, 12.2), 1.0, 1.0);
+        let fractional_rect =
+            snap_stroked_rect_to_device(Rect::new(0.0, 0.0, 20.0, 12.0), 1.0, 1.25);
 
         assert_approx(one_px, 10.5);
+        assert_approx(one_px_fractional_scale, 10.0);
         assert_approx(two_px, 10.0);
         assert_eq!(horizontal.0, Point::new(0.0, 10.5));
         assert_eq!(horizontal.1, Point::new(20.0, 10.5));
         assert_eq!(rect, Rect::new(0.5, 0.5, 19.0, 11.0));
+        assert_eq!(fractional_rect, Rect::new(0.4, 0.4, 19.2, 11.2));
     }
 
     #[test]
