@@ -2443,6 +2443,39 @@ mod tests {
     }
 
     #[test]
+    fn showcase_pages_emit_text_at_fractional_dpi_without_renderer_diagnostics() {
+        let size = Size::new(1440.0, 900.0);
+        for page in [
+            ShowcasePage::Editor,
+            ShowcasePage::Components,
+            ShowcasePage::Layout,
+            ShowcasePage::Viewport,
+            ShowcasePage::Systems,
+        ] {
+            let mut app = ShowcaseApp::new();
+            app.set_viewport_size(size);
+            app.set_page(page);
+            let resources = app.render_resources();
+            let mut renderer = VelloRenderer::new();
+            let output = renderer.submit_frame(RenderFrameInput {
+                viewport: test_viewport_scaled(size, 1.25),
+                primitives: &app.output().primitives,
+                resources: &resources,
+            });
+
+            assert!(
+                output.diagnostics.is_empty(),
+                "{page:?}: {:?}",
+                output.diagnostics
+            );
+            assert!(
+                !renderer.scene().encoding().resources.glyph_runs.is_empty(),
+                "{page:?} emitted no glyph runs at fractional DPI"
+            );
+        }
+    }
+
+    #[test]
     fn editor_open_menu_translates_to_vello_without_renderer_diagnostics() {
         let mut app = ShowcaseApp::new();
         click(&mut app, Point::new(145.0, 14.0));
@@ -2458,13 +2491,17 @@ mod tests {
     }
 
     fn test_viewport(size: Size) -> ViewportInfo {
+        test_viewport_scaled(size, 1.0)
+    }
+
+    fn test_viewport_scaled(size: Size, scale_factor: f64) -> ViewportInfo {
         ViewportInfo::new(
             size,
             PhysicalSize::new(
-                size.width.round().max(1.0) as u32,
-                size.height.round().max(1.0) as u32,
+                (f64::from(size.width) * scale_factor).round().max(1.0) as u32,
+                (f64::from(size.height) * scale_factor).round().max(1.0) as u32,
             ),
-            ScaleFactor::ONE,
+            ScaleFactor::new(scale_factor),
         )
     }
 }
