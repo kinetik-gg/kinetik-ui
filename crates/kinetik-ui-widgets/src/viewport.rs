@@ -451,7 +451,9 @@ impl Crosshair {
                 layout: None,
                 origin: Point::new(self.position.x + 6.0, self.position.y - 6.0),
                 text: label.clone(),
+                family: "sans-serif".to_owned(),
                 size: 11.0,
+                line_height: 15.0,
                 brush: Brush::Solid(self.color),
             }));
         }

@@ -1762,6 +1762,7 @@ fn inspector_label_width(grid_width: f32) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp, clippy::items_after_test_module)]
 mod tests {
     use super::inspector_label_width;
 
@@ -1979,7 +1980,9 @@ fn text(ui: &mut Ui<'_>, x: f32, baseline: f32, value: &str, size: f32, fill: Co
         layout: None,
         origin: Point::new(x, baseline),
         text: value.to_owned(),
+        family: "sans-serif".to_owned(),
         size,
+        line_height: size + 5.0,
         brush: Brush::Solid(fill),
     }));
 }

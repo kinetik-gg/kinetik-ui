@@ -1943,7 +1943,9 @@ fn text(ui: &mut Ui<'_>, x: f32, baseline: f32, value: &str, size: f32, fill: Co
         layout: None,
         origin: Point::new(x, baseline),
         text: value.to_owned(),
+        family: "sans-serif".to_owned(),
         size,
+        line_height: size + 5.0,
         brush: Brush::Solid(fill),
     }));
 }

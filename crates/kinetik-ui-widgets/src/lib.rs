@@ -523,7 +523,9 @@ fn single_line_text_primitives(
         layout: None,
         origin: Point::new(content_x, baseline),
         text: display_text.clone(),
+        family: recipe.font.family.to_owned(),
         size: recipe.font.size,
+        line_height: recipe.font.line_height,
         brush: Brush::Solid(recipe.foreground),
     }));
 
@@ -620,7 +622,9 @@ fn multi_line_text_primitives(
                 layout: None,
                 origin: Point::new(content_x, baseline),
                 text: (*line).to_owned(),
+                family: recipe.font.family.to_owned(),
                 size: recipe.font.size,
+                line_height: recipe.font.line_height,
                 brush: Brush::Solid(recipe.foreground),
             }));
         }
@@ -688,7 +692,9 @@ fn multi_line_text_primitives(
             layout: None,
             origin: Point::new(content_x, baseline),
             text: (*line).to_owned(),
+            family: recipe.font.family.to_owned(),
             size: recipe.font.size,
+            line_height: recipe.font.line_height,
             brush: Brush::Solid(recipe.foreground),
         }));
 
@@ -734,7 +740,9 @@ pub fn label(rect: Rect, text: impl Into<String>, theme: &Theme) -> WidgetOutput
             layout: None,
             origin: Point::new(rect.x, label_baseline(rect, theme, TextRole::Body)),
             text: text.into(),
+            family: recipe.font.family.to_owned(),
             size: recipe.font.size,
+            line_height: recipe.font.line_height,
             brush: Brush::Solid(recipe.foreground),
         })],
     )
@@ -774,7 +782,9 @@ pub fn button(
                     layout: None,
                     origin: control_text_origin(rect, theme),
                     text: text.clone(),
+                    family: theme.font(TextRole::Label).family.to_owned(),
                     size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
                     brush: Brush::Solid(recipe.foreground),
                 }),
             ],
@@ -831,7 +841,9 @@ pub fn tab_button(
                     layout: None,
                     origin: control_text_origin(rect, theme),
                     text,
+                    family: theme.font(TextRole::Label).family.to_owned(),
                     size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
                     brush: Brush::Solid(recipe.foreground),
                 }),
                 Primitive::Rect(RectPrimitive {
@@ -896,7 +908,9 @@ pub fn list_row(
                     layout: None,
                     origin: control_text_origin(rect, theme),
                     text,
+                    family: theme.font(TextRole::Label).family.to_owned(),
                     size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
                     brush: Brush::Solid(recipe.foreground),
                 }),
             ],

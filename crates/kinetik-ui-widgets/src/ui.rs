@@ -823,7 +823,7 @@ fn response_requests_followup_repaint(response: Response) -> bool {
 fn text_layout_key(text: &TextPrimitive) -> TextLayoutKey {
     TextLayoutKey::new(
         text.text.clone(),
-        TextStyle::new("sans-serif", text.size, text.size + 5.0),
+        TextStyle::new(text.family.clone(), text.size, text.line_height),
         0.0,
         false,
     )
@@ -836,13 +836,13 @@ mod tests {
     use super::Ui;
     use crate::{IconGraphic, IconLibrary, IconPath};
     use kinetik_ui_core::{
-        ActionContext, ActionDescriptor, ActionSource, CursorShape, FrameContext, FrameWarning,
-        IconId, ImageId, Insets, PathElement, PhysicalSize, PlatformRequest, Point,
+        ActionContext, ActionDescriptor, ActionSource, Brush, Color, CursorShape, FrameContext,
+        FrameWarning, IconId, ImageId, Insets, PathElement, PhysicalSize, PlatformRequest, Point,
         PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, ScaleFactor,
-        SemanticRole, Size, TimeInfo, UiInput, UiMemory, Vec2, ViewportInfo, WidgetId,
-        default_dark_theme,
+        SemanticRole, Size, TextPrimitive, TimeInfo, UiInput, UiMemory, Vec2, ViewportInfo,
+        WidgetId, default_dark_theme,
     };
-    use kinetik_ui_text::{TextEditState, TextLayoutStore};
+    use kinetik_ui_text::{TextEditState, TextLayoutKey, TextLayoutStore, TextStyle};
 
     fn pressed_at(x: f32, y: f32) -> UiInput {
         UiInput {
@@ -985,6 +985,43 @@ mod tests {
             .expect("label emits text");
         let layout = text.layout.expect("text layout is attached");
         assert!(text_layouts.layout(layout).is_some());
+        assert_eq!(text_layouts.len(), 1);
+    }
+
+    #[test]
+    fn ui_uses_text_primitive_style_for_attached_layouts() {
+        let theme = default_dark_theme();
+        let input = UiInput::default();
+        let mut memory = UiMemory::new();
+        let mut text_layouts = TextLayoutStore::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme).with_text_layouts(&mut text_layouts);
+
+        ui.primitive(Primitive::Text(TextPrimitive {
+            layout: None,
+            origin: Point::new(0.0, 16.0),
+            text: "Styled".to_owned(),
+            family: "monospace".to_owned(),
+            size: 12.0,
+            line_height: 17.0,
+            brush: Brush::Solid(Color::WHITE),
+        }));
+        let output = ui.finish_output();
+        let layout = output
+            .primitives
+            .iter()
+            .find_map(|primitive| match primitive {
+                Primitive::Text(text) => text.layout,
+                _ => None,
+            })
+            .expect("text layout is attached");
+        let expected = text_layouts.layout_id(TextLayoutKey::new(
+            "Styled",
+            TextStyle::new("monospace", 12.0, 17.0),
+            0.0,
+            false,
+        ));
+
+        assert_eq!(layout, expected);
         assert_eq!(text_layouts.len(), 1);
     }
 
