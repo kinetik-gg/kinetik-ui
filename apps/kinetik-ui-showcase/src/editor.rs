@@ -7,9 +7,10 @@
 )]
 
 use kinetik_ui::core::{
-    ActionDescriptor, ActionSource, Axis, Brush, ClipId, Color, CornerRadius, ImageId, Key,
-    KeyState, LinePrimitive, Modifiers, PathElement, PathPrimitive, Point, Primitive, Rect,
-    RectPrimitive, RepaintRequest, Shortcut, Size, Stroke, TextPrimitive, TextureId, Vec2,
+    ActionDescriptor, ActionSource, Axis, Brush, ClipId, Color, CornerRadius, CursorShape, ImageId,
+    Key, KeyState, LinePrimitive, Modifiers, PathElement, PathPrimitive, PlatformRequest, Point,
+    Primitive, Rect, RectPrimitive, RepaintRequest, Shortcut, Size, Stroke, TextPrimitive,
+    TextureId, Vec2,
 };
 use kinetik_ui::render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
@@ -21,8 +22,8 @@ use kinetik_ui::widgets::{
     MenuItem, OverlayDismissal, OverlayEntry, OverlayId, OverlayKind, OverlayStack, PanZoom, Panel,
     PanelId, PopoverPlacement, PopoverRequest, PropertyGridLayout, PropertyGridRow, TableColumn,
     TableLayout, TreeExpansion, TreeItem, TreeLayout, TreeModel, Ui, ViewportComposition,
-    ViewportFit, ViewportSurface, frame_tabs, place_popover, solve_dock_layout,
-    solve_dock_splitters,
+    ViewportFit, ViewportSurface, frame_tabs, icon_button_semantics, place_popover,
+    solve_dock_layout, solve_dock_splitters,
 };
 
 /// Saves the current editor project.
@@ -1916,9 +1917,9 @@ mod tests {
         icon_atlas_image, inspector_label_width, item_id, register_resources,
     };
     use kinetik_ui::core::{
-        FrameContext, PathElement, PhysicalSize, Point, PointerButtonState, PointerInput,
-        Primitive, Rect, RepaintRequest, ScaleFactor, Size, TimeInfo, UiInput, UiMemory,
-        ViewportInfo, default_dark_theme,
+        CursorShape, FrameContext, PathElement, PhysicalSize, PlatformRequest, Point,
+        PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, ScaleFactor,
+        SemanticRole, Size, TimeInfo, UiInput, UiMemory, ViewportInfo, default_dark_theme,
     };
     use kinetik_ui::render::RenderResources;
     use kinetik_ui::widgets::Ui;
@@ -2152,6 +2153,61 @@ mod tests {
 
         assert_eq!(toolbar_bitmap_icons, 0);
         assert!(toolbar_vector_segments >= 12);
+    }
+
+    #[test]
+    fn editor_toolbar_vector_icons_preserve_icon_button_semantics() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let context = editor_test_context(UiInput::default());
+        let mut ui = Ui::begin_frame(context, &mut memory, &theme);
+        let mut editor = EditorShowcase::new();
+
+        editor.render(&mut ui, 0);
+        let output = ui.finish_output();
+        let toolbar_labels = [
+            "Select",
+            "Move",
+            "Rotate",
+            "Scale",
+            "Toggle grid",
+            "Frame selected",
+            "Reset view",
+            "Play",
+            "Pause",
+            "Stop",
+            "Build",
+            "Export",
+        ];
+
+        for label in toolbar_labels {
+            assert!(
+                output.semantics.nodes().iter().any(|node| {
+                    node.role == SemanticRole::IconButton
+                        && node.label.as_deref() == Some(label)
+                        && node.focusable
+                }),
+                "missing toolbar icon semantics for {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn editor_toolbar_vector_icons_request_hover_cursor() {
+        let theme = default_dark_theme();
+        let mut memory = UiMemory::new();
+        let context = editor_test_context(pointer_input_at(20.0, 44.0, false, false, false));
+        let mut ui = Ui::begin_frame(context, &mut memory, &theme);
+        let mut editor = EditorShowcase::new();
+
+        editor.render(&mut ui, 0);
+        let output = ui.finish_output();
+
+        assert!(
+            output
+                .platform_requests
+                .contains(&PlatformRequest::SetCursor(CursorShape::PointingHand))
+        );
     }
 
     fn editor_test_context(input: UiInput) -> FrameContext {
@@ -2396,11 +2452,12 @@ fn toolbar_icon_button(
     key: impl std::hash::Hash,
     rect: Rect,
     icon: ToolbarIcon,
-    _label: &str,
+    label: &str,
     selected: bool,
     disabled: bool,
 ) -> kinetik_ui::core::Response {
-    let response = ui.pressable(key, rect, disabled);
+    let id = ui.id(key);
+    let response = ui.pressable_with_id(id, rect, disabled);
     let visual_selected = selected || response.clicked;
     let fill = if disabled {
         rgb(24, 25, 28)
@@ -2434,6 +2491,15 @@ fn toolbar_icon_button(
         TOOLBAR_ICON_SIZE,
     );
     draw_toolbar_icon(ui, icon_rect, icon, color);
+
+    let mut semantics = icon_button_semantics(id, rect, label, disabled);
+    semantics.state.focused = response.state.focused;
+    semantics.state.pressed = response.state.pressed;
+    semantics.state.selected = visual_selected;
+    ui.push_semantic_node(semantics);
+    if response.state.hovered && !disabled {
+        ui.push_platform_request(PlatformRequest::SetCursor(CursorShape::PointingHand));
+    }
 
     response
 }
