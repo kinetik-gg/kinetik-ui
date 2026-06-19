@@ -2110,7 +2110,7 @@ mod tests {
                 .and_then(|resource| resource.atlas_region)
                 .and_then(|region| resources.image(region.atlas))
                 .and_then(|atlas| atlas.pixels.as_ref())
-                .is_some_and(|pixels| pixels.width == 224 && pixels.height == 128)
+                .is_some_and(|pixels| pixels.width == 238 && pixels.height == 136)
         );
     }
 
@@ -2124,7 +2124,7 @@ mod tests {
             resources
                 .image(atlas)
                 .and_then(|resource| resource.pixels.as_ref())
-                .is_some_and(|pixels| pixels.width == 224 && pixels.height == 128)
+                .is_some_and(|pixels| pixels.width == 238 && pixels.height == 136)
         );
         let icon_regions = (7_001..=7_028)
             .filter_map(|raw| resources.image(ImageId::from_raw(raw)))
