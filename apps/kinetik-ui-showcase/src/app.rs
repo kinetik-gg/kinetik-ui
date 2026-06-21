@@ -691,9 +691,15 @@ impl ShowcaseApp {
             self.status = format!("Slider: {:.2}", self.strength);
         }
 
+        let icon_button_size = ui.theme().controls.control_height;
         ui.icon_button(
             "components.icon",
-            Rect::new(slider_x, slider_y + 44.0, 32.0, 32.0),
+            Rect::new(
+                slider_x,
+                slider_y + 44.0,
+                icon_button_size,
+                icon_button_size,
+            ),
             IconId::from_raw(1),
             false,
         );
@@ -2152,7 +2158,7 @@ mod tests {
     fn editor_grid_toolbar_updates_status_same_frame_and_requests_repaint() {
         let mut app = ShowcaseApp::new();
 
-        click(&mut app, Point::new(197.0, 49.0));
+        click(&mut app, Point::new(161.0, 45.0));
 
         assert_eq!(app.action_count(), 1);
         assert_eq!(app.output().repaint, RepaintRequest::NextFrame);
@@ -2163,7 +2169,7 @@ mod tests {
     fn editor_play_toolbar_updates_hint_same_frame() {
         let mut app = ShowcaseApp::new();
 
-        click(&mut app, Point::new(1237.0, 49.0));
+        click(&mut app, Point::new(1307.0, 45.0));
 
         assert_eq!(app.action_count(), 1);
         assert!(has_text(&app, "Play Mode: Running"));
