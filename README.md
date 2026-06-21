@@ -150,3 +150,7 @@ GitHub Actions runs these checks on pull requests and pushes to `main`.
 ## License
 
 Kinetik UI is licensed under the [MIT License](LICENSE).
+
+Bundled font assets in `crates/kinetik-ui-text/assets/fonts/` are licensed
+separately under the SIL Open Font License 1.1; see
+`crates/kinetik-ui-text/assets/THIRD_PARTY.md`.

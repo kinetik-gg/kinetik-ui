@@ -4,10 +4,28 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, PenikoFont, Shaping, Wrap};
+use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, PenikoFont, Shaping, Wrap, fontdb};
 use kinetik_ui_core::{
     Key, KeyEvent, KeyState, Rect, Size, TextInputEvent, TextLayoutId, TextRange,
 };
+
+/// Bundled default UI font family.
+pub const DEFAULT_FONT_FAMILY: &str = "Inter";
+/// Bundled default monospace font family.
+pub const DEFAULT_MONOSPACE_FONT_FAMILY: &str = "Geist Mono";
+const INTER_FONTDB_FAMILY: &str = "Inter Variable";
+
+/// Bundled font assets used by the default text engine.
+pub mod fonts {
+    /// Pinned upstream commit for the bundled Inter font file.
+    pub const INTER_UPSTREAM_COMMIT: &str = "353b61b9f4430d5f420d56605a6e7993e0941470";
+    /// Pinned upstream commit for the bundled Geist Mono font file.
+    pub const GEIST_UPSTREAM_COMMIT: &str = "10dc7658f13c38a474cde201bb09a4617267545b";
+    /// Bundled Inter variable TTF bytes.
+    pub const INTER_VARIABLE: &[u8] = include_bytes!("../assets/fonts/InterVariable.ttf");
+    /// Bundled Geist Mono variable TTF bytes.
+    pub const GEIST_MONO_VARIABLE: &[u8] = include_bytes!("../assets/fonts/GeistMono-Variable.ttf");
+}
 
 /// Font properties used by text measurement and layout.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -565,7 +583,7 @@ impl CosmicTextEngine {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            font_system: FontSystem::new(),
+            font_system: bundled_font_system(),
         }
     }
 
@@ -719,9 +737,19 @@ fn attrs_for_style(style: &TextStyle) -> Attrs<'_> {
         "monospace" | "mono" => Family::Monospace,
         "cursive" => Family::Cursive,
         "fantasy" => Family::Fantasy,
+        DEFAULT_FONT_FAMILY => Family::Name(INTER_FONTDB_FAMILY),
         family => Family::Name(family),
     };
     Attrs::new().family(family)
+}
+
+fn bundled_font_system() -> FontSystem {
+    let mut db = fontdb::Database::new();
+    db.load_font_data(fonts::INTER_VARIABLE.to_vec());
+    db.load_font_data(fonts::GEIST_MONO_VARIABLE.to_vec());
+    db.set_sans_serif_family(INTER_FONTDB_FAMILY);
+    db.set_monospace_family(DEFAULT_MONOSPACE_FONT_FAMILY);
+    FontSystem::new_with_locale_and_db("en-US".to_owned(), db)
 }
 
 fn text_layout_id(key: &TextLayoutKey) -> TextLayoutId {
@@ -1175,8 +1203,9 @@ fn next_boundary(text: &str, offset: usize) -> Option<usize> {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::{
-        CosmicTextEngine, ShapedTextLayout, TextComposition, TextEditState, TextLayoutCache,
-        TextLayoutKey, TextLayoutStore, TextSelection, TextStyle,
+        CosmicTextEngine, DEFAULT_FONT_FAMILY, DEFAULT_MONOSPACE_FONT_FAMILY, INTER_FONTDB_FAMILY,
+        ShapedTextLayout, TextComposition, TextEditState, TextLayoutCache, TextLayoutKey,
+        TextLayoutStore, TextSelection, TextStyle, fontdb, fonts,
     };
     use kinetik_ui_core::{Key, KeyEvent, KeyState, Modifiers, TextInputEvent, TextRange};
 
@@ -1185,6 +1214,94 @@ mod tests {
         let mut engine = CosmicTextEngine::new();
 
         let _ = engine.font_system();
+    }
+
+    #[test]
+    fn bundled_font_database_sets_default_family_aliases() {
+        let mut engine = CosmicTextEngine::new();
+
+        assert_eq!(
+            engine
+                .font_system
+                .db()
+                .family_name(&fontdb::Family::SansSerif),
+            INTER_FONTDB_FAMILY
+        );
+        assert_eq!(
+            engine
+                .font_system
+                .db()
+                .family_name(&fontdb::Family::Monospace),
+            DEFAULT_MONOSPACE_FONT_FAMILY
+        );
+        assert_eq!(
+            query_font_bytes(&mut engine, &[fontdb::Family::SansSerif]),
+            fonts::INTER_VARIABLE
+        );
+        assert_eq!(
+            query_font_bytes(&mut engine, &[fontdb::Family::Monospace]),
+            fonts::GEIST_MONO_VARIABLE
+        );
+    }
+
+    #[test]
+    fn generic_families_shape_with_bundled_fonts() {
+        let mut engine = CosmicTextEngine::new();
+        let sans = engine.shape_text(&TextLayoutKey::new(
+            "Kinetik",
+            TextStyle::new("sans-serif", 13.0, 18.0),
+            200.0,
+            false,
+        ));
+        let mono = engine.shape_text(&TextLayoutKey::new(
+            "fn main()",
+            TextStyle::new("monospace", 13.0, 18.0),
+            200.0,
+            false,
+        ));
+
+        assert!(!sans.runs.is_empty());
+        assert!(
+            sans.runs
+                .iter()
+                .all(|run| run.font.data.data() == fonts::INTER_VARIABLE)
+        );
+        assert!(!mono.runs.is_empty());
+        assert!(
+            mono.runs
+                .iter()
+                .all(|run| run.font.data.data() == fonts::GEIST_MONO_VARIABLE)
+        );
+    }
+
+    #[test]
+    fn named_default_families_shape_with_bundled_fonts() {
+        let mut engine = CosmicTextEngine::new();
+        let sans = engine.shape_text(&TextLayoutKey::new(
+            "Default",
+            TextStyle::new(DEFAULT_FONT_FAMILY, 12.0, 16.0),
+            200.0,
+            false,
+        ));
+        let mono = engine.shape_text(&TextLayoutKey::new(
+            "012345",
+            TextStyle::new(DEFAULT_MONOSPACE_FONT_FAMILY, 12.0, 16.0),
+            200.0,
+            false,
+        ));
+
+        assert!(!sans.runs.is_empty());
+        assert!(
+            sans.runs
+                .iter()
+                .all(|run| run.font.data.data() == fonts::INTER_VARIABLE)
+        );
+        assert!(!mono.runs.is_empty());
+        assert!(
+            mono.runs
+                .iter()
+                .all(|run| run.font.data.data() == fonts::GEIST_MONO_VARIABLE)
+        );
     }
 
     #[test]
@@ -1566,5 +1683,25 @@ mod tests {
         assert_eq!(state.text, "a");
         assert!(state.redo());
         assert_eq!(state.text, "ab");
+    }
+
+    fn query_font_bytes<'a>(
+        engine: &mut CosmicTextEngine,
+        families: &'a [fontdb::Family<'a>],
+    ) -> Vec<u8> {
+        let id = engine
+            .font_system
+            .db()
+            .query(&fontdb::Query {
+                families,
+                ..fontdb::Query::default()
+            })
+            .expect("font query resolves");
+        let weight = engine.font_system.db().face(id).expect("font face").weight;
+        let font = engine
+            .font_system
+            .get_font(id, weight)
+            .expect("font object");
+        font.data().to_vec()
     }
 }
