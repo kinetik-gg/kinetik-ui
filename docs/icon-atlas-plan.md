@@ -55,3 +55,17 @@ guaranteed single draw call.
   and destination sizing.
 - The offline generator is separate from runtime crates and can be run manually
   or in build tooling without affecting ordinary UI frame cost.
+
+## Implemented Slice
+
+- The showcase editor consumes a 28-icon `regular` Phosphor subset from the
+  official `@phosphor-icons/core` package.
+- `tools/icon-atlas/generate-phosphor-icons.mjs` rasterizes SVGs to white RGBA8,
+  packs a guttered atlas, and emits `manifest.json`, `atlas.rgba`, `atlas.png`,
+  and Rust metadata.
+- Rebuild with `npm --prefix tools/icon-atlas ci --ignore-scripts` followed by
+  `npm --prefix tools/icon-atlas run generate:phosphor`; the tool lockfile pins
+  `@phosphor-icons/core` to 2.1.1.
+- Runtime tinting happens through `ImagePrimitive::tint`; the renderer caches
+  tinted atlas payloads by `(ImageId, tint)` so a color variant is uploaded once
+  and reused across all atlas regions.

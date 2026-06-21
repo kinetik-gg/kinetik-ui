@@ -1,0 +1,388 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "package": "@phosphor-icons/core",
+    "version": "2.1.1",
+    "repository": "https://github.com/phosphor-icons/phosphor-core.git",
+    "license": "MIT",
+    "weight": "regular",
+    "pathLayout": "assets/regular/<icon>.svg"
+  },
+  "raster": {
+    "format": "rgba8",
+    "iconSize": 32,
+    "padding": 1,
+    "cellSize": 34,
+    "columns": 7,
+    "rows": 4,
+    "atlasWidth": 238,
+    "atlasHeight": 136,
+    "colorModel": "white-alpha mask; runtime tint applies color"
+  },
+  "icons": [
+    {
+      "idRaw": 7001,
+      "symbol": "ICON_CURSOR",
+      "alias": "cursor",
+      "sourceName": "cursor",
+      "sourceSvg": "assets/regular/cursor.svg",
+      "sourceRect": {
+        "x": 1,
+        "y": 1,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7002,
+      "symbol": "ICON_MOVE",
+      "alias": "move",
+      "sourceName": "arrows-out-cardinal",
+      "sourceSvg": "assets/regular/arrows-out-cardinal.svg",
+      "sourceRect": {
+        "x": 35,
+        "y": 1,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7003,
+      "symbol": "ICON_TRANSFORM",
+      "alias": "transform",
+      "sourceName": "bounding-box",
+      "sourceSvg": "assets/regular/bounding-box.svg",
+      "sourceRect": {
+        "x": 69,
+        "y": 1,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7004,
+      "symbol": "ICON_ROTATE",
+      "alias": "rotate",
+      "sourceName": "arrow-clockwise",
+      "sourceSvg": "assets/regular/arrow-clockwise.svg",
+      "sourceRect": {
+        "x": 103,
+        "y": 1,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7005,
+      "symbol": "ICON_CUBE",
+      "alias": "cube",
+      "sourceName": "cube",
+      "sourceSvg": "assets/regular/cube.svg",
+      "sourceRect": {
+        "x": 137,
+        "y": 1,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7006,
+      "symbol": "ICON_PLAY",
+      "alias": "play",
+      "sourceName": "play",
+      "sourceSvg": "assets/regular/play.svg",
+      "sourceRect": {
+        "x": 171,
+        "y": 1,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7007,
+      "symbol": "ICON_PAUSE",
+      "alias": "pause",
+      "sourceName": "pause",
+      "sourceSvg": "assets/regular/pause.svg",
+      "sourceRect": {
+        "x": 205,
+        "y": 1,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7008,
+      "symbol": "ICON_STOP",
+      "alias": "stop",
+      "sourceName": "stop",
+      "sourceSvg": "assets/regular/stop.svg",
+      "sourceRect": {
+        "x": 1,
+        "y": 35,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7009,
+      "symbol": "ICON_PLUS",
+      "alias": "plus",
+      "sourceName": "plus",
+      "sourceSvg": "assets/regular/plus.svg",
+      "sourceRect": {
+        "x": 35,
+        "y": 35,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7010,
+      "symbol": "ICON_SEARCH",
+      "alias": "search",
+      "sourceName": "magnifying-glass",
+      "sourceSvg": "assets/regular/magnifying-glass.svg",
+      "sourceRect": {
+        "x": 69,
+        "y": 35,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7011,
+      "symbol": "ICON_ARCHIVE",
+      "alias": "archive",
+      "sourceName": "archive",
+      "sourceSvg": "assets/regular/archive.svg",
+      "sourceRect": {
+        "x": 103,
+        "y": 35,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7012,
+      "symbol": "ICON_FILE",
+      "alias": "file",
+      "sourceName": "file",
+      "sourceSvg": "assets/regular/file.svg",
+      "sourceRect": {
+        "x": 137,
+        "y": 35,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7013,
+      "symbol": "ICON_IMAGE",
+      "alias": "image",
+      "sourceName": "image",
+      "sourceSvg": "assets/regular/image.svg",
+      "sourceRect": {
+        "x": 171,
+        "y": 35,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7014,
+      "symbol": "ICON_GEAR",
+      "alias": "gear",
+      "sourceName": "gear",
+      "sourceSvg": "assets/regular/gear.svg",
+      "sourceRect": {
+        "x": 205,
+        "y": 35,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7015,
+      "symbol": "ICON_GRID",
+      "alias": "grid",
+      "sourceName": "grid-four",
+      "sourceSvg": "assets/regular/grid-four.svg",
+      "sourceRect": {
+        "x": 1,
+        "y": 69,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7016,
+      "symbol": "ICON_LAYERS",
+      "alias": "layers",
+      "sourceName": "stack",
+      "sourceSvg": "assets/regular/stack.svg",
+      "sourceRect": {
+        "x": 35,
+        "y": 69,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7017,
+      "symbol": "ICON_CODE",
+      "alias": "code",
+      "sourceName": "code",
+      "sourceSvg": "assets/regular/code.svg",
+      "sourceRect": {
+        "x": 69,
+        "y": 69,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7018,
+      "symbol": "ICON_BOX",
+      "alias": "package",
+      "sourceName": "package",
+      "sourceSvg": "assets/regular/package.svg",
+      "sourceRect": {
+        "x": 103,
+        "y": 69,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7019,
+      "symbol": "ICON_ROCKET",
+      "alias": "rocket",
+      "sourceName": "rocket",
+      "sourceSvg": "assets/regular/rocket.svg",
+      "sourceRect": {
+        "x": 137,
+        "y": 69,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7020,
+      "symbol": "ICON_DOWNLOAD",
+      "alias": "download",
+      "sourceName": "download",
+      "sourceSvg": "assets/regular/download.svg",
+      "sourceRect": {
+        "x": 171,
+        "y": 69,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7021,
+      "symbol": "ICON_DOTS",
+      "alias": "more",
+      "sourceName": "dots-three",
+      "sourceSvg": "assets/regular/dots-three.svg",
+      "sourceRect": {
+        "x": 205,
+        "y": 69,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7022,
+      "symbol": "ICON_CHEVRON",
+      "alias": "chevron-right",
+      "sourceName": "caret-right",
+      "sourceSvg": "assets/regular/caret-right.svg",
+      "sourceRect": {
+        "x": 1,
+        "y": 103,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7023,
+      "symbol": "ICON_CARET",
+      "alias": "caret-down",
+      "sourceName": "caret-down",
+      "sourceSvg": "assets/regular/caret-down.svg",
+      "sourceRect": {
+        "x": 35,
+        "y": 103,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7024,
+      "symbol": "ICON_RESET",
+      "alias": "reset",
+      "sourceName": "arrow-counter-clockwise",
+      "sourceSvg": "assets/regular/arrow-counter-clockwise.svg",
+      "sourceRect": {
+        "x": 69,
+        "y": 103,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7025,
+      "symbol": "ICON_COMPONENT",
+      "alias": "component",
+      "sourceName": "circles-four",
+      "sourceSvg": "assets/regular/circles-four.svg",
+      "sourceRect": {
+        "x": 103,
+        "y": 103,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7026,
+      "symbol": "ICON_TOKENS",
+      "alias": "tokens",
+      "sourceName": "swatches",
+      "sourceSvg": "assets/regular/swatches.svg",
+      "sourceRect": {
+        "x": 137,
+        "y": 103,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7027,
+      "symbol": "ICON_EYE",
+      "alias": "visibility",
+      "sourceName": "eye",
+      "sourceSvg": "assets/regular/eye.svg",
+      "sourceRect": {
+        "x": 171,
+        "y": 103,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "idRaw": 7028,
+      "symbol": "ICON_CROSSHAIR",
+      "alias": "crosshair",
+      "sourceName": "crosshair",
+      "sourceSvg": "assets/regular/crosshair.svg",
+      "sourceRect": {
+        "x": 205,
+        "y": 103,
+        "width": 32,
+        "height": 32
+      }
+    }
+  ]
+}

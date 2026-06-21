@@ -520,6 +520,8 @@ pub struct ImagePrimitive {
     pub image: ImageId,
     /// Destination rectangle.
     pub rect: Rect,
+    /// Optional color multiplied into the image payload at render time.
+    pub tint: Option<Color>,
 }
 
 /// Texture draw command.
@@ -767,6 +769,7 @@ mod tests {
         let image = Primitive::Image(ImagePrimitive {
             image: ImageId::from_raw(1),
             rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            tint: None,
         });
         let texture = Primitive::Texture(TexturePrimitive {
             texture: TextureId::from_raw(2),
