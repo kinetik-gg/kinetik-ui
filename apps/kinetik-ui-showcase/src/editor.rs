@@ -8,9 +8,8 @@
 
 use kinetik_ui::core::{
     ActionDescriptor, ActionSource, Axis, Brush, ClipId, Color, CornerRadius, CursorShape, ImageId,
-    Key, KeyState, LinePrimitive, Modifiers, PathElement, PathPrimitive, PlatformRequest, Point,
-    Primitive, Rect, RectPrimitive, RepaintRequest, ScaleFactor, Shortcut, Size, Stroke,
-    TextPrimitive, TextureId, Vec2,
+    ImagePrimitive, Key, KeyState, LinePrimitive, Modifiers, PlatformRequest, Point, Primitive,
+    Rect, RectPrimitive, RepaintRequest, Shortcut, Size, Stroke, TextPrimitive, TextureId, Vec2,
 };
 use kinetik_ui::render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
@@ -46,12 +45,22 @@ const ACTION_TOOL_SCALE: &str = "editor.tool.scale";
 const VIEWPORT_TEXTURE: TextureId = TextureId::from_raw(9_001);
 const VIEWPORT_SIZE: Size = Size::new(1280.0, 720.0);
 
-const ICON_ATLAS: ImageId = ImageId::from_raw(7_000);
-const ICON_SIZE: u32 = 32;
-const ICON_ATLAS_PADDING: u32 = 1;
-const ICON_ATLAS_CELL_SIZE: u32 = ICON_SIZE + ICON_ATLAS_PADDING * 2;
-const ICON_ATLAS_COLUMNS: u32 = 7;
-const ICON_ATLAS_ROWS: u32 = 4;
+#[allow(dead_code, missing_docs)]
+mod phosphor_icons {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/icons/phosphor/phosphor_icons.rs"
+    ));
+}
+
+use phosphor_icons::{
+    ICON_ARCHIVE, ICON_ATLAS, ICON_ATLAS_BYTES, ICON_ATLAS_HEIGHT, ICON_ATLAS_WIDTH, ICON_BOX,
+    ICON_CARET, ICON_CODE, ICON_COMPONENT, ICON_CROSSHAIR, ICON_CUBE, ICON_CURSOR, ICON_DOTS,
+    ICON_DOWNLOAD, ICON_ENTRIES, ICON_EYE, ICON_GEAR, ICON_GRID, ICON_IMAGE, ICON_LAYERS,
+    ICON_MOVE, ICON_PAUSE, ICON_PLAY, ICON_PLUS, ICON_RESET, ICON_ROCKET, ICON_ROTATE, ICON_SEARCH,
+    ICON_SIZE, ICON_STOP, ICON_TOKENS, ICON_TRANSFORM,
+};
+
 const DENSE_ICON_SIZE: f32 = 16.0;
 const TOOLBAR_Y: f32 = 32.0;
 const TOOLBAR_BUTTON_SIZE: f32 = 34.0;
@@ -59,35 +68,6 @@ const TOOLBAR_STRIDE: f32 = 38.0;
 const TOOLBAR_ICON_SIZE: f32 = ICON_SIZE as f32;
 const WORKSPACE_TOP: f32 = 76.0;
 const ASSET_ICON_SIZE: f32 = 24.0;
-
-const ICON_CURSOR: ImageId = ImageId::from_raw(7_001);
-const ICON_MOVE: ImageId = ImageId::from_raw(7_002);
-const ICON_TRANSFORM: ImageId = ImageId::from_raw(7_003);
-const ICON_ROTATE: ImageId = ImageId::from_raw(7_004);
-const ICON_CUBE: ImageId = ImageId::from_raw(7_005);
-const ICON_PLAY: ImageId = ImageId::from_raw(7_006);
-const ICON_PAUSE: ImageId = ImageId::from_raw(7_007);
-const ICON_STOP: ImageId = ImageId::from_raw(7_008);
-const ICON_PLUS: ImageId = ImageId::from_raw(7_009);
-const ICON_SEARCH: ImageId = ImageId::from_raw(7_010);
-const ICON_ARCHIVE: ImageId = ImageId::from_raw(7_011);
-const ICON_FILE: ImageId = ImageId::from_raw(7_012);
-const ICON_IMAGE: ImageId = ImageId::from_raw(7_013);
-const ICON_GEAR: ImageId = ImageId::from_raw(7_014);
-const ICON_GRID: ImageId = ImageId::from_raw(7_015);
-const ICON_LAYERS: ImageId = ImageId::from_raw(7_016);
-const ICON_CODE: ImageId = ImageId::from_raw(7_017);
-const ICON_BOX: ImageId = ImageId::from_raw(7_018);
-const ICON_ROCKET: ImageId = ImageId::from_raw(7_019);
-const ICON_DOWNLOAD: ImageId = ImageId::from_raw(7_020);
-const ICON_DOTS: ImageId = ImageId::from_raw(7_021);
-const ICON_CHEVRON: ImageId = ImageId::from_raw(7_022);
-const ICON_CARET: ImageId = ImageId::from_raw(7_023);
-const ICON_RESET: ImageId = ImageId::from_raw(7_024);
-const ICON_COMPONENT: ImageId = ImageId::from_raw(7_025);
-const ICON_TOKENS: ImageId = ImageId::from_raw(7_026);
-const ICON_EYE: ImageId = ImageId::from_raw(7_027);
-const ICON_CROSSHAIR: ImageId = ImageId::from_raw(7_028);
 
 const FRAME_SCENE: FrameId = FrameId::from_raw(1);
 const FRAME_ASSETS: FrameId = FrameId::from_raw(2);
@@ -101,68 +81,6 @@ const PANEL_VIEWPORT: PanelId = PanelId::from_raw(3);
 const PANEL_CONSOLE: PanelId = PanelId::from_raw(4);
 const PANEL_JOBS: PanelId = PanelId::from_raw(5);
 const PANEL_INSPECTOR: PanelId = PanelId::from_raw(6);
-
-const ICON_ASSETS: &[(ImageId, &[u8])] = &[
-    (
-        ICON_CURSOR,
-        include_bytes!("../assets/icons/cursor-arrow.rgba"),
-    ),
-    (ICON_MOVE, include_bytes!("../assets/icons/move.rgba")),
-    (
-        ICON_TRANSFORM,
-        include_bytes!("../assets/icons/transform.rgba"),
-    ),
-    (
-        ICON_ROTATE,
-        include_bytes!("../assets/icons/rotate-counter-clockwise.rgba"),
-    ),
-    (ICON_CUBE, include_bytes!("../assets/icons/cube.rgba")),
-    (ICON_PLAY, include_bytes!("../assets/icons/play.rgba")),
-    (ICON_PAUSE, include_bytes!("../assets/icons/pause.rgba")),
-    (ICON_STOP, include_bytes!("../assets/icons/stop.rgba")),
-    (ICON_PLUS, include_bytes!("../assets/icons/plus.rgba")),
-    (
-        ICON_SEARCH,
-        include_bytes!("../assets/icons/magnifying-glass.rgba"),
-    ),
-    (ICON_ARCHIVE, include_bytes!("../assets/icons/archive.rgba")),
-    (ICON_FILE, include_bytes!("../assets/icons/file.rgba")),
-    (ICON_IMAGE, include_bytes!("../assets/icons/image.rgba")),
-    (ICON_GEAR, include_bytes!("../assets/icons/gear.rgba")),
-    (ICON_GRID, include_bytes!("../assets/icons/view-grid.rgba")),
-    (ICON_LAYERS, include_bytes!("../assets/icons/layers.rgba")),
-    (ICON_CODE, include_bytes!("../assets/icons/code.rgba")),
-    (ICON_BOX, include_bytes!("../assets/icons/box.rgba")),
-    (ICON_ROCKET, include_bytes!("../assets/icons/rocket.rgba")),
-    (
-        ICON_DOWNLOAD,
-        include_bytes!("../assets/icons/download.rgba"),
-    ),
-    (
-        ICON_DOTS,
-        include_bytes!("../assets/icons/dots-horizontal.rgba"),
-    ),
-    (
-        ICON_CHEVRON,
-        include_bytes!("../assets/icons/chevron-right.rgba"),
-    ),
-    (
-        ICON_CARET,
-        include_bytes!("../assets/icons/caret-down.rgba"),
-    ),
-    (ICON_RESET, include_bytes!("../assets/icons/reset.rgba")),
-    (
-        ICON_COMPONENT,
-        include_bytes!("../assets/icons/component-1.rgba"),
-    ),
-    (ICON_TOKENS, include_bytes!("../assets/icons/tokens.rgba")),
-    (ICON_EYE, include_bytes!("../assets/icons/eye-open.rgba")),
-    (
-        ICON_CROSSHAIR,
-        include_bytes!("../assets/icons/crosshair-2.rgba"),
-    ),
-];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EditorTool {
     Select,
@@ -251,6 +169,34 @@ impl ToolbarIcon {
             Self::Cube => 21,
             Self::Archive => 22,
             Self::Box => 23,
+        }
+    }
+
+    const fn image(self) -> ImageId {
+        match self {
+            Self::Select => ICON_CURSOR,
+            Self::Move => ICON_MOVE,
+            Self::Rotate => ICON_ROTATE,
+            Self::Scale => ICON_TRANSFORM,
+            Self::Grid => ICON_GRID,
+            Self::Crosshair => ICON_CROSSHAIR,
+            Self::Reset => ICON_RESET,
+            Self::Play => ICON_PLAY,
+            Self::Pause => ICON_PAUSE,
+            Self::Stop => ICON_STOP,
+            Self::Rocket => ICON_ROCKET,
+            Self::Download => ICON_DOWNLOAD,
+            Self::Plus => ICON_PLUS,
+            Self::Dots => ICON_DOTS,
+            Self::Search => ICON_SEARCH,
+            Self::Gear => ICON_GEAR,
+            Self::Layers => ICON_LAYERS,
+            Self::Caret => ICON_CARET,
+            Self::Eye => ICON_EYE,
+            Self::Component => ICON_COMPONENT,
+            Self::Cube => ICON_CUBE,
+            Self::Archive => ICON_ARCHIVE,
+            Self::Box => ICON_BOX,
         }
     }
 }
@@ -1102,7 +1048,7 @@ impl EditorShowcase {
             13.0,
             rgb(222, 225, 230),
         );
-        vector_icon(
+        draw_icon(
             ui,
             header.right_strip(24.0),
             ToolbarIcon::Dots,
@@ -1162,7 +1108,7 @@ impl EditorShowcase {
                             rgb(176, 181, 188),
                         );
                     }
-                    vector_icon(
+                    draw_icon(
                         ui,
                         Rect::new(
                             row_rect.content_rect.x + 17.0,
@@ -1195,7 +1141,7 @@ impl EditorShowcase {
             &mut self.asset_filter,
             false,
         );
-        vector_icon(
+        draw_icon(
             ui,
             Rect::new(search.x + 5.0, search.y + 5.0, 18.0, 18.0),
             ToolbarIcon::Search,
@@ -1253,7 +1199,7 @@ impl EditorShowcase {
                         self.status = format!("Asset selected: {}", asset.name);
                         ui.request_repaint(RepaintRequest::NextFrame);
                     }
-                    vector_icon(
+                    draw_icon(
                         ui,
                         Rect::new(item.rect.x + 8.0, item.rect.y + 8.0, 24.0, 24.0),
                         asset_icon(asset.icon),
@@ -1459,7 +1405,7 @@ impl EditorShowcase {
         rect(ui, body, rgb(24, 25, 27), None);
         let header = Rect::new(body.x + 8.0, body.y + 8.0, body.width - 16.0, 34.0);
         rect(ui, header, rgb(37, 39, 43), Some(rgb(55, 58, 64)));
-        vector_icon(
+        draw_icon(
             ui,
             Rect::new(header.x + 7.0, header.y + 7.0, 20.0, 20.0),
             scene_icon(self.selected_node),
@@ -1473,7 +1419,7 @@ impl EditorShowcase {
             13.0,
             rgb(231, 233, 237),
         );
-        vector_icon(
+        draw_icon(
             ui,
             Rect::new(header.max_x() - 27.0, header.y + 7.0, 20.0, 20.0),
             ToolbarIcon::Gear,
@@ -1740,60 +1686,32 @@ pub fn register_resources(resources: &mut RenderResources) {
     if let Some(atlas) = icon_atlas_image() {
         resources.register_image(ImageResource {
             id: ICON_ATLAS,
-            size: Size::new(
-                (ICON_ATLAS_COLUMNS * ICON_ATLAS_CELL_SIZE) as f32,
-                (ICON_ATLAS_ROWS * ICON_ATLAS_CELL_SIZE) as f32,
-            ),
+            size: Size::new(ICON_ATLAS_WIDTH as f32, ICON_ATLAS_HEIGHT as f32),
             sampling: RenderImageSampling::UiIcon,
             pixels: Some(atlas),
             atlas_region: None,
         });
     }
-    for (index, (id, _)) in ICON_ASSETS.iter().enumerate() {
-        let column = index as u32 % ICON_ATLAS_COLUMNS;
-        let row = index as u32 / ICON_ATLAS_COLUMNS;
+    for entry in ICON_ENTRIES {
         resources.register_image(ImageResource {
-            id: *id,
+            id: entry.image,
             size: Size::new(ICON_SIZE as f32, ICON_SIZE as f32),
             sampling: RenderImageSampling::UiIcon,
             pixels: None,
             atlas_region: Some(ImageAtlasRegion {
                 atlas: ICON_ATLAS,
-                source: Rect::new(
-                    (column * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING) as f32,
-                    (row * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING) as f32,
-                    ICON_SIZE as f32,
-                    ICON_SIZE as f32,
-                ),
+                source: entry.source,
             }),
         });
     }
 }
 
 fn icon_atlas_image() -> Option<RenderImage> {
-    let width = ICON_ATLAS_COLUMNS * ICON_ATLAS_CELL_SIZE;
-    let height = ICON_ATLAS_ROWS * ICON_ATLAS_CELL_SIZE;
-    let mut data = vec![0; (width * height * 4) as usize];
-    for (index, (_, bytes)) in ICON_ASSETS.iter().enumerate() {
-        if bytes.len() != (ICON_SIZE * ICON_SIZE * 4) as usize {
-            return None;
-        }
-        let column = index as u32 % ICON_ATLAS_COLUMNS;
-        let row = index as u32 / ICON_ATLAS_COLUMNS;
-        let x0 = column * ICON_ATLAS_CELL_SIZE;
-        let y0 = row * ICON_ATLAS_CELL_SIZE;
-        for y in 0..ICON_ATLAS_CELL_SIZE {
-            let source_y = y.saturating_sub(ICON_ATLAS_PADDING).min(ICON_SIZE - 1);
-            for x in 0..ICON_ATLAS_CELL_SIZE {
-                let source_x = x.saturating_sub(ICON_ATLAS_PADDING).min(ICON_SIZE - 1);
-                let source_start = ((source_y * ICON_SIZE + source_x) * 4) as usize;
-                let dest_start = (((y0 + y) * width + x0 + x) * 4) as usize;
-                data[dest_start..dest_start + 4]
-                    .copy_from_slice(&bytes[source_start..source_start + 4]);
-            }
-        }
-    }
-    RenderImage::rgba8(width, height, data)
+    RenderImage::rgba8(
+        ICON_ATLAS_WIDTH,
+        ICON_ATLAS_HEIGHT,
+        ICON_ATLAS_BYTES.to_vec(),
+    )
 }
 
 fn menu_header_rects() -> [(EditorMenuKind, &'static str, Rect); 7] {
@@ -2089,16 +2007,15 @@ fn run_toolbar_buttons(
 #[allow(clippy::float_cmp, clippy::items_after_test_module)]
 mod tests {
     use super::{
-        EditorMenuKind, EditorShowcase, EditorTool, FRAME_BOTTOM, FRAME_VIEWPORT, ICON_ASSETS,
-        ICON_ATLAS, ICON_ATLAS_CELL_SIZE, ICON_ATLAS_PADDING, ICON_CROSSHAIR, ICON_SIZE,
-        PANEL_JOBS, TOOLBAR_BUTTON_SIZE, TOOLBAR_STRIDE, TOOLBAR_Y, VIEWPORT_SIZE, WORKSPACE_TOP,
-        frame_tab_rects, icon_atlas_image, inspector_label_width, item_id, register_resources, rgb,
-        rgba, snap_icon_point_to_scale, snap_icon_rect_to_scale,
+        EditorMenuKind, EditorShowcase, EditorTool, FRAME_BOTTOM, FRAME_VIEWPORT, ICON_ATLAS,
+        ICON_CROSSHAIR, ICON_SIZE, PANEL_JOBS, TOOLBAR_BUTTON_SIZE, TOOLBAR_STRIDE, TOOLBAR_Y,
+        VIEWPORT_SIZE, WORKSPACE_TOP, frame_tab_rects, icon_atlas_image, inspector_label_width,
+        item_id, phosphor_icons, register_resources, rgb, rgba,
     };
     use kinetik_ui::core::{
-        Brush, CursorShape, FrameContext, PathElement, PhysicalSize, PlatformRequest, Point,
-        PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, ScaleFactor,
-        SemanticRole, Size, TimeInfo, UiInput, UiMemory, ViewportInfo, default_dark_theme,
+        Brush, CursorShape, FrameContext, PhysicalSize, PlatformRequest, Point, PointerButtonState,
+        PointerInput, Primitive, Rect, RepaintRequest, ScaleFactor, SemanticRole, Size, TimeInfo,
+        UiInput, UiMemory, ViewportInfo, default_dark_theme,
     };
     use kinetik_ui::render::RenderResources;
     use kinetik_ui::widgets::{Ui, ViewportSurface, solve_dock_layout};
@@ -2358,29 +2275,51 @@ mod tests {
     #[test]
     fn icon_atlas_duplicates_edge_pixels_into_gutters() {
         let atlas = icon_atlas_image().expect("atlas");
-        let first_icon = ICON_ASSETS[0].1;
-        let top_left = atlas_pixel(&atlas.data, atlas.width, 0, 0);
-        let inset_top_left = atlas_pixel(
+        let first = phosphor_icons::ICON_ENTRIES[0].source;
+        let left_gutter = atlas_pixel(
             &atlas.data,
             atlas.width,
-            ICON_ATLAS_PADDING,
-            ICON_ATLAS_PADDING,
+            first.x as u32 - phosphor_icons::ICON_ATLAS_PADDING,
+            first.y as u32,
         );
-        let bottom_right = atlas_pixel(
+        let first_inner = atlas_pixel(&atlas.data, atlas.width, first.x as u32, first.y as u32);
+        let bottom_gutter = atlas_pixel(
             &atlas.data,
             atlas.width,
-            ICON_ATLAS_CELL_SIZE - 1,
-            ICON_ATLAS_CELL_SIZE - 1,
+            first.max_x() as u32,
+            first.max_y() as u32,
+        );
+        let bottom_inner = atlas_pixel(
+            &atlas.data,
+            atlas.width,
+            first.max_x() as u32 - 1,
+            first.max_y() as u32 - 1,
         );
 
-        assert_eq!(atlas.width, 238);
-        assert_eq!(atlas.height, 136);
-        assert_eq!(top_left, &first_icon[0..4]);
-        assert_eq!(inset_top_left, &first_icon[0..4]);
-        assert_eq!(
-            bottom_right,
-            &first_icon[(((ICON_SIZE - 1) * ICON_SIZE + ICON_SIZE - 1) * 4) as usize..][..4]
-        );
+        assert_eq!(atlas.width, phosphor_icons::ICON_ATLAS_WIDTH);
+        assert_eq!(atlas.height, phosphor_icons::ICON_ATLAS_HEIGHT);
+        assert_eq!(left_gutter, first_inner);
+        assert_eq!(bottom_gutter, bottom_inner);
+    }
+
+    #[test]
+    fn icon_manifest_entries_register_as_atlas_regions() {
+        let mut resources = RenderResources::new();
+
+        register_resources(&mut resources);
+
+        for entry in phosphor_icons::ICON_ENTRIES {
+            let resource = resources.image(entry.image).expect(entry.symbol);
+            let region = resource.atlas_region.expect("icon atlas region");
+
+            assert_eq!(resource.size, Size::new(ICON_SIZE as f32, ICON_SIZE as f32));
+            assert_eq!(
+                resource.sampling,
+                kinetik_ui::render::RenderImageSampling::UiIcon
+            );
+            assert_eq!(region.atlas, ICON_ATLAS);
+            assert_eq!(region.source, entry.source, "{}", entry.source_name);
+        }
     }
 
     #[test]
@@ -2393,22 +2332,19 @@ mod tests {
             .image(ICON_CROSSHAIR)
             .and_then(|resource| resource.atlas_region)
             .expect("icon region");
+        let entry = phosphor_icons::ICON_ENTRIES
+            .iter()
+            .find(|entry| entry.image == ICON_CROSSHAIR)
+            .expect("crosshair entry");
 
         assert_eq!(region.source.width, ICON_SIZE as f32);
         assert_eq!(region.source.height, ICON_SIZE as f32);
-        assert_eq!(
-            region.source,
-            Rect::new(
-                (6 * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING) as f32,
-                (3 * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING) as f32,
-                ICON_SIZE as f32,
-                ICON_SIZE as f32,
-            )
-        );
+        assert_eq!(region.source, entry.source);
+        assert_eq!(entry.source_name, "crosshair");
     }
 
     #[test]
-    fn editor_uses_vector_primitives_for_visible_editor_icons() {
+    fn editor_uses_phosphor_atlas_primitives_for_visible_editor_icons() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
         let context = editor_test_context(UiInput::default());
@@ -2424,18 +2360,15 @@ mod tests {
                 matches!(primitive, Primitive::Image(image) if is_editor_icon(image.image))
             })
             .count();
-        let vector_icon_count = output
-            .primitives
-            .iter()
-            .filter(|primitive| matches!(primitive, Primitive::Line(_) | Primitive::Path(_)))
-            .count();
 
-        assert_eq!(atlas_icon_count, 0);
-        assert!(vector_icon_count >= 24);
+        assert!(
+            atlas_icon_count >= 24,
+            "visible Phosphor icon count was {atlas_icon_count}"
+        );
     }
 
     #[test]
-    fn editor_toolbar_icons_use_vector_primitives_instead_of_bitmap_atlas() {
+    fn editor_toolbar_icons_use_tinted_bitmap_atlas() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
         let context = editor_test_context(UiInput::default());
@@ -2447,50 +2380,29 @@ mod tests {
         let toolbar_bitmap_icons = output
             .primitives
             .iter()
-            .filter(|primitive| {
-                matches!(
-                    primitive,
-                    Primitive::Image(image)
-                        if is_editor_icon(image.image)
-                            && (image.rect.y - (TOOLBAR_Y + 1.0)).abs() <= f32::EPSILON
-                )
-            })
-            .count();
-        let toolbar_vector_segments = output
-            .primitives
-            .iter()
-            .filter(|primitive| match primitive {
-                Primitive::Line(line) => {
-                    point_is_in_toolbar(line.from) || point_is_in_toolbar(line.to)
+            .filter_map(|primitive| match primitive {
+                Primitive::Image(image)
+                    if is_editor_icon(image.image) && point_is_in_toolbar(image.rect.center()) =>
+                {
+                    Some(image)
                 }
-                Primitive::Path(path) => path.elements.iter().any(|element| match element {
-                    PathElement::MoveTo(point) | PathElement::LineTo(point) => {
-                        point_is_in_toolbar(*point)
-                    }
-                    PathElement::QuadTo { ctrl, to } => {
-                        point_is_in_toolbar(*ctrl) || point_is_in_toolbar(*to)
-                    }
-                    PathElement::CubicTo { ctrl1, ctrl2, to } => {
-                        point_is_in_toolbar(*ctrl1)
-                            || point_is_in_toolbar(*ctrl2)
-                            || point_is_in_toolbar(*to)
-                    }
-                    PathElement::Close => false,
-                }),
-                _ => false,
+                _ => None,
             })
-            .count();
+            .collect::<Vec<_>>();
 
-        assert_eq!(toolbar_bitmap_icons, 0);
-        assert!(toolbar_vector_segments >= 12);
+        assert!(toolbar_bitmap_icons.len() >= 12);
+        assert!(
+            toolbar_bitmap_icons
+                .iter()
+                .all(|image| image.tint.is_some())
+        );
     }
 
     #[test]
-    fn editor_toolbar_vector_icons_emit_physical_pixel_snapped_points_at_fractional_dpi() {
+    fn editor_toolbar_atlas_icons_use_integer_logical_destinations() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
-        let scale_factor = ScaleFactor::new(1.25);
-        let context = editor_test_context_scaled(UiInput::default(), scale_factor);
+        let context = editor_test_context_scaled(UiInput::default(), ScaleFactor::new(1.25));
         let mut ui = Ui::begin_frame(context, &mut memory, &theme);
         let mut editor = EditorShowcase::new();
 
@@ -2499,42 +2411,23 @@ mod tests {
         let mut checked = 0;
 
         for primitive in &output.primitives {
-            match primitive {
-                Primitive::Line(line)
-                    if point_is_in_toolbar(line.from) || point_is_in_toolbar(line.to) =>
-                {
-                    assert_point_snapped_to_scale(line.from, scale_factor);
-                    assert_point_snapped_to_scale(line.to, scale_factor);
-                    checked += 2;
-                }
-                Primitive::Path(path) => {
-                    for point in path.elements.iter().filter_map(path_element_point) {
-                        if point_is_in_toolbar(point) {
-                            assert_point_snapped_to_scale(point, scale_factor);
-                            checked += 1;
-                        }
-                    }
-                }
-                _ => {}
+            let Primitive::Image(image) = primitive else {
+                continue;
+            };
+            if !is_editor_icon(image.image) || !point_is_in_toolbar(image.rect.center()) {
+                continue;
             }
+            assert_eq!(image.rect.x, image.rect.x.round());
+            assert_eq!(image.rect.y, image.rect.y.round());
+            assert_eq!(image.rect.width, ICON_SIZE as f32);
+            assert_eq!(image.rect.height, ICON_SIZE as f32);
+            checked += 1;
         }
 
-        assert!(checked >= 24);
+        assert!(checked >= 12);
     }
-
     #[test]
-    fn editor_icon_snap_helpers_align_points_and_rects_to_fractional_dpi() {
-        let scale_factor = ScaleFactor::new(1.25);
-        let point = snap_icon_point_to_scale(Point::new(12.48, 7.52), scale_factor);
-        let rect = snap_icon_rect_to_scale(Rect::new(4.32, 5.76, 12.48, 9.92), scale_factor);
-
-        assert_point_snapped_to_scale(point, scale_factor);
-        assert_point_snapped_to_scale(Point::new(rect.min_x(), rect.min_y()), scale_factor);
-        assert_point_snapped_to_scale(Point::new(rect.max_x(), rect.max_y()), scale_factor);
-    }
-
-    #[test]
-    fn editor_toolbar_vector_icons_preserve_icon_button_semantics() {
+    fn editor_toolbar_atlas_icons_preserve_icon_button_semantics() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
         let context = editor_test_context(UiInput::default());
@@ -2571,7 +2464,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_toolbar_vector_icons_request_hover_cursor() {
+    fn editor_toolbar_atlas_icons_request_hover_cursor() {
         let theme = default_dark_theme();
         let mut memory = UiMemory::new();
         let context = editor_test_context(pointer_input_at(20.0, 44.0, false, false, false));
@@ -2638,26 +2531,6 @@ mod tests {
 
     fn point_is_in_toolbar(point: Point) -> bool {
         point.y >= TOOLBAR_Y && point.y <= TOOLBAR_Y + TOOLBAR_BUTTON_SIZE
-    }
-
-    fn path_element_point(element: &PathElement) -> Option<Point> {
-        match *element {
-            PathElement::MoveTo(point) | PathElement::LineTo(point) => Some(point),
-            PathElement::QuadTo { to, .. } | PathElement::CubicTo { to, .. } => Some(to),
-            PathElement::Close => None,
-        }
-    }
-
-    fn assert_point_snapped_to_scale(point: Point, scale_factor: ScaleFactor) {
-        let scale = scale_factor.value() as f32;
-        assert!(
-            ((point.x * scale) - (point.x * scale).round()).abs() <= 0.001,
-            "x coordinate should be physical-pixel snapped: {point:?}"
-        );
-        assert!(
-            ((point.y * scale) - (point.y * scale).round()).abs() <= 0.001,
-            "y coordinate should be physical-pixel snapped: {point:?}"
-        );
     }
 
     fn pointer_input_at(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInput {
@@ -2969,7 +2842,7 @@ fn toolbar_icon_button_sized(
         icon_size,
         icon_size,
     );
-    draw_toolbar_icon(ui, icon_rect, icon, color);
+    draw_tinted_icon(ui, icon_rect, icon, icon_size, color);
 
     let mut semantics = icon_button_semantics(id, rect, label, disabled);
     semantics.state.focused = response.state.focused;
@@ -2983,371 +2856,11 @@ fn toolbar_icon_button_sized(
     response
 }
 
-fn draw_toolbar_icon(ui: &mut Ui<'_>, rect: Rect, icon: ToolbarIcon, color: Color) {
-    match icon {
-        ToolbarIcon::Select => {
-            icon_polyline(
-                ui,
-                rect,
-                &[
-                    (0.25, 0.14),
-                    (0.25, 0.78),
-                    (0.42, 0.62),
-                    (0.54, 0.88),
-                    (0.66, 0.82),
-                    (0.54, 0.57),
-                    (0.77, 0.57),
-                    (0.25, 0.14),
-                ],
-                color,
-                2.0,
-            );
-        }
-        ToolbarIcon::Move => {
-            icon_line(ui, rect, (0.5, 0.18), (0.5, 0.82), color, 2.0);
-            icon_line(ui, rect, (0.18, 0.5), (0.82, 0.5), color, 2.0);
-            icon_line(ui, rect, (0.5, 0.18), (0.39, 0.31), color, 2.0);
-            icon_line(ui, rect, (0.5, 0.18), (0.61, 0.31), color, 2.0);
-            icon_line(ui, rect, (0.5, 0.82), (0.39, 0.69), color, 2.0);
-            icon_line(ui, rect, (0.5, 0.82), (0.61, 0.69), color, 2.0);
-            icon_line(ui, rect, (0.18, 0.5), (0.31, 0.39), color, 2.0);
-            icon_line(ui, rect, (0.18, 0.5), (0.31, 0.61), color, 2.0);
-            icon_line(ui, rect, (0.82, 0.5), (0.69, 0.39), color, 2.0);
-            icon_line(ui, rect, (0.82, 0.5), (0.69, 0.61), color, 2.0);
-        }
-        ToolbarIcon::Rotate => {
-            icon_polyline(
-                ui,
-                rect,
-                &[
-                    (0.72, 0.26),
-                    (0.56, 0.18),
-                    (0.37, 0.23),
-                    (0.24, 0.38),
-                    (0.23, 0.58),
-                    (0.34, 0.75),
-                    (0.53, 0.82),
-                    (0.72, 0.76),
-                ],
-                color,
-                2.0,
-            );
-            icon_line(ui, rect, (0.72, 0.26), (0.72, 0.45), color, 2.0);
-            icon_line(ui, rect, (0.72, 0.26), (0.54, 0.28), color, 2.0);
-        }
-        ToolbarIcon::Scale => {
-            icon_rect(ui, rect, Rect::new(0.25, 0.25, 0.50, 0.50), color, 2.0);
-            icon_line(ui, rect, (0.25, 0.25), (0.13, 0.13), color, 2.0);
-            icon_line(ui, rect, (0.75, 0.25), (0.87, 0.13), color, 2.0);
-            icon_line(ui, rect, (0.25, 0.75), (0.13, 0.87), color, 2.0);
-            icon_line(ui, rect, (0.75, 0.75), (0.87, 0.87), color, 2.0);
-        }
-        ToolbarIcon::Grid => {
-            icon_rect(ui, rect, Rect::new(0.18, 0.18, 0.64, 0.64), color, 2.0);
-            icon_line(ui, rect, (0.39, 0.18), (0.39, 0.82), color, 2.0);
-            icon_line(ui, rect, (0.61, 0.18), (0.61, 0.82), color, 2.0);
-            icon_line(ui, rect, (0.18, 0.39), (0.82, 0.39), color, 2.0);
-            icon_line(ui, rect, (0.18, 0.61), (0.82, 0.61), color, 2.0);
-        }
-        ToolbarIcon::Crosshair => {
-            icon_line(ui, rect, (0.5, 0.14), (0.5, 0.34), color, 2.0);
-            icon_line(ui, rect, (0.5, 0.66), (0.5, 0.86), color, 2.0);
-            icon_line(ui, rect, (0.14, 0.5), (0.34, 0.5), color, 2.0);
-            icon_line(ui, rect, (0.66, 0.5), (0.86, 0.5), color, 2.0);
-            icon_rect(ui, rect, Rect::new(0.34, 0.34, 0.32, 0.32), color, 2.0);
-        }
-        ToolbarIcon::Reset => {
-            icon_polyline(
-                ui,
-                rect,
-                &[
-                    (0.72, 0.28),
-                    (0.55, 0.18),
-                    (0.34, 0.24),
-                    (0.22, 0.42),
-                    (0.26, 0.64),
-                    (0.43, 0.78),
-                    (0.65, 0.76),
-                    (0.78, 0.60),
-                ],
-                color,
-                2.0,
-            );
-            icon_line(ui, rect, (0.72, 0.28), (0.70, 0.47), color, 2.0);
-            icon_line(ui, rect, (0.72, 0.28), (0.53, 0.30), color, 2.0);
-        }
-        ToolbarIcon::Play => {
-            icon_filled_path(ui, rect, &[(0.34, 0.22), (0.34, 0.78), (0.78, 0.50)], color);
-        }
-        ToolbarIcon::Pause => {
-            icon_filled_rect(ui, rect, Rect::new(0.30, 0.23, 0.14, 0.54), color);
-            icon_filled_rect(ui, rect, Rect::new(0.56, 0.23, 0.14, 0.54), color);
-        }
-        ToolbarIcon::Stop => {
-            icon_filled_rect(ui, rect, Rect::new(0.30, 0.30, 0.40, 0.40), color);
-        }
-        ToolbarIcon::Rocket => {
-            icon_polyline(
-                ui,
-                rect,
-                &[
-                    (0.33, 0.72),
-                    (0.48, 0.34),
-                    (0.70, 0.18),
-                    (0.64, 0.45),
-                    (0.28, 0.66),
-                    (0.33, 0.72),
-                ],
-                color,
-                2.0,
-            );
-            icon_line(ui, rect, (0.30, 0.70), (0.18, 0.82), color, 2.0);
-            icon_line(ui, rect, (0.43, 0.77), (0.30, 0.90), color, 2.0);
-            icon_line(ui, rect, (0.48, 0.34), (0.64, 0.45), color, 2.0);
-        }
-        ToolbarIcon::Download => {
-            icon_line(ui, rect, (0.5, 0.18), (0.5, 0.64), color, 2.0);
-            icon_line(ui, rect, (0.31, 0.47), (0.5, 0.66), color, 2.0);
-            icon_line(ui, rect, (0.69, 0.47), (0.5, 0.66), color, 2.0);
-            icon_line(ui, rect, (0.24, 0.80), (0.76, 0.80), color, 2.0);
-        }
-        ToolbarIcon::Plus => {
-            icon_line(ui, rect, (0.5, 0.22), (0.5, 0.78), color, 2.0);
-            icon_line(ui, rect, (0.22, 0.5), (0.78, 0.5), color, 2.0);
-        }
-        ToolbarIcon::Dots => {
-            for x in [0.28, 0.5, 0.72] {
-                icon_filled_rect(ui, rect, Rect::new(x - 0.045, 0.455, 0.09, 0.09), color);
-            }
-        }
-        ToolbarIcon::Search => {
-            icon_polyline(
-                ui,
-                rect,
-                &[
-                    (0.42, 0.22),
-                    (0.56, 0.27),
-                    (0.63, 0.41),
-                    (0.58, 0.56),
-                    (0.44, 0.63),
-                    (0.29, 0.58),
-                    (0.22, 0.44),
-                    (0.27, 0.29),
-                    (0.42, 0.22),
-                ],
-                color,
-                2.0,
-            );
-            icon_line(ui, rect, (0.57, 0.57), (0.78, 0.78), color, 2.0);
-        }
-        ToolbarIcon::Gear => {
-            icon_rect(ui, rect, Rect::new(0.34, 0.34, 0.32, 0.32), color, 2.0);
-            icon_line(ui, rect, (0.5, 0.16), (0.5, 0.30), color, 2.0);
-            icon_line(ui, rect, (0.5, 0.70), (0.5, 0.84), color, 2.0);
-            icon_line(ui, rect, (0.16, 0.5), (0.30, 0.5), color, 2.0);
-            icon_line(ui, rect, (0.70, 0.5), (0.84, 0.5), color, 2.0);
-            icon_line(ui, rect, (0.26, 0.26), (0.36, 0.36), color, 2.0);
-            icon_line(ui, rect, (0.64, 0.64), (0.74, 0.74), color, 2.0);
-            icon_line(ui, rect, (0.74, 0.26), (0.64, 0.36), color, 2.0);
-            icon_line(ui, rect, (0.36, 0.64), (0.26, 0.74), color, 2.0);
-        }
-        ToolbarIcon::Layers => {
-            icon_filled_path(
-                ui,
-                rect,
-                &[(0.50, 0.16), (0.82, 0.34), (0.50, 0.52), (0.18, 0.34)],
-                color,
-            );
-            icon_polyline(
-                ui,
-                rect,
-                &[(0.18, 0.50), (0.50, 0.68), (0.82, 0.50)],
-                color,
-                2.0,
-            );
-            icon_polyline(
-                ui,
-                rect,
-                &[(0.18, 0.64), (0.50, 0.82), (0.82, 0.64)],
-                color,
-                2.0,
-            );
-        }
-        ToolbarIcon::Caret => {
-            icon_line(ui, rect, (0.28, 0.40), (0.50, 0.62), color, 2.0);
-            icon_line(ui, rect, (0.72, 0.40), (0.50, 0.62), color, 2.0);
-        }
-        ToolbarIcon::Eye => {
-            icon_polyline(
-                ui,
-                rect,
-                &[
-                    (0.15, 0.50),
-                    (0.32, 0.32),
-                    (0.50, 0.27),
-                    (0.68, 0.32),
-                    (0.85, 0.50),
-                    (0.68, 0.68),
-                    (0.50, 0.73),
-                    (0.32, 0.68),
-                    (0.15, 0.50),
-                ],
-                color,
-                2.0,
-            );
-            icon_filled_rect(ui, rect, Rect::new(0.45, 0.45, 0.10, 0.10), color);
-        }
-        ToolbarIcon::Component => {
-            for (x, y) in [(0.50, 0.18), (0.30, 0.50), (0.70, 0.50), (0.50, 0.82)] {
-                icon_filled_path(
-                    ui,
-                    rect,
-                    &[(x, y - 0.11), (x + 0.11, y), (x, y + 0.11), (x - 0.11, y)],
-                    color,
-                );
-            }
-        }
-        ToolbarIcon::Cube | ToolbarIcon::Box => {
-            icon_polyline(
-                ui,
-                rect,
-                &[
-                    (0.50, 0.16),
-                    (0.78, 0.31),
-                    (0.78, 0.66),
-                    (0.50, 0.84),
-                    (0.22, 0.66),
-                    (0.22, 0.31),
-                    (0.50, 0.16),
-                ],
-                color,
-                2.0,
-            );
-            icon_line(ui, rect, (0.22, 0.31), (0.50, 0.48), color, 2.0);
-            icon_line(ui, rect, (0.78, 0.31), (0.50, 0.48), color, 2.0);
-            icon_line(ui, rect, (0.50, 0.48), (0.50, 0.84), color, 2.0);
-        }
-        ToolbarIcon::Archive => {
-            icon_rect(ui, rect, Rect::new(0.22, 0.34, 0.56, 0.44), color, 2.0);
-            icon_line(ui, rect, (0.18, 0.26), (0.82, 0.26), color, 2.0);
-            icon_line(ui, rect, (0.40, 0.46), (0.60, 0.46), color, 2.0);
-        }
-    }
+fn draw_icon(ui: &mut Ui<'_>, bounds: Rect, icon: ToolbarIcon, size: f32) {
+    draw_tinted_icon(ui, bounds, icon, size, rgb(205, 212, 222));
 }
 
-fn icon_point(ui: &Ui<'_>, rect: Rect, x: f32, y: f32) -> Point {
-    snap_icon_point_to_scale(
-        Point::new(rect.x + rect.width * x, rect.y + rect.height * y),
-        ui.viewport().scale_factor,
-    )
-}
-
-fn icon_line(
-    ui: &mut Ui<'_>,
-    rect: Rect,
-    from: (f32, f32),
-    to: (f32, f32),
-    color: Color,
-    width: f32,
-) {
-    line(
-        ui,
-        icon_point(ui, rect, from.0, from.1),
-        icon_point(ui, rect, to.0, to.1),
-        color,
-        width,
-    );
-}
-
-fn icon_polyline(ui: &mut Ui<'_>, rect: Rect, points: &[(f32, f32)], color: Color, width: f32) {
-    for pair in points.windows(2) {
-        icon_line(ui, rect, pair[0], pair[1], color, width);
-    }
-}
-
-fn icon_rect(ui: &mut Ui<'_>, bounds: Rect, rect: Rect, color: Color, width: f32) {
-    let target = snap_icon_rect_to_scale(
-        Rect::new(
-            bounds.x + bounds.width * rect.x,
-            bounds.y + bounds.height * rect.y,
-            bounds.width * rect.width,
-            bounds.height * rect.height,
-        ),
-        ui.viewport().scale_factor,
-    );
-    ui.primitive(Primitive::Rect(RectPrimitive {
-        rect: target,
-        fill: None,
-        stroke: Some(Stroke::new(width, Brush::Solid(color))),
-        radius: CornerRadius::all(0.0),
-    }));
-}
-
-fn icon_filled_rect(ui: &mut Ui<'_>, bounds: Rect, rect: Rect, color: Color) {
-    let target = snap_icon_rect_to_scale(
-        Rect::new(
-            bounds.x + bounds.width * rect.x,
-            bounds.y + bounds.height * rect.y,
-            bounds.width * rect.width,
-            bounds.height * rect.height,
-        ),
-        ui.viewport().scale_factor,
-    );
-    rect_fill(ui, target, color, None, CornerRadius::all(0.0));
-}
-
-fn icon_filled_path(ui: &mut Ui<'_>, rect: Rect, points: &[(f32, f32)], color: Color) {
-    if let Some((first, rest)) = points.split_first() {
-        let mut elements = Vec::with_capacity(points.len() + 1);
-        elements.push(PathElement::MoveTo(icon_point(ui, rect, first.0, first.1)));
-        elements.extend(
-            rest.iter()
-                .map(|point| PathElement::LineTo(icon_point(ui, rect, point.0, point.1))),
-        );
-        elements.push(PathElement::Close);
-        ui.primitive(Primitive::Path(PathPrimitive::new(
-            elements,
-            Some(Brush::Solid(color)),
-            None,
-        )));
-    }
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn snap_icon_point_to_scale(point: Point, scale_factor: ScaleFactor) -> Point {
-    if !point.x.is_finite() || !point.y.is_finite() || !scale_factor.is_valid() {
-        return point;
-    }
-
-    let scale = scale_factor.value();
-    Point::new(
-        ((f64::from(point.x) * scale).round() / scale) as f32,
-        ((f64::from(point.y) * scale).round() / scale) as f32,
-    )
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn snap_icon_rect_to_scale(rect: Rect, scale_factor: ScaleFactor) -> Rect {
-    if !rect.x.is_finite()
-        || !rect.y.is_finite()
-        || !rect.width.is_finite()
-        || !rect.height.is_finite()
-        || !scale_factor.is_valid()
-    {
-        return rect;
-    }
-
-    let min = snap_icon_point_to_scale(Point::new(rect.min_x(), rect.min_y()), scale_factor);
-    let max = snap_icon_point_to_scale(Point::new(rect.max_x(), rect.max_y()), scale_factor);
-    Rect::new(
-        min.x,
-        min.y,
-        (max.x - min.x).max(0.0),
-        (max.y - min.y).max(0.0),
-    )
-}
-
-fn vector_icon(ui: &mut Ui<'_>, bounds: Rect, icon: ToolbarIcon, size: f32) {
+fn draw_tinted_icon(ui: &mut Ui<'_>, bounds: Rect, icon: ToolbarIcon, size: f32, color: Color) {
     let size = if size.is_finite() && size > 0.0 {
         size
     } else {
@@ -3359,9 +2872,12 @@ fn vector_icon(ui: &mut Ui<'_>, bounds: Rect, icon: ToolbarIcon, size: f32) {
         size,
         size,
     );
-    draw_toolbar_icon(ui, rect, icon, rgb(205, 212, 222));
+    ui.primitive(Primitive::Image(ImagePrimitive {
+        image: icon.image(),
+        rect,
+        tint: Some(color),
+    }));
 }
-
 fn text(ui: &mut Ui<'_>, x: f32, baseline: f32, value: &str, size: f32, fill: Color) {
     ui.primitive(Primitive::Text(TextPrimitive {
         layout: None,

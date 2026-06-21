@@ -2196,7 +2196,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_resources_match_emitted_media_and_vector_icons() {
+    fn editor_resources_match_emitted_media_and_phosphor_atlas_icons() {
         let app = ShowcaseApp::new();
         let resources = app.render_resources();
 
@@ -2221,10 +2221,21 @@ mod tests {
                 .and_then(|resource| resource.snapshot.as_ref())
                 .is_some_and(|snapshot| snapshot.width == 1280 && snapshot.height == 720)
         );
+        let icon_images = primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Image(image) if (7_001..=7_028).contains(&image.image.raw()) => {
+                    Some(image)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(icon_images.len() >= 24);
+        assert!(icon_images.iter().all(|image| image.tint.is_some()));
         assert!(
-            !primitives
+            icon_images
                 .iter()
-                .any(|primitive| matches!(primitive, Primitive::Image(_)))
+                .all(|image| resources.image(image.image).is_some())
         );
         assert!(
             primitives

@@ -1107,6 +1107,7 @@ pub fn image_icon_selectable_button_sized(
                 Primitive::Image(ImagePrimitive {
                     image,
                     rect: icon_rect,
+                    tint: None,
                 }),
             ],
         )
@@ -1664,7 +1665,14 @@ pub fn separator(rect: Rect, theme: &Theme) -> Primitive {
 /// Emits an image primitive for a static icon-like resource.
 #[must_use]
 pub fn image(rect: Rect, image: ImageId) -> WidgetOutput {
-    WidgetOutput::new(None, vec![Primitive::Image(ImagePrimitive { image, rect })])
+    WidgetOutput::new(
+        None,
+        vec![Primitive::Image(ImagePrimitive {
+            image,
+            rect,
+            tint: None,
+        })],
+    )
 }
 
 /// Returns semantics for a static label.
@@ -2449,7 +2457,10 @@ mod tests {
 
         assert_eq!(output.primitives.len(), 2);
         assert!(matches!(output.primitives[0], Primitive::Rect(_)));
-        assert!(matches!(output.primitives[1], Primitive::Image(_)));
+        let Primitive::Image(image) = output.primitives[1] else {
+            panic!("expected image primitive");
+        };
+        assert_eq!(image.tint, None);
         assert_eq!(output.semantics[0].role, SemanticRole::IconButton);
         assert_eq!(output.semantics[0].label.as_deref(), Some("Save project"));
     }

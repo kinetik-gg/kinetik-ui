@@ -24,6 +24,9 @@ use vello::{
     },
 };
 
+const MAX_TINTED_IMAGE_CACHE_ENTRIES: usize = 64;
+const MAX_CACHED_TINTED_IMAGE_BYTES: usize = 512 * 1024;
+
 /// Deterministic command produced before backend drawing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderCommand {
@@ -120,6 +123,8 @@ pub enum RenderCommandKind {
         image: ImageId,
         /// Destination rectangle.
         rect: Rect,
+        /// Optional color multiplied into the image payload.
+        tint: Option<Color>,
     },
     /// Texture resource draw command.
     Texture {
@@ -208,6 +213,9 @@ struct ImageSignature {
     data: Arc<[u8]>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PackedTint(u32);
+
 impl ImageSignature {
     fn matches(&self, image: &RenderImage) -> bool {
         self.width == image.width
@@ -221,12 +229,30 @@ impl ImageSignature {
 #[derive(Debug, Default)]
 struct ImageDataCache {
     images: HashMap<ImageId, CachedImageData>,
+    tinted_images: HashMap<(ImageId, PackedTint), CachedImageData>,
     textures: HashMap<TextureId, CachedImageData>,
 }
 
 impl ImageDataCache {
     fn image_data(&mut self, id: ImageId, image: &RenderImage) -> ImageData {
         cached_image_data(&mut self.images, id, image)
+    }
+
+    fn image_data_with_tint(
+        &mut self,
+        id: ImageId,
+        image: &RenderImage,
+        tint: Option<Color>,
+    ) -> ImageData {
+        let Some(tint) = tint else {
+            return self.image_data(id, image);
+        };
+        cached_tinted_image_data(
+            &mut self.tinted_images,
+            id,
+            image,
+            PackedTint::from_color(tint),
+        )
     }
 
     fn texture_data(&mut self, id: TextureId, image: &RenderImage) -> ImageData {
@@ -267,6 +293,37 @@ fn cached_image_data<Id: Eq + std::hash::Hash>(
     data
 }
 
+fn cached_tinted_image_data(
+    cache: &mut HashMap<(ImageId, PackedTint), CachedImageData>,
+    id: ImageId,
+    image: &RenderImage,
+    tint: PackedTint,
+) -> ImageData {
+    let signature = image_signature(image);
+    let key = (id, tint);
+    if let Some(cached) = cache.get(&key)
+        && cached.signature.matches(image)
+    {
+        return cached.data.clone();
+    }
+
+    let data = tinted_image_data_from_render_image(image, tint);
+    if image.data.len() > MAX_CACHED_TINTED_IMAGE_BYTES {
+        return data;
+    }
+    if cache.len() >= MAX_TINTED_IMAGE_CACHE_ENTRIES {
+        cache.clear();
+    }
+    cache.insert(
+        key,
+        CachedImageData {
+            signature,
+            data: data.clone(),
+        },
+    );
+    data
+}
+
 fn image_signature(image: &RenderImage) -> ImageSignature {
     ImageSignature {
         width: image.width,
@@ -285,6 +342,64 @@ fn image_data_from_render_image(image: &RenderImage) -> ImageData {
         width: image.width,
         height: image.height,
     }
+}
+
+fn tinted_image_data_from_render_image(image: &RenderImage, tint: PackedTint) -> ImageData {
+    let [red, green, blue, alpha] = tint.channels();
+    let mut data = image.data.to_vec();
+    for pixel in data.chunks_exact_mut(4) {
+        match image.format {
+            RenderImageFormat::Rgba8 => {
+                pixel[0] = multiply_channel(pixel[0], red);
+                pixel[1] = multiply_channel(pixel[1], green);
+                pixel[2] = multiply_channel(pixel[2], blue);
+                pixel[3] = multiply_channel(pixel[3], alpha);
+            }
+            RenderImageFormat::Bgra8 => {
+                pixel[0] = multiply_channel(pixel[0], blue);
+                pixel[1] = multiply_channel(pixel[1], green);
+                pixel[2] = multiply_channel(pixel[2], red);
+                pixel[3] = multiply_channel(pixel[3], alpha);
+            }
+        }
+    }
+    ImageData {
+        data: Blob::from(data),
+        format: image_format(image.format),
+        alpha_type: image_alpha(image.alpha),
+        width: image.width,
+        height: image.height,
+    }
+}
+
+impl PackedTint {
+    fn from_color(color: Color) -> Self {
+        Self(
+            (unit_channel(color.r) << 24)
+                | (unit_channel(color.g) << 16)
+                | (unit_channel(color.b) << 8)
+                | unit_channel(color.a),
+        )
+    }
+
+    fn channels(self) -> [u8; 4] {
+        [
+            ((self.0 >> 24) & 0xff) as u8,
+            ((self.0 >> 16) & 0xff) as u8,
+            ((self.0 >> 8) & 0xff) as u8,
+            (self.0 & 0xff) as u8,
+        ]
+    }
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn unit_channel(value: f32) -> u32 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u32
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn multiply_channel(source: u8, tint: u8) -> u8 {
+    ((u16::from(source) * u16::from(tint) + 127) / 255) as u8
 }
 
 impl Default for VelloRenderer {
@@ -486,6 +601,9 @@ pub fn translate_primitives(primitives: &[Primitive], resources: &RenderResource
                     RenderCommandKind::Image {
                         image: image.image,
                         rect,
+                        tint: image
+                            .tint
+                            .map(|tint| sanitize_color(tint, &mut diagnostics, "image_tint")),
                     },
                 ));
             }
@@ -719,8 +837,13 @@ fn format_command_kind(kind: &RenderCommandKind) -> String {
             format_color(*color),
             text,
         ),
-        RenderCommandKind::Image { image, rect } => {
-            format!("image#{} rect={}", image.raw(), format_rect(*rect))
+        RenderCommandKind::Image { image, rect, tint } => {
+            format!(
+                "image#{} rect={} tint={}",
+                image.raw(),
+                format_rect(*rect),
+                tint.map_or_else(|| "none".to_owned(), format_color)
+            )
         }
         RenderCommandKind::Texture {
             texture,
@@ -1356,17 +1479,14 @@ fn encode_command(
             *color,
             device_scale,
         ),
-        RenderCommandKind::Image { image, rect } => {
-            encode_image_command(
-                scene,
-                transform,
-                resources,
-                image_cache,
-                *image,
-                *rect,
-                device_scale,
-            );
-        }
+        RenderCommandKind::Image { image, rect, tint } => encode_image_command(
+            scene,
+            transform,
+            resources,
+            image_cache,
+            ImageCommandData::new(*image, *rect, *tint),
+            device_scale,
+        ),
         RenderCommandKind::Texture {
             texture,
             rect,
@@ -1508,19 +1628,39 @@ fn encode_text_command(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ImageCommandData {
+    image: ImageId,
+    rect: Rect,
+    tint: Option<Color>,
+}
+
+impl ImageCommandData {
+    const fn new(image: ImageId, rect: Rect, tint: Option<Color>) -> Self {
+        Self { image, rect, tint }
+    }
+}
+
 fn encode_image_command(
     scene: &mut Scene,
     transform: Affine,
     resources: &RenderResources,
     image_cache: &mut ImageDataCache,
-    image: ImageId,
-    rect: Rect,
+    command: ImageCommandData,
     device_scale: f64,
 ) {
-    if let Some(draw) = resolve_image_draw(resources, image) {
-        encode_image_region(scene, transform, rect, image_cache, draw, device_scale);
+    if let Some(draw) = resolve_image_draw(resources, command.image) {
+        encode_image_region(
+            scene,
+            transform,
+            command.rect,
+            image_cache,
+            draw,
+            command.tint,
+            device_scale,
+        );
     } else {
-        let rect = snap_rect_to_device(rect, device_scale);
+        let rect = snap_rect_to_device(command.rect, device_scale);
         encode_resource_placeholder(
             scene,
             transform,
@@ -2123,6 +2263,7 @@ fn encode_image_region(
     rect: Rect,
     image_cache: &mut ImageDataCache,
     draw: ResolvedImageDraw<'_>,
+    tint: Option<Color>,
     device_scale: f64,
 ) {
     let image = draw.pixels;
@@ -2138,7 +2279,7 @@ fn encode_image_region(
         scene,
         transform,
         rect,
-        image_cache.image_data(draw.payload, image),
+        image_cache.image_data_with_tint(draw.payload, image, tint),
         source,
         draw.sampling,
         device_scale,
@@ -3326,6 +3467,7 @@ mod tests {
             Primitive::Image(ImagePrimitive {
                 image: ImageId::from_raw(9),
                 rect: Rect::new(0.0, 20.0, 16.0, 16.0),
+                tint: None,
             }),
             Primitive::Texture(TexturePrimitive {
                 texture: TextureId::from_raw(2),
@@ -3338,7 +3480,7 @@ mod tests {
 
         assert_eq!(
             render_translation_snapshot(&translation),
-            "commands:\n  0: layer=3 transform=[1.000, 0.000, 0.000, 1.000, 2.000, 3.000] clips=[{rect=(0.000, 0.000, 20.000, 12.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}] rect rect=(1.000, 1.000, 8.000, 4.000) fill=rgba(1.000, 1.000, 1.000, 1.000) stroke=none radius=(2.000, 2.000, 2.000, 2.000)\n  1: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] text layout=7 origin=(4.000, 16.000) family=\"monospace\" size=12.000 line_height=17.000 color=rgba(0.000, 0.000, 0.000, 1.000) text=\"Hi\"\n  2: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] image#9 rect=(0.000, 20.000, 16.000, 16.000)\n  3: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] texture#2 rect=(20.000, 20.000, 16.000, 16.000) source_size=2.000x2.000\ndiagnostics:\n  missing_text_layout#7\n  missing_image#9"
+            "commands:\n  0: layer=3 transform=[1.000, 0.000, 0.000, 1.000, 2.000, 3.000] clips=[{rect=(0.000, 0.000, 20.000, 12.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}] rect rect=(1.000, 1.000, 8.000, 4.000) fill=rgba(1.000, 1.000, 1.000, 1.000) stroke=none radius=(2.000, 2.000, 2.000, 2.000)\n  1: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] text layout=7 origin=(4.000, 16.000) family=\"monospace\" size=12.000 line_height=17.000 color=rgba(0.000, 0.000, 0.000, 1.000) text=\"Hi\"\n  2: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] image#9 rect=(0.000, 20.000, 16.000, 16.000) tint=none\n  3: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] texture#2 rect=(20.000, 20.000, 16.000, 16.000) source_size=2.000x2.000\ndiagnostics:\n  missing_text_layout#7\n  missing_image#9"
         );
     }
 
@@ -3348,6 +3490,7 @@ mod tests {
             Primitive::Image(ImagePrimitive {
                 image: ImageId::from_raw(9),
                 rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                tint: None,
             }),
             Primitive::Texture(TexturePrimitive {
                 texture: TextureId::from_raw(8),
@@ -3373,6 +3516,7 @@ mod tests {
             Primitive::Image(ImagePrimitive {
                 image: ImageId::from_raw(1),
                 rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                tint: None,
             }),
             Primitive::Texture(TexturePrimitive {
                 texture: TextureId::from_raw(2),
@@ -3391,6 +3535,7 @@ mod tests {
         let primitives = vec![Primitive::Image(ImagePrimitive {
             image: ImageId::from_raw(3),
             rect: Rect::new(0.0, 0.0, 16.0, 16.0),
+            tint: None,
         })];
 
         let translation = translate_primitives(&primitives, &atlas_resources());
@@ -3414,6 +3559,7 @@ mod tests {
         let primitives = vec![Primitive::Image(ImagePrimitive {
             image: ImageId::from_raw(5),
             rect: Rect::new(0.0, 0.0, 16.0, 16.0),
+            tint: None,
         })];
 
         let translation = translate_primitives(&primitives, &resources);
@@ -3471,6 +3617,7 @@ mod tests {
             Primitive::Image(ImagePrimitive {
                 image: ImageId::from_raw(1),
                 rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                tint: None,
             }),
             Primitive::Texture(TexturePrimitive {
                 texture: TextureId::from_raw(2),
@@ -3544,6 +3691,7 @@ mod tests {
         let primitives = vec![Primitive::Image(ImagePrimitive {
             image: ImageId::from_raw(9),
             rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            tint: None,
         })];
         let resources = RenderResources::new();
         let output = renderer.submit_frame(RenderFrameInput {
@@ -3922,6 +4070,7 @@ mod tests {
         let primitives = vec![Primitive::Image(ImagePrimitive {
             image: ImageId::from_raw(3),
             rect: Rect::new(4.0, 4.0, 16.0, 16.0),
+            tint: None,
         })];
 
         let output = renderer.submit_frame(RenderFrameInput {
@@ -3947,10 +4096,12 @@ mod tests {
             Primitive::Image(ImagePrimitive {
                 image: ImageId::from_raw(3),
                 rect: Rect::new(4.0, 4.0, 16.0, 16.0),
+                tint: None,
             }),
             Primitive::Image(ImagePrimitive {
                 image: ImageId::from_raw(4),
                 rect: Rect::new(24.0, 4.0, 16.0, 16.0),
+                tint: None,
             }),
         ];
 
@@ -3994,6 +4145,35 @@ mod tests {
         let replaced_payload = &cache.images.get(&id).expect("cache entry").signature.data;
         assert!(std::sync::Arc::ptr_eq(replaced_payload, &replacement.data));
         assert!(!std::sync::Arc::ptr_eq(&cached_payload, replaced_payload));
+    }
+
+    #[test]
+    fn tinted_image_cache_reuses_payload_for_same_color() {
+        let id = ImageId::from_raw(12);
+        let image = RenderImage::rgba8(2, 2, vec![255; 16]).expect("valid image");
+        let mut cache = ImageDataCache::default();
+
+        cache.image_data_with_tint(id, &image, Some(Color::rgb(1.0, 0.0, 0.0)));
+        cache.image_data_with_tint(id, &image, Some(Color::rgb(1.0, 0.0, 0.0)));
+        assert_eq!(cache.images.len(), 0);
+        assert_eq!(cache.tinted_images.len(), 1);
+
+        cache.image_data_with_tint(id, &image, Some(Color::rgb(0.0, 1.0, 0.0)));
+        assert_eq!(cache.tinted_images.len(), 2);
+    }
+
+    #[test]
+    fn tinted_image_cache_does_not_retain_large_payloads() {
+        let id = ImageId::from_raw(13);
+        let byte_len = super::MAX_CACHED_TINTED_IMAGE_BYTES + 4;
+        let pixel_count = byte_len / 4;
+        let width = u32::try_from(pixel_count).expect("test image width fits u32");
+        let image = RenderImage::rgba8(width, 1, vec![255; pixel_count * 4]).expect("valid image");
+        let mut cache = ImageDataCache::default();
+
+        cache.image_data_with_tint(id, &image, Some(Color::rgb(1.0, 0.0, 0.0)));
+
+        assert_eq!(cache.tinted_images.len(), 0);
     }
 
     #[test]
@@ -4097,6 +4277,7 @@ mod tests {
             Primitive::Image(ImagePrimitive {
                 image: ImageId::from_raw(1),
                 rect: Rect::new(0.0, 24.0, 32.0, 24.0),
+                tint: None,
             }),
             Primitive::Texture(TexturePrimitive {
                 texture: TextureId::from_raw(2),

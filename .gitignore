@@ -9,6 +9,9 @@
 # Logs
 *.log
 
+# Local JavaScript tool dependencies
+/tools/icon-atlas/node_modules/
+
 # Environment files
 .env
 .env.*

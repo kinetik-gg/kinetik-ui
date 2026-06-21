@@ -1,0 +1,11 @@
+{
+  "name": "kinetik-ui-icon-atlas-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate:phosphor": "node generate-phosphor-icons.mjs --output ../../apps/kinetik-ui-showcase/assets/icons/phosphor"
+  },
+  "dependencies": {
+    "@phosphor-icons/core": "2.1.1"
+  }
+}
