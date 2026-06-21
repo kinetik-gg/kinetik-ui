@@ -9,7 +9,8 @@
 use kinetik_ui::core::{
     ActionDescriptor, ActionSource, Axis, Brush, ClipId, Color, CornerRadius, CursorShape,
     ImagePrimitive, Key, KeyState, LinePrimitive, Modifiers, PlatformRequest, Point, Primitive,
-    Rect, RectPrimitive, RepaintRequest, Shortcut, Size, Stroke, TextPrimitive, TextureId, Vec2,
+    Rect, RectPrimitive, RepaintRequest, Shortcut, Size, Stroke, TextPrimitive, TextureId, Theme,
+    Vec2,
 };
 use kinetik_ui::render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
@@ -53,17 +54,39 @@ pub(crate) mod phosphor_icons {
     ));
 }
 
-use phosphor_icons::{
-    DENSE_ICON_LOGICAL_SIZE, ICON_ATLASES, ICON_ENTRIES, PhosphorIcon, STANDARD_ICON_LOGICAL_SIZE,
-};
+use phosphor_icons::{DENSE_ICON_LOGICAL_SIZE, ICON_ATLASES, ICON_ENTRIES, PhosphorIcon};
 
 const DENSE_ICON_SIZE: f32 = DENSE_ICON_LOGICAL_SIZE as f32;
 const TOOLBAR_Y: f32 = 32.0;
-const TOOLBAR_BUTTON_SIZE: f32 = 34.0;
-const TOOLBAR_STRIDE: f32 = 38.0;
-const TOOLBAR_ICON_SIZE: f32 = STANDARD_ICON_LOGICAL_SIZE as f32;
-const WORKSPACE_TOP: f32 = 76.0;
-const ASSET_ICON_SIZE: f32 = STANDARD_ICON_LOGICAL_SIZE as f32;
+const TOOLBAR_BOTTOM_PADDING: f32 = 10.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct EditorChromeMetrics {
+    toolbar_button: f32,
+    toolbar_stride: f32,
+    toolbar_icon: f32,
+    dense_icon: f32,
+    asset_icon: f32,
+}
+
+impl EditorChromeMetrics {
+    fn from_theme(theme: &Theme) -> Self {
+        let toolbar_button =
+            (theme.controls.compact_control_height + theme.controls.padding_y).round();
+        let toolbar_stride = (toolbar_button + theme.controls.padding_x * 0.5).round();
+        Self {
+            toolbar_button,
+            toolbar_stride,
+            toolbar_icon: theme.controls.icon_size,
+            dense_icon: theme.controls.icon_size,
+            asset_icon: theme.controls.icon_size,
+        }
+    }
+}
+
+fn workspace_top(theme: &Theme) -> f32 {
+    TOOLBAR_Y + EditorChromeMetrics::from_theme(theme).toolbar_button + TOOLBAR_BOTTOM_PADDING
+}
 
 const FRAME_SCENE: FrameId = FrameId::from_raw(1);
 const FRAME_ASSETS: FrameId = FrameId::from_raw(2);
@@ -816,9 +839,10 @@ impl EditorShowcase {
         invocations: &mut Vec<EditorInvocation>,
     ) {
         self.tool_bar_tool_interactions(ui, invocations);
+        let chrome = EditorChromeMetrics::from_theme(ui.theme());
         let mut x = 10.0;
         for (tool, icon, label, action) in EDITOR_TOOL_BUTTONS {
-            let button = Rect::new(x, TOOLBAR_Y, TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+            let button = Rect::new(x, TOOLBAR_Y, chrome.toolbar_button, chrome.toolbar_button);
             toolbar_icon_button(
                 ui,
                 ("editor.tool", action),
@@ -828,12 +852,12 @@ impl EditorShowcase {
                 self.selected_tool == tool,
                 false,
             );
-            x += TOOLBAR_STRIDE;
+            x += chrome.toolbar_stride;
         }
 
         rect(
             ui,
-            Rect::new(x + 4.0, TOOLBAR_Y + 3.0, 1.0, TOOLBAR_BUTTON_SIZE - 6.0),
+            Rect::new(x + 4.0, TOOLBAR_Y + 3.0, 1.0, chrome.toolbar_button - 6.0),
             rgb(57, 60, 66),
             None,
         );
@@ -846,7 +870,7 @@ impl EditorShowcase {
             let response = toolbar_icon_button(
                 ui,
                 ("editor.viewport-tool", action, icon.raw()),
-                Rect::new(x, TOOLBAR_Y, TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE),
+                Rect::new(x, TOOLBAR_Y, chrome.toolbar_button, chrome.toolbar_button),
                 icon,
                 label,
                 false,
@@ -855,10 +879,10 @@ impl EditorShowcase {
             if response.clicked {
                 self.trigger(invocations, action, ActionSource::Button);
             }
-            x += TOOLBAR_STRIDE;
+            x += chrome.toolbar_stride;
         }
 
-        for (index, icon, label, action, rect) in run_toolbar_buttons(viewport) {
+        for (index, icon, label, action, rect) in run_toolbar_buttons(viewport, chrome) {
             toolbar_icon_button(
                 ui,
                 ("editor.run", action, index),
@@ -877,7 +901,8 @@ impl EditorShowcase {
         viewport: Rect,
         invocations: &mut Vec<EditorInvocation>,
     ) {
-        for (index, _icon, _label, action, rect) in run_toolbar_buttons(viewport) {
+        let chrome = EditorChromeMetrics::from_theme(ui.theme());
+        for (index, _icon, _label, action, rect) in run_toolbar_buttons(viewport, chrome) {
             let response = ui.pressable(("editor.run.prepass", action, index), rect, false);
             if response.clicked {
                 self.trigger(invocations, action, ActionSource::Button);
@@ -890,9 +915,10 @@ impl EditorShowcase {
         ui: &mut Ui<'_>,
         invocations: &mut Vec<EditorInvocation>,
     ) {
+        let chrome = EditorChromeMetrics::from_theme(ui.theme());
         let mut x = 10.0;
         for (tool, _icon, _label, action) in EDITOR_TOOL_BUTTONS {
-            let button = Rect::new(x, TOOLBAR_Y, TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+            let button = Rect::new(x, TOOLBAR_Y, chrome.toolbar_button, chrome.toolbar_button);
             let response = ui.pressable(("editor.tool.prepass", action), button, false);
             if response.clicked {
                 self.selected_tool = tool;
@@ -909,17 +935,18 @@ impl EditorShowcase {
                     source: ActionSource::Button,
                 });
             }
-            x += TOOLBAR_STRIDE;
+            x += chrome.toolbar_stride;
         }
     }
 
     fn workspace(&mut self, ui: &mut Ui<'_>, viewport: Rect) {
         let bottom_bar = 24.0;
+        let workspace_top = workspace_top(ui.theme());
         let bounds = Rect::new(
             4.0,
-            WORKSPACE_TOP,
+            workspace_top,
             (viewport.width - 8.0).max(1.0),
-            (viewport.height - WORKSPACE_TOP - bottom_bar - 4.0).max(1.0),
+            (viewport.height - workspace_top - bottom_bar - 4.0).max(1.0),
         );
         let frame_layouts = solve_dock_layout(&self.dock, bounds);
         for layout in frame_layouts {
@@ -1138,6 +1165,7 @@ impl EditorShowcase {
     }
 
     fn assets_browser(&mut self, ui: &mut Ui<'_>, body: Rect) {
+        let chrome = EditorChromeMetrics::from_theme(ui.theme());
         rect(ui, body, rgb(24, 25, 27), None);
         let search = Rect::new(body.x + 8.0, body.y + 8.0, body.width - 16.0, 26.0);
         ui.search_field(
@@ -1150,7 +1178,7 @@ impl EditorShowcase {
             ui,
             Rect::new(search.x + 5.0, search.y + 5.0, 18.0, 18.0),
             ToolbarIcon::Search,
-            DENSE_ICON_SIZE,
+            chrome.dense_icon,
         );
 
         let grid_bounds = Rect::new(
@@ -1206,9 +1234,14 @@ impl EditorShowcase {
                     }
                     draw_icon(
                         ui,
-                        Rect::new(item.rect.x + 8.0, item.rect.y + 8.0, 24.0, 24.0),
+                        Rect::new(
+                            item.rect.x + 8.0,
+                            item.rect.y + 8.0,
+                            chrome.asset_icon,
+                            chrome.asset_icon,
+                        ),
                         asset.icon,
-                        ASSET_ICON_SIZE,
+                        chrome.asset_icon,
                     );
                     text(
                         ui,
@@ -1950,15 +1983,21 @@ fn frame_tab_rects(frame: &Frame, frame_rect: Rect, tab_height: f32) -> Vec<(Fra
 
 fn run_toolbar_buttons(
     viewport: Rect,
+    chrome: EditorChromeMetrics,
 ) -> [(usize, ToolbarIcon, &'static str, &'static str, Rect); 5] {
-    let right = viewport.max_x() - 220.0;
+    let right = viewport.max_x() - (chrome.toolbar_stride * 4.0 + chrome.toolbar_button);
     [
         (
             0,
             ToolbarIcon::Play,
             "Play",
             ACTION_PLAY,
-            Rect::new(right, TOOLBAR_Y, TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE),
+            Rect::new(
+                right,
+                TOOLBAR_Y,
+                chrome.toolbar_button,
+                chrome.toolbar_button,
+            ),
         ),
         (
             1,
@@ -1966,10 +2005,10 @@ fn run_toolbar_buttons(
             "Pause",
             ACTION_PLAY,
             Rect::new(
-                right + TOOLBAR_STRIDE,
+                right + chrome.toolbar_stride,
                 TOOLBAR_Y,
-                TOOLBAR_BUTTON_SIZE,
-                TOOLBAR_BUTTON_SIZE,
+                chrome.toolbar_button,
+                chrome.toolbar_button,
             ),
         ),
         (
@@ -1978,10 +2017,10 @@ fn run_toolbar_buttons(
             "Stop",
             ACTION_STOP,
             Rect::new(
-                right + 2.0 * TOOLBAR_STRIDE,
+                right + 2.0 * chrome.toolbar_stride,
                 TOOLBAR_Y,
-                TOOLBAR_BUTTON_SIZE,
-                TOOLBAR_BUTTON_SIZE,
+                chrome.toolbar_button,
+                chrome.toolbar_button,
             ),
         ),
         (
@@ -1990,10 +2029,10 @@ fn run_toolbar_buttons(
             "Build",
             ACTION_BUILD,
             Rect::new(
-                right + 3.0 * TOOLBAR_STRIDE,
+                right + 3.0 * chrome.toolbar_stride,
                 TOOLBAR_Y,
-                TOOLBAR_BUTTON_SIZE,
-                TOOLBAR_BUTTON_SIZE,
+                chrome.toolbar_button,
+                chrome.toolbar_button,
             ),
         ),
         (
@@ -2002,10 +2041,10 @@ fn run_toolbar_buttons(
             "Export",
             ACTION_BUILD,
             Rect::new(
-                right + 4.0 * TOOLBAR_STRIDE,
+                right + 4.0 * chrome.toolbar_stride,
                 TOOLBAR_Y,
-                TOOLBAR_BUTTON_SIZE,
-                TOOLBAR_BUTTON_SIZE,
+                chrome.toolbar_button,
+                chrome.toolbar_button,
             ),
         ),
     ]
@@ -2015,10 +2054,9 @@ fn run_toolbar_buttons(
 #[allow(clippy::float_cmp, clippy::items_after_test_module)]
 mod tests {
     use super::{
-        EditorMenuKind, EditorShowcase, EditorTool, FRAME_BOTTOM, FRAME_VIEWPORT, PANEL_JOBS,
-        TOOLBAR_BUTTON_SIZE, TOOLBAR_ICON_SIZE, TOOLBAR_STRIDE, TOOLBAR_Y, VIEWPORT_SIZE,
-        WORKSPACE_TOP, frame_tab_rects, icon_atlas_image, inspector_label_width, item_id,
-        phosphor_icons, register_resources, rgb, rgba,
+        EditorChromeMetrics, EditorMenuKind, EditorShowcase, EditorTool, FRAME_BOTTOM,
+        FRAME_VIEWPORT, PANEL_JOBS, TOOLBAR_Y, VIEWPORT_SIZE, frame_tab_rects, icon_atlas_image,
+        inspector_label_width, item_id, phosphor_icons, register_resources, rgb, rgba,
     };
     use kinetik_ui::core::{
         Brush, CursorShape, FrameContext, PhysicalSize, PlatformRequest, Point, PointerButtonState,
@@ -2034,6 +2072,27 @@ mod tests {
         assert!((inspector_label_width(180.0) - 75.6).abs() < f32::EPSILON);
         assert_eq!(inspector_label_width(400.0), 96.0);
         assert_eq!(inspector_label_width(f32::NAN), 72.0);
+    }
+
+    #[test]
+    fn editor_chrome_metrics_follow_theme_controls() {
+        let theme = default_dark_theme();
+        let chrome = EditorChromeMetrics::from_theme(&theme);
+
+        assert_eq!(
+            chrome.toolbar_button,
+            theme.controls.compact_control_height + theme.controls.padding_y
+        );
+        assert_eq!(
+            chrome.toolbar_stride,
+            chrome.toolbar_button + theme.controls.padding_x * 0.5
+        );
+        assert_eq!(chrome.toolbar_icon, theme.controls.icon_size);
+        assert_eq!(chrome.asset_icon, theme.controls.icon_size);
+        assert_eq!(chrome.toolbar_button, 26.0);
+        assert_eq!(chrome.toolbar_stride, 30.0);
+        assert_eq!(chrome.toolbar_icon, 16.0);
+        assert_eq!(super::workspace_top(&theme), 68.0);
     }
 
     #[test]
@@ -2097,9 +2156,10 @@ mod tests {
         let mut editor = EditorShowcase::new();
         let mut memory = UiMemory::new();
         let theme = default_dark_theme();
+        let chrome = EditorChromeMetrics::from_theme(&theme);
         let rotate = Point::new(
-            10.0 + 2.0 * TOOLBAR_STRIDE + TOOLBAR_BUTTON_SIZE * 0.5,
-            TOOLBAR_Y + TOOLBAR_BUTTON_SIZE * 0.5,
+            10.0 + 2.0 * chrome.toolbar_stride + chrome.toolbar_button * 0.5,
+            TOOLBAR_Y + chrome.toolbar_button * 0.5,
         );
 
         let mut ui = Ui::begin_frame(
@@ -2124,8 +2184,8 @@ mod tests {
             .filter(|primitive| match primitive {
                 Primitive::Rect(rect) => {
                     rect.rect.y == TOOLBAR_Y
-                        && rect.rect.width == TOOLBAR_BUTTON_SIZE
-                        && rect.rect.height == TOOLBAR_BUTTON_SIZE
+                        && rect.rect.width == chrome.toolbar_button
+                        && rect.rect.height == chrome.toolbar_button
                         && matches!(&rect.fill, Some(Brush::Solid(color)) if *color == selected_fill)
                 }
                 _ => false,
@@ -2235,9 +2295,10 @@ mod tests {
         let mut editor = EditorShowcase::new();
         let mut memory = UiMemory::new();
         let theme = default_dark_theme();
+        let expander = Point::new(38.0, super::workspace_top(&theme) + 100.0);
 
         let mut ui = Ui::begin_frame(
-            editor_test_context(pointer_input_at(38.0, 176.0, true, true, false)),
+            editor_test_context(pointer_input_at(expander.x, expander.y, true, true, false)),
             &mut memory,
             &theme,
         );
@@ -2245,7 +2306,7 @@ mod tests {
         let _ = ui.finish_output();
 
         let mut ui = Ui::begin_frame(
-            editor_test_context(pointer_input_at(38.0, 176.0, false, false, true)),
+            editor_test_context(pointer_input_at(expander.x, expander.y, false, false, true)),
             &mut memory,
             &theme,
         );
@@ -2424,6 +2485,7 @@ mod tests {
     #[test]
     fn editor_toolbar_atlas_icons_use_integer_logical_destinations() {
         let theme = default_dark_theme();
+        let chrome = EditorChromeMetrics::from_theme(&theme);
         let mut memory = UiMemory::new();
         let context = editor_test_context_scaled(UiInput::default(), ScaleFactor::new(1.25));
         let mut ui = Ui::begin_frame(context, &mut memory, &theme);
@@ -2442,8 +2504,8 @@ mod tests {
             }
             assert_eq!(image.rect.x, image.rect.x.round());
             assert_eq!(image.rect.y, image.rect.y.round());
-            assert_eq!(image.rect.width, TOOLBAR_ICON_SIZE);
-            assert_eq!(image.rect.height, TOOLBAR_ICON_SIZE);
+            assert_eq!(image.rect.width, chrome.toolbar_icon);
+            assert_eq!(image.rect.height, chrome.toolbar_icon);
             checked += 1;
         }
 
@@ -2452,6 +2514,8 @@ mod tests {
 
     #[test]
     fn editor_icons_pick_exact_physical_atlas_for_dpi_scale() {
+        let theme = default_dark_theme();
+        let chrome = EditorChromeMetrics::from_theme(&theme);
         let dense = phosphor_icons::icon_image(
             phosphor_icons::PhosphorIcon::Search,
             super::DENSE_ICON_SIZE,
@@ -2459,7 +2523,7 @@ mod tests {
         );
         let toolbar = phosphor_icons::icon_image(
             phosphor_icons::PhosphorIcon::Cursor,
-            super::TOOLBAR_ICON_SIZE,
+            chrome.toolbar_icon,
             1.5,
         );
         let dense_entry = icon_entry(dense);
@@ -2467,8 +2531,8 @@ mod tests {
 
         assert_eq!(dense_entry.logical_size, 16);
         assert_eq!(dense_entry.physical_size, 20);
-        assert_eq!(toolbar_entry.logical_size, 24);
-        assert_eq!(toolbar_entry.physical_size, 36);
+        assert_eq!(toolbar_entry.logical_size, 16);
+        assert_eq!(toolbar_entry.physical_size, 24);
 
         let fallback = phosphor_icons::icon_image(
             phosphor_icons::PhosphorIcon::Search,
@@ -2481,11 +2545,17 @@ mod tests {
     #[test]
     fn toolbar_icon_size_leaves_padding_inside_button() {
         let theme = default_dark_theme();
+        let chrome = EditorChromeMetrics::from_theme(&theme);
         let mut memory = UiMemory::new();
         let context = editor_test_context(UiInput::default());
         let mut ui = Ui::begin_frame(context, &mut memory, &theme);
         let mut editor = EditorShowcase::new();
-        let first_button = Rect::new(10.0, TOOLBAR_Y, TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+        let first_button = Rect::new(
+            10.0,
+            TOOLBAR_Y,
+            chrome.toolbar_button,
+            chrome.toolbar_button,
+        );
 
         editor.render(&mut ui, 0);
         let output = ui.finish_output();
@@ -2588,11 +2658,13 @@ mod tests {
 
     fn editor_frame_rect(editor: &EditorShowcase, frame: super::FrameId) -> Rect {
         let viewport = Rect::new(0.0, 0.0, 1440.0, 900.0);
+        let theme = default_dark_theme();
+        let workspace_top = super::workspace_top(&theme);
         let bounds = Rect::new(
             4.0,
-            WORKSPACE_TOP,
+            workspace_top,
             viewport.width - 8.0,
-            viewport.height - WORKSPACE_TOP - 28.0,
+            viewport.height - workspace_top - 28.0,
         );
         solve_dock_layout(&editor.dock, bounds)
             .into_iter()
@@ -2612,7 +2684,8 @@ mod tests {
     }
 
     fn point_is_in_toolbar(point: Point) -> bool {
-        point.y >= TOOLBAR_Y && point.y <= TOOLBAR_Y + TOOLBAR_BUTTON_SIZE
+        let chrome = EditorChromeMetrics::from_theme(&default_dark_theme());
+        point.y >= TOOLBAR_Y && point.y <= TOOLBAR_Y + chrome.toolbar_button
     }
 
     fn pointer_input_at(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInput {
@@ -2862,7 +2935,7 @@ fn toolbar_icon_button(
         label,
         selected,
         disabled,
-        TOOLBAR_ICON_SIZE,
+        EditorChromeMetrics::from_theme(ui.theme()).toolbar_icon,
     )
 }
 
