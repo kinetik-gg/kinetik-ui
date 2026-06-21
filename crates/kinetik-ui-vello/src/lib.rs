@@ -2755,7 +2755,7 @@ mod tests {
         TextureId, Transform, Vec2, ViewportInfo,
     };
     use kinetik_ui_text::{
-        CosmicTextEngine, ShapedTextLayout, TextLayoutKey, TextLayoutStore, TextStyle,
+        CosmicTextEngine, ShapedTextLayout, TextLayoutKey, TextLayoutStore, TextStyle, fonts,
     };
     use vello::{
         kurbo::{Affine, Point as KurboPoint},
@@ -4773,11 +4773,18 @@ mod tests {
         )
         .expect("axis-aligned physical layout");
 
+        assert!(!layout.runs.is_empty());
         assert!(
             layout
                 .runs
                 .iter()
                 .all(|run| (run.font_size - 18.0).abs() < f32::EPSILON)
+        );
+        assert!(
+            layout
+                .runs
+                .iter()
+                .all(|run| run.font.data.data() == fonts::GEIST_MONO_VARIABLE)
         );
         assert!(
             layout
@@ -4802,11 +4809,18 @@ mod tests {
         )
         .expect("axis-aligned physical layout");
 
+        assert!(!layout.runs.is_empty());
         assert!(
             layout
                 .runs
                 .iter()
                 .all(|run| (run.font_size - 18.0).abs() < f32::EPSILON)
+        );
+        assert!(
+            layout
+                .runs
+                .iter()
+                .all(|run| run.font.data.data() == fonts::INTER_VARIABLE)
         );
         assert!(
             layout

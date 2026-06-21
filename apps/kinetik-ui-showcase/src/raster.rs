@@ -14,6 +14,7 @@ use kinetik_ui::core::{
     Brush, Color, LinePrimitive, LinearGradient, PathElement, PathPrimitive, Point, Primitive,
     Rect, RectPrimitive, ShadowPrimitive, Stroke, TextPrimitive, TexturePrimitive,
 };
+use kinetik_ui::text::{DEFAULT_MONOSPACE_FONT_FAMILY, fonts};
 
 /// RGBA-like packed pixel in `0x00RRGGBB` form for minifb.
 pub type Pixel = u32;
@@ -73,10 +74,12 @@ impl RasterFrame {
 /// Rasterizes primitives into a preview frame.
 #[must_use]
 pub fn rasterize(primitives: &[Primitive], width: usize, height: usize) -> RasterFrame {
-    let mut target = RasterTarget::new(width, height, rgb(14, 14, 14));
+    let mut target = RasterTarget::new(width, height, CLEAR_COLOR);
     target.draw(primitives);
     target.frame
 }
+
+const CLEAR_COLOR: Pixel = rgb(14, 14, 14);
 
 /// Writes a raster frame as a 24-bit BMP image.
 ///
@@ -145,7 +148,29 @@ fn usize_to_i32(value: usize) -> i32 {
 struct RasterTarget {
     frame: RasterFrame,
     clip: Option<Rect>,
-    font: Option<FontArc>,
+    fonts: RasterFonts,
+}
+
+struct RasterFonts {
+    sans: Option<FontArc>,
+    mono: Option<FontArc>,
+}
+
+impl RasterFonts {
+    fn load() -> Self {
+        Self {
+            sans: load_bundled_font(fonts::INTER_VARIABLE),
+            mono: load_bundled_font(fonts::GEIST_MONO_VARIABLE),
+        }
+    }
+
+    fn for_family(&self, family: &str) -> Option<&FontArc> {
+        if is_monospace_family(family) {
+            self.mono.as_ref().or(self.sans.as_ref())
+        } else {
+            self.sans.as_ref().or(self.mono.as_ref())
+        }
+    }
 }
 
 impl RasterTarget {
@@ -153,7 +178,7 @@ impl RasterTarget {
         Self {
             frame: RasterFrame::new(width, height, color),
             clip: None,
-            font: load_system_font(),
+            fonts: RasterFonts::load(),
         }
     }
 
@@ -357,7 +382,7 @@ impl RasterTarget {
 
     fn text(&mut self, primitive: &TextPrimitive) {
         let color = pixel_from_brush(primitive.brush);
-        if let Some(font) = self.font.clone() {
+        if let Some(font) = self.fonts.for_family(&primitive.family).cloned() {
             self.font_text(&font, primitive, color);
             return;
         }
@@ -658,28 +683,15 @@ fn channel(pixel: Pixel, shift: u8) -> f32 {
     ((pixel >> shift) & 0xff) as f32
 }
 
-fn load_system_font() -> Option<FontArc> {
-    for path in system_font_candidates() {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-        if let Ok(font) = FontArc::try_from_vec(bytes) {
-            return Some(font);
-        }
-    }
-
-    None
+fn load_bundled_font(bytes: &'static [u8]) -> Option<FontArc> {
+    FontArc::try_from_slice(bytes).ok()
 }
 
-fn system_font_candidates() -> &'static [&'static str] {
-    &[
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "C:\\Windows\\Fonts\\arial.ttf",
-        "/System/Library/Fonts/SFNS.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-    ]
+fn is_monospace_family(family: &str) -> bool {
+    let family = family.trim();
+    family.eq_ignore_ascii_case("monospace")
+        || family.eq_ignore_ascii_case("mono")
+        || family.eq_ignore_ascii_case(DEFAULT_MONOSPACE_FONT_FAMILY)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -817,8 +829,22 @@ fn glyph_pattern(character: char) -> [u8; 7] {
 
 #[cfg(test)]
 mod tests {
-    use super::{rasterize, rgb};
+    use super::{RasterFonts, is_monospace_family, load_bundled_font, rasterize};
     use crate::app::{ShowcaseApp, ShowcasePage};
+    use kinetik_ui::text::fonts;
+
+    #[test]
+    fn rasterizer_uses_bundled_text_fonts() {
+        let fonts = RasterFonts::load();
+
+        assert!(load_bundled_font(fonts::INTER_VARIABLE).is_some());
+        assert!(load_bundled_font(fonts::GEIST_MONO_VARIABLE).is_some());
+        assert!(fonts.sans.is_some());
+        assert!(fonts.mono.is_some());
+        assert!(is_monospace_family("monospace"));
+        assert!(is_monospace_family("Geist Mono"));
+        assert!(!is_monospace_family("Inter"));
+    }
 
     #[test]
     fn rasterized_showcase_is_not_blank() {
@@ -831,7 +857,7 @@ mod tests {
             frame
                 .pixels
                 .iter()
-                .filter(|pixel| **pixel != rgb(12, 12, 13))
+                .filter(|pixel| **pixel != super::CLEAR_COLOR)
                 .count()
                 > 50_000
         );

@@ -914,11 +914,11 @@ pub const fn default_dark_theme() -> Theme {
         spacing: SpacingScale::new(2.0, 4.0, 8.0, 12.0, 16.0),
         radii: RadiusScale::from_values(2.0, 3.0, 5.0, 8.0, 999.0),
         typography: TypographyScale {
-            body: FontToken::new("sans-serif", 12.0, 17.0),
-            label: FontToken::new("sans-serif", 12.0, 16.0),
-            caption: FontToken::new("sans-serif", 11.0, 15.0),
-            title: FontToken::new("sans-serif", 14.0, 19.0),
-            monospace: FontToken::new("monospace", 12.0, 17.0),
+            body: FontToken::new("Inter", 12.0, 17.0),
+            label: FontToken::new("Inter", 12.0, 16.0),
+            caption: FontToken::new("Inter", 11.0, 15.0),
+            title: FontToken::new("Inter", 14.0, 19.0),
+            monospace: FontToken::new("Geist Mono", 12.0, 17.0),
         },
         opacity: OpacityScale {
             disabled: 0.45,
@@ -985,6 +985,11 @@ mod tests {
         assert_eq!(theme.border_width, 1.0);
         assert_eq!(theme.controls.control_height, 28.0);
         assert_eq!(theme.controls.icon_size, 16.0);
+        assert_eq!(theme.font(TextRole::Body).family, "Inter");
+        assert_eq!(theme.font(TextRole::Label).family, "Inter");
+        assert_eq!(theme.font(TextRole::Caption).family, "Inter");
+        assert_eq!(theme.font(TextRole::Title).family, "Inter");
+        assert_eq!(theme.font(TextRole::Monospace).family, "Geist Mono");
         assert_eq!(theme.font(TextRole::Body).line_height, 17.0);
     }
 
