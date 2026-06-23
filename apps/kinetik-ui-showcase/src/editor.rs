@@ -18,10 +18,10 @@ use kinetik_ui::render::{
 };
 use kinetik_ui::text::TextEditState;
 use kinetik_ui::widgets::{
-    DockArea, DockNode, Frame, FrameId, FrameTab, GridColumns, GridLayout, Guide, ItemId,
-    ListLayout, Menu, MenuItem, OverlayDismissal, OverlayEntry, OverlayId, OverlayKind,
-    OverlayStack, PanZoom, Panel, PanelId, PopoverPlacement, PopoverRequest, PropertyGridLayout,
-    PropertyGridRow, TableColumn, TableLayout, TreeExpansion, TreeItem, TreeLayout, TreeModel, Ui,
+    Dock, DockNode, Frame, FrameId, FrameTab, GridColumns, GridLayout, Guide, ItemId, ListLayout,
+    Menu, MenuItem, OverlayDismissal, OverlayEntry, OverlayId, OverlayKind, OverlayStack, PanZoom,
+    Panel, PanelId, PopoverPlacement, PopoverRequest, PropertyGridLayout, PropertyGridRow,
+    TableColumn, TableLayout, TreeExpansion, TreeItem, TreeLayout, TreeModel, Ui,
     ViewportComposition, ViewportFit, ViewportSurface, frame_tabs, icon_button_semantics,
     place_popover, solve_dock_layout, solve_dock_splitters,
 };
@@ -265,7 +265,7 @@ pub struct EditorInvocation {
 
 /// Interactive DCC/editor showcase state.
 pub struct EditorShowcase {
-    dock: DockArea,
+    dock: Dock,
     scene_expansion: TreeExpansion,
     selected_node: ItemId,
     selected_asset: usize,
@@ -1874,8 +1874,8 @@ fn key_label(key: &Key) -> String {
     }
 }
 
-fn default_dock() -> DockArea {
-    DockArea::new(DockNode::Split {
+fn default_dock() -> Dock {
+    Dock::new(DockNode::Split {
         axis: Axis::Horizontal,
         ratio: 0.19,
         min_first: 220.0,
