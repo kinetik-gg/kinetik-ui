@@ -1,4 +1,4 @@
-//! `DockArea`, `Frame`, and `Panel` models for editor layouts.
+//! `Dock`, `Frame`, and `Panel` models for editor layouts.
 
 use std::collections::BTreeSet;
 
@@ -341,15 +341,15 @@ pub enum DockNode {
     },
 }
 
-/// Root dock area.
+/// Root dock.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockArea {
+pub struct Dock {
     /// Root dock node.
     pub root: DockNode,
 }
 
-impl DockArea {
-    /// Creates a dock area.
+impl Dock {
+    /// Creates a dock.
     #[must_use]
     pub const fn new(root: DockNode) -> Self {
         Self { root }
@@ -689,7 +689,7 @@ pub struct FrameLayout {
 
 /// Resolves a dock tree into frame rectangles.
 #[must_use]
-pub fn solve_dock_layout(area: &DockArea, bounds: Rect) -> Vec<FrameLayout> {
+pub fn solve_dock_layout(area: &Dock, bounds: Rect) -> Vec<FrameLayout> {
     let mut frames = Vec::new();
     solve_node(&area.root, bounds, &mut frames);
     frames
@@ -697,7 +697,7 @@ pub fn solve_dock_layout(area: &DockArea, bounds: Rect) -> Vec<FrameLayout> {
 
 /// Resolves splitter interaction rectangles for a dock tree.
 #[must_use]
-pub fn solve_dock_splitters(area: &DockArea, bounds: Rect, thickness: f32) -> Vec<DockSplitter> {
+pub fn solve_dock_splitters(area: &Dock, bounds: Rect, thickness: f32) -> Vec<DockSplitter> {
     let mut splitters = Vec::new();
     solve_splitters(
         &area.root,
@@ -1142,7 +1142,7 @@ fn validate_snapshot_node(
 #[cfg(test)]
 mod tests {
     use super::{
-        DockArea, DockDropTarget, DockDropZone, DockNode, DockPathElement, DockPlacement,
+        Dock, DockDropTarget, DockDropZone, DockNode, DockPathElement, DockPlacement,
         DockRestoreError, DockSnapshot, DockSnapshotNode, DockSplitInsertion, DockSplitPath, Frame,
         FrameId, Panel, PanelId, frame_tabs, resolve_dock_drop_target, resolve_frame_drop_zone,
         solve_dock_layout, solve_dock_splitters, split_ratio_from_drag,
@@ -1157,8 +1157,8 @@ mod tests {
         Frame::new(FrameId::from_raw(id), panels)
     }
 
-    fn dock_area() -> DockArea {
-        DockArea::new(DockNode::Split {
+    fn dock() -> Dock {
+        Dock::new(DockNode::Split {
             axis: Axis::Horizontal,
             ratio: 0.25,
             min_first: 100.0,
@@ -1173,7 +1173,7 @@ mod tests {
 
     #[test]
     fn dock_tree_visits_frames_in_order() {
-        let area = dock_area();
+        let area = dock();
         let frames = area.frames();
 
         assert_eq!(frames[0].id, FrameId::from_raw(1));
@@ -1201,7 +1201,7 @@ mod tests {
 
     #[test]
     fn moves_panels_between_frames() {
-        let mut area = dock_area();
+        let mut area = dock();
 
         assert!(area.move_panel(
             FrameId::from_raw(2),
@@ -1220,7 +1220,7 @@ mod tests {
 
     #[test]
     fn moving_panels_preserves_frame_owned_dismissal_policy() {
-        let mut area = dock_area();
+        let mut area = dock();
         area.frame_mut(FrameId::from_raw(2))
             .expect("source")
             .set_panel_dismissible(PanelId::from_raw(3), false);
@@ -1241,7 +1241,7 @@ mod tests {
 
     #[test]
     fn moving_panel_to_missing_target_does_not_remove_it() {
-        let mut area = dock_area();
+        let mut area = dock();
 
         assert!(!area.move_panel(
             FrameId::from_raw(2),
@@ -1261,7 +1261,7 @@ mod tests {
 
     #[test]
     fn moving_last_panel_prunes_empty_source_frame() {
-        let mut area = dock_area();
+        let mut area = dock();
 
         assert!(area.move_panel(
             FrameId::from_raw(1),
@@ -1282,7 +1282,7 @@ mod tests {
 
     #[test]
     fn merges_frames_into_target() {
-        let mut area = dock_area();
+        let mut area = dock();
 
         assert!(area.merge_frames(FrameId::from_raw(1), FrameId::from_raw(2)));
 
@@ -1299,7 +1299,7 @@ mod tests {
 
     #[test]
     fn merging_missing_target_does_not_remove_source_panels() {
-        let mut area = dock_area();
+        let mut area = dock();
 
         assert!(!area.merge_frames(FrameId::from_raw(1), FrameId::from_raw(99)));
 
@@ -1314,7 +1314,7 @@ mod tests {
 
     #[test]
     fn solves_horizontal_split_layout() {
-        let area = dock_area();
+        let area = dock();
         let layout = solve_dock_layout(&area, Rect::new(0.0, 0.0, 1000.0, 500.0));
 
         assert_eq!(layout.len(), 2);
@@ -1324,7 +1324,7 @@ mod tests {
 
     #[test]
     fn split_layout_respects_minimums() {
-        let area = DockArea::new(DockNode::Split {
+        let area = Dock::new(DockNode::Split {
             axis: Axis::Horizontal,
             ratio: 0.05,
             min_first: 100.0,
@@ -1339,7 +1339,7 @@ mod tests {
 
     #[test]
     fn split_layout_never_emits_negative_sizes_when_minimums_exceed_bounds() {
-        let area = DockArea::new(DockNode::Split {
+        let area = Dock::new(DockNode::Split {
             axis: Axis::Horizontal,
             ratio: 0.5,
             min_first: 100.0,
@@ -1357,7 +1357,7 @@ mod tests {
 
     #[test]
     fn split_layout_sanitizes_direct_non_finite_values() {
-        let area = DockArea::new(DockNode::Split {
+        let area = Dock::new(DockNode::Split {
             axis: Axis::Horizontal,
             ratio: f32::NAN,
             min_first: f32::INFINITY,
@@ -1409,8 +1409,8 @@ mod tests {
     }
 
     #[test]
-    fn dock_area_resizes_root_and_nested_splits() {
-        let mut area = DockArea::new(DockNode::Split {
+    fn dock_resizes_root_and_nested_splits() {
+        let mut area = Dock::new(DockNode::Split {
             axis: Axis::Horizontal,
             ratio: 0.5,
             min_first: 100.0,
@@ -1441,7 +1441,7 @@ mod tests {
 
     #[test]
     fn dock_splitters_expose_paths_and_hit_rects() {
-        let area = DockArea::new(DockNode::Split {
+        let area = Dock::new(DockNode::Split {
             axis: Axis::Horizontal,
             ratio: 0.5,
             min_first: 100.0,
@@ -1486,7 +1486,7 @@ mod tests {
 
     #[test]
     fn tab_drag_starts_only_for_panels_owned_by_the_frame() {
-        let area = dock_area();
+        let area = dock();
 
         assert_eq!(
             area.begin_tab_drag(FrameId::from_raw(2), PanelId::from_raw(3)),
@@ -1530,7 +1530,7 @@ mod tests {
 
     #[test]
     fn dock_drop_target_resolution_returns_merge_or_split_targets() {
-        let area = dock_area();
+        let area = dock();
         let layout = solve_dock_layout(&area, Rect::new(0.0, 0.0, 1000.0, 500.0));
         let new_frame = FrameId::from_raw(9);
 
@@ -1550,7 +1550,7 @@ mod tests {
 
     #[test]
     fn dropping_tab_on_frame_merges_and_selects_panel() {
-        let mut area = dock_area();
+        let mut area = dock();
         let drag = area
             .begin_tab_drag(FrameId::from_raw(2), PanelId::from_raw(3))
             .expect("drag");
@@ -1574,7 +1574,7 @@ mod tests {
 
     #[test]
     fn dropping_tab_on_split_edge_inserts_new_frame_and_round_trips() {
-        let mut area = dock_area();
+        let mut area = dock();
         let drag = area
             .begin_tab_drag(FrameId::from_raw(2), PanelId::from_raw(3))
             .expect("drag");
@@ -1609,7 +1609,7 @@ mod tests {
                 .id,
             PanelId::from_raw(3)
         );
-        let restored = DockArea::restore(area.snapshot()).expect("restore");
+        let restored = Dock::restore(area.snapshot()).expect("restore");
         assert_eq!(restored.frames().len(), 3);
         assert_eq!(
             restored
@@ -1624,7 +1624,7 @@ mod tests {
 
     #[test]
     fn invalid_split_drop_does_not_remove_panel() {
-        let mut area = dock_area();
+        let mut area = dock();
         let drag = area
             .begin_tab_drag(FrameId::from_raw(2), PanelId::from_raw(3))
             .expect("drag");
@@ -1649,9 +1649,9 @@ mod tests {
 
     #[test]
     fn snapshots_round_trip() {
-        let area = dock_area();
+        let area = dock();
         let snapshot = area.snapshot();
-        let restored = DockArea::restore(snapshot).expect("restore");
+        let restored = Dock::restore(snapshot).expect("restore");
 
         assert_eq!(restored.frames().len(), 2);
     }
@@ -1668,7 +1668,7 @@ mod tests {
         };
 
         assert_eq!(
-            DockArea::restore(snapshot).expect_err("error"),
+            Dock::restore(snapshot).expect_err("error"),
             DockRestoreError::EmptyFrame
         );
     }
@@ -1685,7 +1685,7 @@ mod tests {
         };
 
         assert_eq!(
-            DockArea::restore(snapshot).expect_err("error"),
+            Dock::restore(snapshot).expect_err("error"),
             DockRestoreError::InvalidActiveIndex
         );
     }
@@ -1702,7 +1702,7 @@ mod tests {
         };
 
         assert_eq!(
-            DockArea::restore(snapshot).expect_err("error"),
+            Dock::restore(snapshot).expect_err("error"),
             DockRestoreError::InvalidDismissiblePanel
         );
     }
@@ -1731,7 +1731,7 @@ mod tests {
         };
 
         assert_eq!(
-            DockArea::restore(snapshot).expect_err("error"),
+            Dock::restore(snapshot).expect_err("error"),
             DockRestoreError::DuplicateFrameId
         );
     }
@@ -1760,7 +1760,7 @@ mod tests {
         };
 
         assert_eq!(
-            DockArea::restore(snapshot).expect_err("error"),
+            Dock::restore(snapshot).expect_err("error"),
             DockRestoreError::DuplicatePanelId
         );
     }
@@ -1777,7 +1777,7 @@ mod tests {
         };
 
         assert_eq!(
-            DockArea::restore(snapshot).expect_err("error"),
+            Dock::restore(snapshot).expect_err("error"),
             DockRestoreError::DuplicateDismissiblePanel
         );
     }
@@ -1805,7 +1805,7 @@ mod tests {
             },
         };
         assert_eq!(
-            DockArea::restore(invalid_ratio).expect_err("error"),
+            Dock::restore(invalid_ratio).expect_err("error"),
             DockRestoreError::InvalidSplitRatio
         );
 
@@ -1831,7 +1831,7 @@ mod tests {
         };
 
         assert_eq!(
-            DockArea::restore(invalid_minimum).expect_err("error"),
+            Dock::restore(invalid_minimum).expect_err("error"),
             DockRestoreError::InvalidSplitMinimum
         );
     }

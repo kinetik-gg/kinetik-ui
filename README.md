@@ -32,14 +32,14 @@ Platform Adapter
 The main editor hierarchy is:
 
 ```text
-DockArea
+Dock
   -> Frame
       -> Panel
           -> Components
               -> Primitives
 ```
 
-- `DockArea` arranges editor regions.
+- `Dock` arranges editor regions.
 - `Frame` owns docked/sub-window behavior such as active state, resizing, closing, tabbing, merging, and focus.
 - `Panel` is a passive content surface that receives space from its parent.
 

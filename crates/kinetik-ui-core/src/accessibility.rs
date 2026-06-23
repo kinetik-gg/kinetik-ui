@@ -9,8 +9,8 @@ use crate::{ActionDescriptor, ActionId, Rect, WidgetId};
 pub enum SemanticRole {
     /// Application or document root.
     Root,
-    /// Dock area that owns frames.
-    DockArea,
+    /// Dock that owns frames.
+    Dock,
     /// Docked frame container.
     Frame,
     /// Passive panel or inspector region.

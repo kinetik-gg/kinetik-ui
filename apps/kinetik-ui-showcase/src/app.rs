@@ -20,7 +20,7 @@ use kinetik_ui::render::{
 };
 use kinetik_ui::text::{TextEditState, TextLayoutStore};
 use kinetik_ui::widgets::{
-    CommandPalette, Crosshair, DockArea, DockDropTarget, DockNode, DockPlacement, Frame, FrameId,
+    CommandPalette, Crosshair, Dock, DockDropTarget, DockNode, DockPlacement, Frame, FrameId,
     GridColumns, GridLayout, Guide, IconId, ItemId, ListLayout, Menu, OverlayDismissal,
     OverlayEntry, OverlayId, OverlayKind, OverlayStack, PanZoom, Panel, PanelId, PopoverPlacement,
     PopoverRequest, TableColumn, TableLayout, Ui, ViewportComposition, ViewportSurface, frame_tabs,
@@ -1036,12 +1036,12 @@ impl ShowcaseApp {
     fn dock_preview(&mut self, ui: &mut Ui<'_>, panel: Rect) {
         panel_title(ui, panel, "Interactive Dock Model");
         self.dock_preview_controls(ui, panel);
-        let area = self.dock_area_preview();
+        let area = self.dock_model_preview();
         Self::draw_dock_preview(ui, &area, panel);
     }
 
-    fn dock_area_preview(&self) -> DockArea {
-        let mut area = DockArea::new(DockNode::Split {
+    fn dock_model_preview(&self) -> Dock {
+        let mut area = Dock::new(DockNode::Split {
             axis: Axis::Horizontal,
             ratio: self.dock_ratio,
             min_first: 140.0,
@@ -1132,7 +1132,7 @@ impl ShowcaseApp {
         }
     }
 
-    fn draw_dock_preview(ui: &mut Ui<'_>, area: &DockArea, panel: Rect) {
+    fn draw_dock_preview(ui: &mut Ui<'_>, area: &Dock, panel: Rect) {
         let dock_bounds = Rect::new(
             panel.x + 20.0,
             panel.y + 86.0,

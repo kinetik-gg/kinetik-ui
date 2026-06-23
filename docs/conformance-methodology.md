@@ -140,7 +140,7 @@ Required cautions:
 - If a reference conflicts with `AGENTS.md`, `docs/specs.md`, or `docs/render-snapshots.md`, reject the reference or rewrite it into a compatible Kinetik invariant.
 - If a behavior requires a window, GPU, platform service, or OS accessibility daemon, reduce it to a core invariant first. If reduction is impossible, mark it as a later platform or showcase smoke test.
 - If a reference is visual style, reject it for first-wave conformance.
-- If a proposed test would encourage copying another toolkit's API, rewrite it around Kinetik terminology: `WidgetId`, `UiInput`, `UiMemory`, `Response`, `Primitive`, `SemanticNode`, `Action`, `DockArea`, `Frame`, `Panel`, and `ViewportSurface`.
+- If a proposed test would encourage copying another toolkit's API, rewrite it around Kinetik terminology: `WidgetId`, `UiInput`, `UiMemory`, `Response`, `Primitive`, `SemanticNode`, `Action`, `Dock`, `Frame`, `Panel`, and `ViewportSurface`.
 - If license status is unclear, stop and request legal/project-owner review before using the material.
 
 ## Runway Task Shape
