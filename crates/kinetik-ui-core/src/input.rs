@@ -3,6 +3,8 @@
 use crate::WidgetId;
 use crate::geometry::{Point, Vec2};
 
+const RELEASE_ALL_CANCEL_BUTTON: u16 = u16::MAX;
+
 /// Mouse or pointer buttons recognized by the core input model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MouseButton {
@@ -110,6 +112,7 @@ impl PointerInput {
             MouseButton::Primary => self.primary,
             MouseButton::Secondary => self.secondary,
             MouseButton::Middle => self.middle,
+            MouseButton::Other(RELEASE_ALL_CANCEL_BUTTON) => PointerButtonState::default(),
             MouseButton::Other(number) => self
                 .other_buttons
                 .iter()
@@ -124,12 +127,15 @@ impl PointerInput {
             MouseButton::Primary => self.primary.set_down(down),
             MouseButton::Secondary => self.secondary.set_down(down),
             MouseButton::Middle => self.middle.set_down(down),
+            MouseButton::Other(RELEASE_ALL_CANCEL_BUTTON) => {}
             MouseButton::Other(number) => self.other_button_mut(number).set_down(down),
         }
     }
 
     /// Clears frame-local pointer deltas and button edges.
     pub fn begin_frame(&mut self) {
+        self.other_buttons
+            .retain(|(number, _)| *number != RELEASE_ALL_CANCEL_BUTTON);
         self.delta = Vec2::ZERO;
         self.wheel_delta = Vec2::ZERO;
         self.primary.clear_edges();
@@ -141,7 +147,7 @@ impl PointerInput {
         self.click_count = 0;
     }
 
-    /// Releases all buttons, preserving release edges for buttons that were down.
+    /// Releases all buttons and marks the frame as a release-all cancellation.
     pub fn release_all_buttons(&mut self) {
         if self.primary.down {
             self.primary.release();
@@ -156,6 +162,28 @@ impl PointerInput {
             if state.down {
                 state.release();
             }
+        }
+        self.mark_release_all_cancelled();
+    }
+
+    pub(crate) fn release_all_cancelled(&self) -> bool {
+        self.other_buttons
+            .iter()
+            .any(|(number, state)| *number == RELEASE_ALL_CANCEL_BUTTON && state.released)
+    }
+
+    fn mark_release_all_cancelled(&mut self) {
+        if let Some((_, state)) = self
+            .other_buttons
+            .iter_mut()
+            .find(|(number, _)| *number == RELEASE_ALL_CANCEL_BUTTON)
+        {
+            *state = PointerButtonState::new(false, false, true);
+        } else {
+            self.other_buttons.push((
+                RELEASE_ALL_CANCEL_BUTTON,
+                PointerButtonState::new(false, false, true),
+            ));
         }
     }
 
@@ -516,7 +544,7 @@ impl ClipboardText {
 }
 
 /// Complete normalized input snapshot for one UI frame.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UiInput {
     /// Pointer input.
     pub pointer: PointerInput,
@@ -530,6 +558,18 @@ pub struct UiInput {
     pub window_focused: bool,
 }
 
+impl Default for UiInput {
+    fn default() -> Self {
+        Self {
+            pointer: PointerInput::default(),
+            keyboard: KeyboardInput::default(),
+            text_events: Vec::new(),
+            clipboard_text: Vec::new(),
+            window_focused: true,
+        }
+    }
+}
+
 impl UiInput {
     /// Clears frame-local input while preserving retained down/focus state.
     pub fn begin_frame(&mut self) {
@@ -539,7 +579,7 @@ impl UiInput {
         self.clipboard_text.clear();
     }
 
-    /// Releases pressed pointer buttons, intended for window focus loss.
+    /// Releases all pointer buttons, intended for focus loss or input cancellation.
     pub fn release_pointer_buttons(&mut self) {
         self.pointer.release_all_buttons();
     }
@@ -723,5 +763,41 @@ mod tests {
         assert!(input.keyboard.events.is_empty());
         assert!(input.text_events.is_empty());
         assert!(input.clipboard_text.is_empty());
+    }
+
+    #[test]
+    fn ui_input_release_pointer_buttons_marks_release_all_cancellation() {
+        let mut input = UiInput {
+            pointer: PointerInput {
+                primary: PointerButtonState::new(true, false, false),
+                other_buttons: vec![(8, PointerButtonState::new(true, false, false))],
+                ..PointerInput::default()
+            },
+            window_focused: true,
+            ..UiInput::default()
+        };
+
+        input.release_pointer_buttons();
+
+        assert!(!input.pointer.primary.down);
+        assert!(input.pointer.primary.released);
+        assert!(!input.pointer.secondary.down);
+        assert!(!input.pointer.secondary.released);
+        assert!(!input.pointer.middle.down);
+        assert!(!input.pointer.middle.released);
+        assert!(!input.pointer.button(MouseButton::Other(8)).down);
+        assert!(input.pointer.button(MouseButton::Other(8)).released);
+        assert_eq!(
+            input
+                .pointer
+                .button(MouseButton::Other(super::RELEASE_ALL_CANCEL_BUTTON)),
+            PointerButtonState::default()
+        );
+        assert!(input.pointer.release_all_cancelled());
+
+        input.begin_frame();
+
+        assert!(!input.pointer.primary.released);
+        assert!(!input.pointer.release_all_cancelled());
     }
 }

@@ -109,7 +109,8 @@ pub fn pressable(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> Response {
-    let hovered = !disabled && routed_hit_test(id, rect, input, memory);
+    let pointer_cancelled = memory.pointer_interaction_cancelled();
+    let hovered = !pointer_cancelled && !disabled && routed_hit_test(id, rect, input, memory);
 
     if hovered {
         memory.set_hovered(id);
@@ -129,10 +130,14 @@ pub fn pressable(
     let pressed = memory.is_pressed(id) && input.pointer.primary.down;
     let keyboard_activated = !disabled && keyboard_activation_pressed(id, input, memory);
     let clicked =
-        (!disabled && active && hovered && input.pointer.primary.released) || keyboard_activated;
+        (!pointer_cancelled && !disabled && active && hovered && input.pointer.primary.released)
+            || keyboard_activated;
     let double_clicked = clicked && input.pointer.click_count >= 2;
-    let secondary_clicked =
-        !disabled && hovered && memory.is_secondary_pressed(id) && input.pointer.secondary.released;
+    let secondary_clicked = !pointer_cancelled
+        && !disabled
+        && hovered
+        && memory.is_secondary_pressed(id)
+        && input.pointer.secondary.released;
 
     let released_active_primary = active && input.pointer.primary.released;
     if released_active_primary {
@@ -295,12 +300,14 @@ pub fn drop_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> DropTargetResponse {
+    let pointer_cancelled = memory.pointer_interaction_cancelled();
     let source = memory
         .released_drag_source()
         .or_else(|| memory.drag_source())
         .filter(|source| *source != id);
-    let release_drop_hit = input.pointer.primary.released && source.is_some();
-    let hovered = !disabled
+    let release_drop_hit = !pointer_cancelled && input.pointer.primary.released && source.is_some();
+    let hovered = !pointer_cancelled
+        && !disabled
         && if release_drop_hit {
             hit_test(rect, input)
         } else {
@@ -309,7 +316,11 @@ pub fn drop_target(
     if hovered {
         memory.set_hovered(id);
     }
-    let dropped = !disabled && hovered && input.pointer.primary.released && source.is_some();
+    let dropped = !pointer_cancelled
+        && !disabled
+        && hovered
+        && input.pointer.primary.released
+        && source.is_some();
     let response = Response::new(
         id,
         rect,
@@ -444,6 +455,7 @@ mod tests {
                 position: Some(Point::new(x, y)),
                 ..PointerInput::default()
             },
+            window_focused: true,
             ..UiInput::default()
         }
     }
@@ -640,6 +652,44 @@ mod tests {
 
         assert_eq!(memory.drag_source(), None);
         assert_eq!(memory.released_drag_source(), Some(id));
+    }
+
+    #[test]
+    fn pointer_cancellation_suppresses_events_without_releasing_drag_source() {
+        let focused = WidgetId::from_key("focused");
+        let source = WidgetId::from_key("source");
+        let target = WidgetId::from_key("target");
+        let source_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+        let target_rect = Rect::new(30.0, 0.0, 20.0, 20.0);
+        let mut memory = UiMemory::new();
+        memory.focus(focused);
+        memory.set_text_input_owner(focused);
+        let mut input = input_at(5.0, 5.0);
+
+        input.pointer.primary = PointerButtonState::new(true, true, false);
+        draggable(source, source_rect, &input, &mut memory, false);
+
+        input.pointer.position = Some(Point::new(35.0, 5.0));
+        input.pointer.delta = Vec2::new(30.0, 0.0);
+        input.pointer.primary = PointerButtonState::new(true, false, false);
+        draggable(source, source_rect, &input, &mut memory, false);
+
+        input.pointer.delta = Vec2::ZERO;
+        input.release_pointer_buttons();
+        memory.cancel_pointer_interaction();
+
+        let drop = drop_target(target, target_rect, &input, &mut memory, false);
+        let cancelled = draggable(source, source_rect, &input, &mut memory, false);
+
+        assert!(!drop.dropped);
+        assert!(!drop.response.state.hovered);
+        assert!(!cancelled.clicked);
+        assert!(!cancelled.state.active);
+        assert_eq!(memory.pointer_capture(), None);
+        assert_eq!(memory.drag_source(), None);
+        assert_eq!(memory.released_drag_source(), None);
+        assert_eq!(memory.focused(), Some(focused));
+        assert_eq!(memory.text_input_owner(), Some(focused));
     }
 
     #[test]
@@ -848,6 +898,7 @@ mod tests {
                 primary: PointerButtonState::new(false, false, true),
                 ..PointerInput::default()
             },
+            window_focused: true,
             ..UiInput::default()
         }
     }

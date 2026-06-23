@@ -330,6 +330,9 @@ impl<'a> Ui<'a> {
     #[must_use]
     pub fn begin_frame(context: FrameContext, memory: &'a mut UiMemory) -> Self {
         memory.begin_frame();
+        if !context.input.window_focused || pointer_release_all_cancelled(&context.input) {
+            memory.cancel_pointer_interaction();
+        }
         Self {
             context,
             memory,
@@ -481,6 +484,10 @@ impl<'a> Ui<'a> {
         self.output.warnings.extend(warnings);
         self.output
     }
+}
+
+fn pointer_release_all_cancelled(input: &UiInput) -> bool {
+    input.pointer.release_all_cancelled()
 }
 
 fn apply_keyboard_focus_traversal(
@@ -877,6 +884,76 @@ mod tests {
 
         assert_eq!(ui.memory().hovered(), None);
         assert_eq!(ui.memory().focused(), Some(focused));
+    }
+
+    #[test]
+    fn ui_builder_cancels_pointer_interaction_on_focus_loss_at_frame_start() {
+        let viewport = ViewportInfo::new(
+            Size::new(100.0, 50.0),
+            PhysicalSize::new(100, 50),
+            ScaleFactor::ONE,
+        );
+        let context = FrameContext::new(
+            viewport,
+            UiInput {
+                window_focused: false,
+                ..UiInput::default()
+            },
+            TimeInfo::default(),
+        );
+        let mut memory = UiMemory::new();
+        let focused = WidgetId::from_key("focused");
+        let owner = WidgetId::from_key("owner");
+        memory.focus(focused);
+        memory.set_text_input_owner(focused);
+        memory.activate(owner);
+        memory.press(owner);
+        memory.capture_pointer(owner);
+        memory.start_drag(owner);
+
+        let ui = Ui::begin_frame(context, &mut memory);
+
+        assert_eq!(ui.memory().active(), None);
+        assert_eq!(ui.memory().pressed(), None);
+        assert_eq!(ui.memory().pointer_capture(), None);
+        assert_eq!(ui.memory().drag_source(), None);
+        assert!(ui.memory().pointer_interaction_cancelled());
+        assert_eq!(ui.memory().focused(), Some(focused));
+        assert_eq!(ui.memory().text_input_owner(), Some(focused));
+    }
+
+    #[test]
+    fn ui_builder_cancels_pointer_interaction_on_release_all_at_frame_start() {
+        let viewport = ViewportInfo::new(
+            Size::new(100.0, 50.0),
+            PhysicalSize::new(100, 50),
+            ScaleFactor::ONE,
+        );
+        let mut input = UiInput {
+            window_focused: true,
+            ..UiInput::default()
+        };
+        input.release_pointer_buttons();
+        let context = FrameContext::new(viewport, input, TimeInfo::default());
+        let mut memory = UiMemory::new();
+        let focused = WidgetId::from_key("focused");
+        let owner = WidgetId::from_key("owner");
+        memory.focus(focused);
+        memory.set_text_input_owner(focused);
+        memory.activate(owner);
+        memory.press(owner);
+        memory.capture_pointer(owner);
+        memory.start_drag(owner);
+
+        let ui = Ui::begin_frame(context, &mut memory);
+
+        assert_eq!(ui.memory().active(), None);
+        assert_eq!(ui.memory().pressed(), None);
+        assert_eq!(ui.memory().pointer_capture(), None);
+        assert_eq!(ui.memory().drag_source(), None);
+        assert!(ui.memory().pointer_interaction_cancelled());
+        assert_eq!(ui.memory().focused(), Some(focused));
+        assert_eq!(ui.memory().text_input_owner(), Some(focused));
     }
 
     #[test]
