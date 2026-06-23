@@ -51,7 +51,7 @@ fn assert_size_invariants(size: Size) {
     assert!(size.width.is_finite(), "width must be finite: {size:?}");
     assert!(size.height.is_finite(), "height must be finite: {size:?}");
     assert!(size.width >= 0.0, "width must be non-negative: {size:?}");
-    assert!(size.height >= 0.0, "height must be non-negative: {size:?}",);
+    assert!(size.height >= 0.0, "height must be non-negative: {size:?}");
 }
 
 fn assert_horizontal_monotonic(rects: &[Rect]) {
