@@ -122,6 +122,17 @@ impl OverlayEntry {
     fn captures_lower_layers(&self) -> bool {
         self.modal || self.kind == OverlayKind::Modal
     }
+
+    fn receives_focus(&self) -> bool {
+        self.captures_lower_layers()
+            || matches!(
+                self.kind,
+                OverlayKind::Menu
+                    | OverlayKind::Dropdown
+                    | OverlayKind::ContextMenu
+                    | OverlayKind::CommandPalette
+            )
+    }
 }
 
 /// Retained overlay stack.
@@ -189,7 +200,11 @@ impl OverlayStack {
     /// Returns the overlay that should receive focus by default.
     #[must_use]
     pub fn focus_target(&self) -> Option<OverlayId> {
-        self.top().map(|entry| entry.id)
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| entry.receives_focus())
+            .map(|entry| entry.id)
     }
 
     /// Returns the topmost overlay containing a point.
@@ -203,21 +218,18 @@ impl OverlayStack {
 
     /// Returns the overlay that captures pointer routing for a point.
     ///
-    /// A point inside any overlay routes to the topmost containing overlay. A
-    /// point outside every overlay routes to the topmost modal overlay, if one
-    /// exists, so lower UI cannot receive interaction through it.
+    /// A point inside the topmost overlay routes to that overlay. A modal
+    /// overlay captures any point that was not already claimed by a higher
+    /// overlay, so lower UI cannot receive interaction through it.
     #[must_use]
     pub fn pointer_capture_target(&self, point: Point) -> Option<OverlayId> {
-        self.topmost_at(point).map_or_else(
-            || {
-                self.entries
-                    .iter()
-                    .rev()
-                    .find(|entry| entry.captures_lower_layers())
-                    .map(|entry| entry.id)
-            },
-            |entry| Some(entry.id),
-        )
+        self.entries.iter().rev().find_map(|entry| {
+            if entry.rect.contains_point(point) || entry.captures_lower_layers() {
+                Some(entry.id)
+            } else {
+                None
+            }
+        })
     }
 
     /// Returns overlays that should close for an outside activation point.
@@ -231,7 +243,9 @@ impl OverlayStack {
             if entry.dismissal.closes_on_outside_click() {
                 requests.push(entry.id);
             }
-            if entry.captures_lower_layers() || !entry.dismissal.closes_on_outside_click() {
+            if entry.captures_lower_layers()
+                || (!entry.dismissal.closes_on_outside_click() && entry.receives_focus())
+            {
                 break;
             }
         }
@@ -241,9 +255,15 @@ impl OverlayStack {
     /// Returns the top overlay that should close for Escape.
     #[must_use]
     pub fn escape_close_request(&self) -> Option<OverlayId> {
-        self.top()
-            .filter(|entry| entry.dismissal.closes_on_escape())
-            .map(|entry| entry.id)
+        for entry in self.entries.iter().rev() {
+            if entry.dismissal.closes_on_escape() {
+                return Some(entry.id);
+            }
+            if entry.captures_lower_layers() || entry.receives_focus() {
+                return None;
+            }
+        }
+        None
     }
 
     /// Returns dismissal requests for a frame's overlay input.
@@ -538,14 +558,7 @@ pub fn overlay_semantics(entry: &OverlayEntry, label: impl Into<String>) -> Sema
     };
     let mut node =
         SemanticNode::new(WidgetId::from_raw(entry.id.raw()), role, entry.rect).with_label(label);
-    if matches!(
-        entry.kind,
-        OverlayKind::Menu
-            | OverlayKind::Dropdown
-            | OverlayKind::ContextMenu
-            | OverlayKind::CommandPalette
-            | OverlayKind::Modal
-    ) {
+    if entry.receives_focus() {
         node = node.focusable(true);
     }
     if entry.dismissal != OverlayDismissal::Manual {
@@ -836,13 +849,53 @@ mod tests {
         );
         assert_eq!(
             stack.pointer_capture_target(Point::new(90.0, 90.0)),
-            Some(OverlayId::from_raw(1))
+            Some(OverlayId::from_raw(2))
         );
         assert_eq!(
             stack.pointer_capture_target(Point::new(150.0, 150.0)),
             Some(OverlayId::from_raw(2))
         );
         assert_eq!(stack.focus_target(), Some(OverlayId::from_raw(2)));
+    }
+
+    #[test]
+    fn modal_capture_does_not_block_higher_overlay_hits() {
+        let mut stack = OverlayStack::new();
+        stack.open(OverlayEntry::new(
+            OverlayId::from_raw(1),
+            OverlayKind::Popover,
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+        ));
+        stack.open(
+            OverlayEntry::new(
+                OverlayId::from_raw(2),
+                OverlayKind::Modal,
+                Rect::new(10.0, 10.0, 20.0, 20.0),
+            )
+            .dismiss_on(OverlayDismissal::OutsideClickOrEscape),
+        );
+        stack.open(OverlayEntry::new(
+            OverlayId::from_raw(3),
+            OverlayKind::Tooltip,
+            Rect::new(80.0, 80.0, 10.0, 10.0),
+        ));
+
+        assert_eq!(
+            stack.pointer_capture_target(Point::new(85.0, 85.0)),
+            Some(OverlayId::from_raw(3))
+        );
+        assert_eq!(
+            stack.pointer_capture_target(Point::new(50.0, 50.0)),
+            Some(OverlayId::from_raw(2))
+        );
+        assert_eq!(
+            stack.outside_click_close_requests(Point::new(50.0, 50.0)),
+            vec![OverlayId::from_raw(2)]
+        );
+        assert_eq!(
+            stack.dismissal_requests(None, true),
+            vec![OverlayId::from_raw(2)]
+        );
     }
 
     #[test]
@@ -876,6 +929,58 @@ mod tests {
     }
 
     #[test]
+    fn focus_target_skips_non_focusable_overlay_surfaces() {
+        let mut stack = OverlayStack::new();
+
+        assert_eq!(stack.focus_target(), None);
+
+        stack.open(OverlayEntry::new(
+            OverlayId::from_raw(1),
+            OverlayKind::Tooltip,
+            Rect::new(0.0, 0.0, 20.0, 20.0),
+        ));
+        assert_eq!(stack.focus_target(), None);
+
+        stack.open(OverlayEntry::new(
+            OverlayId::from_raw(2),
+            OverlayKind::Menu,
+            Rect::new(0.0, 0.0, 60.0, 60.0),
+        ));
+        stack.open(OverlayEntry::new(
+            OverlayId::from_raw(3),
+            OverlayKind::DragPreview,
+            Rect::new(10.0, 10.0, 20.0, 20.0),
+        ));
+        assert_eq!(stack.focus_target(), Some(OverlayId::from_raw(2)));
+
+        stack.open(
+            OverlayEntry::new(
+                OverlayId::from_raw(4),
+                OverlayKind::Popover,
+                Rect::new(20.0, 20.0, 20.0, 20.0),
+            )
+            .modal(true),
+        );
+        assert_eq!(stack.focus_target(), Some(OverlayId::from_raw(4)));
+    }
+
+    #[test]
+    fn popover_clamp_handles_non_origin_viewport_edges() {
+        let rect = place_popover(
+            PopoverRequest {
+                anchor: Rect::new(180.0, 95.0, 10.0, 10.0),
+                size: Size::new(50.0, 30.0),
+                placement: PopoverPlacement::Right,
+                offset: 4.0,
+                fit_viewport: true,
+            },
+            Rect::new(100.0, 50.0, 100.0, 80.0),
+        );
+
+        assert_eq!(rect, Rect::new(126.0, 95.0, 50.0, 30.0));
+    }
+
+    #[test]
     fn overlay_semantics_describe_surface_and_dismissal() {
         let entry = OverlayEntry::new(
             OverlayId::from_raw(7),
@@ -894,6 +999,42 @@ mod tests {
                 .iter()
                 .any(|action| action.kind == SemanticActionKind::Dismiss)
         );
+    }
+
+    #[test]
+    fn overlay_semantics_expose_focusability_for_modal_and_non_focusable_surfaces() {
+        let modal_popover = OverlayEntry::new(
+            OverlayId::from_raw(8),
+            OverlayKind::Popover,
+            Rect::new(0.0, 0.0, 100.0, 50.0),
+        )
+        .modal(true)
+        .dismiss_on(OverlayDismissal::OutsideClick);
+        let tooltip = OverlayEntry::new(
+            OverlayId::from_raw(9),
+            OverlayKind::Tooltip,
+            Rect::new(0.0, 0.0, 40.0, 20.0),
+        );
+
+        let modal_node = overlay_semantics(&modal_popover, "Inspector");
+        let tooltip_node = overlay_semantics(&tooltip, "Tip");
+
+        assert_eq!(modal_node.role, SemanticRole::Custom("popover".to_owned()));
+        assert_eq!(modal_node.label.as_deref(), Some("Inspector"));
+        assert!(modal_node.focusable);
+        assert!(
+            modal_node
+                .actions
+                .iter()
+                .any(|action| action.kind == SemanticActionKind::Dismiss)
+        );
+        assert_eq!(
+            tooltip_node.role,
+            SemanticRole::Custom("tooltip".to_owned())
+        );
+        assert_eq!(tooltip_node.label.as_deref(), Some("Tip"));
+        assert!(!tooltip_node.focusable);
+        assert!(tooltip_node.actions.is_empty());
     }
 
     #[test]
