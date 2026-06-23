@@ -25,6 +25,16 @@ fn key_press(key: Key, modifiers: Modifiers) -> KeyboardInput {
     keyboard_event(key, modifiers, KeyState::Pressed, false)
 }
 
+fn key_presses(events: Vec<(Key, Modifiers)>) -> KeyboardInput {
+    KeyboardInput {
+        modifiers: Modifiers::default(),
+        events: events
+            .into_iter()
+            .map(|(key, modifiers)| KeyEvent::new(key, KeyState::Pressed, modifiers, false))
+            .collect(),
+    }
+}
+
 fn physical_key_press(key: Key, physical_key: PhysicalKey, modifiers: Modifiers) -> KeyboardInput {
     KeyboardInput {
         modifiers,
@@ -51,6 +61,21 @@ fn bind(
     priority: ActionPriority,
 ) {
     router.bind(ActionBinding::new(descriptor, context, priority));
+}
+
+fn assert_shortcut_routes_to(
+    router: &ActionRouter,
+    input: &KeyboardInput,
+    routing: ActionRoutingContext,
+    expected: &str,
+) {
+    assert_eq!(
+        router
+            .resolve_shortcut_in_context(input, routing)
+            .expect("shortcut action")
+            .action_id,
+        ActionId::new(expected)
+    );
 }
 
 #[test]
@@ -198,6 +223,7 @@ fn action_conformance_invocations_preserve_source_and_context_snapshots() {
 
 #[test]
 fn action_conformance_router_respects_active_context_priority() {
+    let frame = WidgetId::from_key("frame");
     let panel = WidgetId::from_key("panel");
     let widget = WidgetId::from_key("button");
     let field = WidgetId::from_key("field");
@@ -207,6 +233,18 @@ fn action_conformance_router_respects_active_context_priority() {
         action_with_shortcut("global", ctrl_shortcut("k")),
         ActionContext::Global,
         ActionPriority::Global,
+    );
+    bind(
+        &mut router,
+        action_with_shortcut("editor", ctrl_shortcut("k")),
+        ActionContext::Editor,
+        ActionPriority::Editor,
+    );
+    bind(
+        &mut router,
+        action_with_shortcut("frame", ctrl_shortcut("k")),
+        ActionContext::Frame(frame),
+        ActionPriority::Container,
     );
     bind(
         &mut router,
@@ -228,35 +266,43 @@ fn action_conformance_router_respects_active_context_priority() {
     );
 
     let input = key_press(Key::Character("k".to_owned()), ctrl());
-    let text_routing = ActionRoutingContext::new()
-        .with_panel(panel)
-        .with_focused_widget(widget)
-        .with_text_input(field);
-    let widget_routing = ActionRoutingContext::new()
-        .with_panel(panel)
-        .with_focused_widget(widget);
-    let panel_routing = ActionRoutingContext::new().with_panel(panel);
 
-    assert_eq!(
-        router
-            .resolve_shortcut_in_context(&input, text_routing)
-            .expect("text action")
-            .action_id,
-        ActionId::new("text")
+    assert_shortcut_routes_to(
+        &router,
+        &input,
+        ActionRoutingContext::new()
+            .with_editor()
+            .with_panel(panel)
+            .with_focused_widget(widget)
+            .with_text_input(field),
+        "text",
     );
-    assert_eq!(
-        router
-            .resolve_shortcut_in_context(&input, widget_routing)
-            .expect("widget action")
-            .action_id,
-        ActionId::new("widget")
+    assert_shortcut_routes_to(
+        &router,
+        &input,
+        ActionRoutingContext::new()
+            .with_editor()
+            .with_panel(panel)
+            .with_focused_widget(widget),
+        "widget",
     );
-    assert_eq!(
-        router
-            .resolve_shortcut_in_context(&input, panel_routing)
-            .expect("panel action")
-            .action_id,
-        ActionId::new("panel")
+    assert_shortcut_routes_to(
+        &router,
+        &input,
+        ActionRoutingContext::new().with_panel(panel),
+        "panel",
+    );
+    assert_shortcut_routes_to(
+        &router,
+        &input,
+        ActionRoutingContext::new().with_frame(frame),
+        "frame",
+    );
+    assert_shortcut_routes_to(
+        &router,
+        &input,
+        ActionRoutingContext::new().with_editor(),
+        "editor",
     );
     assert_eq!(
         router
@@ -264,6 +310,47 @@ fn action_conformance_router_respects_active_context_priority() {
             .expect("global action")
             .action_id,
         ActionId::new("global")
+    );
+}
+
+#[test]
+fn action_conformance_modal_context_beats_lower_priority_active_contexts() {
+    let modal = WidgetId::from_key("modal");
+    let field = WidgetId::from_key("field");
+    let mut router = ActionRouter::new();
+    bind(
+        &mut router,
+        action_with_shortcut("global", ctrl_shortcut("k")),
+        ActionContext::Global,
+        ActionPriority::Global,
+    );
+    bind(
+        &mut router,
+        action_with_shortcut("text", ctrl_shortcut("k")),
+        ActionContext::TextInput(field),
+        ActionPriority::TextInput,
+    );
+    bind(
+        &mut router,
+        action_with_shortcut("modal", ctrl_shortcut("k")),
+        ActionContext::Modal(modal),
+        ActionPriority::Modal,
+    );
+
+    let input = key_press(Key::Character("k".to_owned()), ctrl());
+    assert_shortcut_routes_to(
+        &router,
+        &input,
+        ActionRoutingContext::new()
+            .with_text_input(field)
+            .with_modal(modal),
+        "modal",
+    );
+    assert_shortcut_routes_to(
+        &router,
+        &input,
+        ActionRoutingContext::new().with_text_input(field),
+        "text",
     );
 }
 
@@ -297,6 +384,12 @@ fn action_conformance_router_ignores_inactive_contextual_shortcuts() {
     let mut router = ActionRouter::new();
     bind(
         &mut router,
+        action_with_shortcut("global.active", ctrl_shortcut("r")),
+        ActionContext::Global,
+        ActionPriority::Global,
+    );
+    bind(
+        &mut router,
         action_with_shortcut("inactive.widget", ctrl_shortcut("r")),
         ActionContext::Widget(inactive),
         ActionPriority::FocusedWidget,
@@ -307,14 +400,22 @@ fn action_conformance_router_ignores_inactive_contextual_shortcuts() {
         ActionContext::TextInput(inactive),
         ActionPriority::TextInput,
     );
+    bind(
+        &mut router,
+        action_with_shortcut("inactive.modal", ctrl_shortcut("r")),
+        ActionContext::Modal(inactive),
+        ActionPriority::Modal,
+    );
 
-    assert_eq!(
-        router.resolve_shortcut_in_context(
+    let invocation = router
+        .resolve_shortcut_in_context(
             &key_press(Key::Character("r".to_owned()), ctrl()),
             ActionRoutingContext::new().with_focused_widget(active),
-        ),
-        None
-    );
+        )
+        .expect("lower-priority active fallback");
+
+    assert_eq!(invocation.action_id, ActionId::new("global.active"));
+    assert_eq!(invocation.context, ActionContext::Global);
 }
 
 #[test]
@@ -349,11 +450,20 @@ fn action_conformance_router_skips_hidden_and_disabled_bindings() {
 
 #[test]
 fn action_conformance_router_uses_lower_priority_visible_enabled_fallback() {
+    let modal = WidgetId::from_key("modal");
     let widget = WidgetId::from_key("button");
     let mut hidden = action_with_shortcut("hidden", ctrl_shortcut("h"));
     hidden.state.visible = false;
+    let mut disabled = action_with_shortcut("disabled", ctrl_shortcut("h"));
+    disabled.state.enabled = false;
     let enabled = action_with_shortcut("global.enabled", ctrl_shortcut("h"));
     let mut router = ActionRouter::new();
+    bind(
+        &mut router,
+        disabled,
+        ActionContext::Modal(modal),
+        ActionPriority::Modal,
+    );
     bind(
         &mut router,
         hidden,
@@ -370,7 +480,9 @@ fn action_conformance_router_uses_lower_priority_visible_enabled_fallback() {
     let invocation = router
         .resolve_shortcut_in_context(
             &key_press(Key::Character("h".to_owned()), ctrl()),
-            ActionRoutingContext::new().with_focused_widget(widget),
+            ActionRoutingContext::new()
+                .with_focused_widget(widget)
+                .with_modal(modal),
         )
         .expect("fallback invocation");
 
@@ -438,6 +550,19 @@ fn action_conformance_text_input_reservation_blocks_only_reserved_global_shortcu
             routing,
         ),
         None
+    );
+    assert_eq!(
+        router
+            .resolve_shortcut_in_context(
+                &key_presses(vec![
+                    (Key::Character("x".to_owned()), Modifiers::default(),),
+                    (Key::Character("s".to_owned()), ctrl()),
+                ]),
+                routing,
+            )
+            .expect("mixed non-reserved global action")
+            .action_id,
+        ActionId::new("global.save")
     );
 }
 

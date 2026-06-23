@@ -210,6 +210,8 @@ fn key_matches(expected: &Key, actual: &Key) -> bool {
 pub enum ActionContext {
     /// Global application context.
     Global,
+    /// Dock or editor-wide context above global application fallback.
+    Editor,
     /// A docked frame or document-like context.
     Frame(WidgetId),
     /// A passive panel context.
@@ -218,6 +220,8 @@ pub enum ActionContext {
     Widget(WidgetId),
     /// Text input context, which can reserve editing shortcuts.
     TextInput(WidgetId),
+    /// Active modal or modal-like interaction context.
+    Modal(WidgetId),
 }
 
 /// Source surface that emitted an action invocation.
@@ -309,12 +313,16 @@ impl ActionQueue {
 pub enum ActionPriority {
     /// Global fallback action.
     Global = 0,
+    /// Dock or editor-wide action.
+    Editor = 1,
     /// Docked frame or panel action.
-    Container = 1,
+    Container = 2,
     /// Focused widget action.
-    FocusedWidget = 2,
-    /// Text input action. This has highest priority because editing shortcuts should win.
-    TextInput = 3,
+    FocusedWidget = 3,
+    /// Text input action. Reserved editing shortcuts still block non-text bindings.
+    TextInput = 4,
+    /// Active modal or modal-like interaction action.
+    Modal = 5,
 }
 
 /// A shortcut binding to an action in a specific context.
@@ -331,6 +339,8 @@ pub struct ActionBinding {
 /// Active context used when resolving shortcuts.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct ActionRoutingContext {
+    /// Whether dock or editor-wide bindings are active.
+    pub editor: bool,
     /// Active docked frame or document-like context.
     pub frame: Option<WidgetId>,
     /// Active passive panel context.
@@ -339,6 +349,8 @@ pub struct ActionRoutingContext {
     pub focused_widget: Option<WidgetId>,
     /// Focused text input context.
     pub text_input: Option<WidgetId>,
+    /// Active modal or modal-like interaction context.
+    pub modal: Option<WidgetId>,
 }
 
 impl ActionRoutingContext {
@@ -346,11 +358,20 @@ impl ActionRoutingContext {
     #[must_use]
     pub const fn new() -> Self {
         Self {
+            editor: false,
             frame: None,
             panel: None,
             focused_widget: None,
             text_input: None,
+            modal: None,
         }
+    }
+
+    /// Activates dock or editor-wide bindings.
+    #[must_use]
+    pub const fn with_editor(mut self) -> Self {
+        self.editor = true;
+        self
     }
 
     /// Sets the active frame context.
@@ -379,6 +400,13 @@ impl ActionRoutingContext {
     pub const fn with_text_input(mut self, widget: WidgetId) -> Self {
         self.text_input = Some(widget);
         self.focused_widget = Some(widget);
+        self
+    }
+
+    /// Sets the active modal or modal-like interaction context.
+    #[must_use]
+    pub const fn with_modal(mut self, modal: WidgetId) -> Self {
+        self.modal = Some(modal);
         self
     }
 }
@@ -482,10 +510,12 @@ impl ActionRouter {
 fn binding_context_is_active(context: &ActionContext, routing: ActionRoutingContext) -> bool {
     match context {
         ActionContext::Global => true,
+        ActionContext::Editor => routing.editor,
         ActionContext::Frame(id) => routing.frame == Some(*id),
         ActionContext::Panel(id) => routing.panel == Some(*id),
         ActionContext::Widget(id) => routing.focused_widget == Some(*id),
         ActionContext::TextInput(id) => routing.text_input == Some(*id),
+        ActionContext::Modal(id) => routing.modal == Some(*id),
     }
 }
 
