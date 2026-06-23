@@ -14,14 +14,14 @@ Follow [docs/specs.md](docs/specs.md) as the source of truth for architecture, t
 - Do not run heavy processing inside UI widget calls.
 - Prefer deterministic, testable functions for layout, input state transitions, hit testing, focus, and action routing.
 - Add focused tests for any core behavior that can be tested without a window or GPU.
-- Use the spec terminology consistently: `WidgetId`, `UiInput`, `UiMemory`, `Response`, `Primitive`, `SemanticNode`, `Action`, `DockArea`, `Frame`, `Panel`, `ViewportSurface`.
+- Use the spec terminology consistently: `WidgetId`, `UiInput`, `UiMemory`, `Response`, `Primitive`, `SemanticNode`, `Action`, `Dock`, `Frame`, `Panel`, `ViewportSurface`.
 
 ## Architecture Constraints
 
 The editor hierarchy is:
 
 ```text
-DockArea
+Dock
   -> Frame
       -> Panel
           -> Components
@@ -30,7 +30,7 @@ DockArea
 
 Responsibilities:
 
-- `DockArea` arranges Frames.
+- `Dock` arranges Frames.
 - `Frame` owns docked/sub-window behavior such as active state, close/dismiss, resize, tab/merge, and focus.
 - `Panel` is a passive content surface and must not decide docking, dragging, dismissal, merge behavior, or outer size.
 
@@ -119,7 +119,7 @@ Do not create a PR that mixes unrelated architecture layers. For example:
 - Do not combine `WidgetId` work with renderer backend work.
 - Do not combine theme token work with winit event normalization.
 - Do not combine table virtualization with text editing.
-- Do not combine DockArea behavior with Vello rendering.
+- Do not combine Dock behavior with Vello rendering.
 
 Good PR boundaries:
 

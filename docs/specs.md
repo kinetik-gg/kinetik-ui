@@ -200,7 +200,7 @@ Action
 ActionInvocation
   A request emitted by the UI indicating that an action was invoked.
 
-DockArea
+Dock
   Editor layout manager that owns Frames.
 
 Frame
@@ -475,7 +475,7 @@ Stack
 Grid
 ScrollArea
 SplitPane
-DockArea
+Dock
 Frame
 Panel
 Overlay
@@ -508,29 +508,29 @@ Recommended layout contracts:
 - `Grid` places children in rows and columns with fixed/fill/fit sizing.
 - `ScrollArea` lays content in a scrollable viewport and clips children.
 - `SplitPane` divides available space between two or more children.
-- `DockArea` manages editor Frames.
+- `Dock` manages editor Frames.
 - `Frame` owns editor-region behavior and chrome.
 - `Panel` is a passive content surface.
 
 Layout code should avoid web-like CSS complexity unless a feature is explicitly needed.
 
-## 12. DockArea, Frame, And Panel
+## 12. Dock, Frame, And Panel
 
 Editor-style applications need a hierarchy that separates workspace arrangement from content.
 
 The hierarchy is:
 
 ```text
-DockArea
+Dock
   -> Frame
       -> Panel
           -> Components
               -> Primitives
 ```
 
-### 12.1 DockArea
+### 12.1 Dock
 
-`DockArea` is the layout manager for editor frames.
+`Dock` is the layout manager for editor frames.
 
 Responsibilities:
 
@@ -544,18 +544,18 @@ Responsibilities:
 - Support frame merging/tabbing.
 - Support drag-to-dock behavior through explicit tab drag state and drop targets.
 
-`DockArea` controls where frames live and how much space they receive.
+`Dock` controls where frames live and how much space they receive.
 
 Interactive docking remains model-owned and deterministic:
 
 ```text
-frame tab drag -> DockTabDrag -> DockDropTarget -> DockArea mutation
+frame tab drag -> DockTabDrag -> DockDropTarget -> Dock mutation
 splitter drag -> DockSplitPath + delta -> clamped split ratio
 ```
 
 Splitters are addressed by `DockSplitPath`, and drop targets distinguish tab
 merge from split insertion. These operations update the same dock tree that is
-serialized by `DockArea::snapshot`.
+serialized by `Dock::snapshot`.
 
 ### 12.2 Frame
 
@@ -758,7 +758,7 @@ Priority:
 2. Focused text editor.
 3. Focused widget.
 4. Focused Frame/Panel.
-5. DockArea/editor context.
+5. Dock/editor context.
 6. Global application actions.
 ```
 
@@ -1029,7 +1029,7 @@ ContextMenu
 Tabs
 Panel
 Frame
-DockArea
+Dock
 Toolbar
 StatusBar
 List
@@ -1701,7 +1701,7 @@ Inspector/property grid
   disabled states, validation states
 
 Media/editor layout
-  DockArea -> Frames -> Panels layout similar to editor applications
+  Dock -> Frames -> Panels layout similar to editor applications
 
 Viewport demo
   texture surface, zoom/pan, rulers, crosshair, overlays, fit/100% controls
@@ -1873,8 +1873,8 @@ Phase 14: Overlays and Menus
   custom menus
   context menus
 
-Phase 15: DockArea, Frame, Panel
-  DockArea layout model
+Phase 15: Dock, Frame, Panel
+  Dock layout model
   Frames
   passive Panels
   split/tab behavior
