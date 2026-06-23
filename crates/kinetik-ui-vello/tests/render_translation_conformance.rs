@@ -268,6 +268,199 @@ fn render_translation_conformance_reports_recoverable_missing_resource_paths() {
 }
 
 #[test]
+fn render_translation_conformance_translates_registered_image_and_texture_resources() {
+    let mut resources = RenderResources::new();
+    resources.register_image(ImageResource {
+        id: ImageId::from_raw(10),
+        size: Size::new(2.0, 2.0),
+        sampling: RenderImageSampling::Pixelated,
+        pixels: Some(tiny_image()),
+        atlas_region: None,
+    });
+    resources.register_texture(TextureResource {
+        id: TextureId::from_raw(11),
+        size: Size::new(2.0, 2.0),
+        sampling: RenderImageSampling::Smooth,
+        snapshot: Some(tiny_image()),
+    });
+    let primitives = vec![
+        Primitive::Image(ImagePrimitive {
+            image: ImageId::from_raw(10),
+            rect: Rect::new(0.0, 0.0, 8.0, 8.0),
+            tint: Some(Color::rgba(1.0, 0.5, 0.25, 0.75)),
+        }),
+        Primitive::Texture(TexturePrimitive {
+            texture: TextureId::from_raw(11),
+            rect: Rect::new(12.0, 0.0, 8.0, 8.0),
+            source_size: Size::new(2.0, 2.0),
+        }),
+    ];
+
+    let translation = translate_primitives(&primitives, &resources);
+
+    assert!(translation.diagnostics.is_empty());
+    assert_eq!(
+        render_translation_snapshot(&translation),
+        "commands:\n  0: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] image#10 rect=(0.000, 0.000, 8.000, 8.000) tint=rgba(1.000, 0.500, 0.250, 0.750)\n  1: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] texture#11 rect=(12.000, 0.000, 8.000, 8.000) source_size=2.000x2.000\ndiagnostics:"
+    );
+}
+
+#[test]
+fn render_translation_conformance_reports_invalid_geometry_for_skipped_primitives() {
+    let primitives = vec![
+        Primitive::Rect(RectPrimitive {
+            rect: Rect::new(0.0, 0.0, -1.0, 8.0),
+            fill: Some(Brush::Solid(Color::WHITE)),
+            stroke: None,
+            radius: CornerRadius::all(0.0),
+        }),
+        Primitive::Line(LinePrimitive {
+            from: Point::new(f32::NAN, 0.0),
+            to: Point::new(10.0, 0.0),
+            stroke: Stroke::new(1.0, Brush::Solid(Color::WHITE)),
+        }),
+        Primitive::Path(PathPrimitive::new(
+            [],
+            Some(Brush::Solid(Color::WHITE)),
+            None,
+        )),
+        Primitive::Text(TextPrimitive {
+            layout: None,
+            origin: Point::new(0.0, 10.0),
+            text: "Bad size".to_owned(),
+            family: "sans-serif".to_owned(),
+            size: 0.0,
+            line_height: 16.0,
+            brush: Brush::Solid(Color::WHITE),
+        }),
+        Primitive::Text(TextPrimitive {
+            layout: None,
+            origin: Point::new(0.0, 30.0),
+            text: "Bad line height".to_owned(),
+            family: "sans-serif".to_owned(),
+            size: 12.0,
+            line_height: f32::INFINITY,
+            brush: Brush::Solid(Color::WHITE),
+        }),
+        Primitive::Texture(TexturePrimitive {
+            texture: TextureId::from_raw(13),
+            rect: Rect::new(52.0, 0.0, 8.0, 8.0),
+            source_size: Size::new(0.0, 2.0),
+        }),
+    ];
+
+    let translation = translate_primitives(&primitives, &RenderResources::new());
+
+    assert_eq!(
+        render_translation_snapshot(&translation),
+        "commands:\ndiagnostics:\n  invalid_geometry:rect\n  invalid_geometry:line\n  invalid_geometry:path\n  invalid_geometry:text_size\n  invalid_geometry:text_line_height\n  invalid_geometry:texture_source_size"
+    );
+}
+
+#[test]
+fn render_translation_conformance_reports_invalid_geometry_for_sanitized_primitives() {
+    let mut resources = RenderResources::new();
+    resources.register_image(ImageResource {
+        id: ImageId::from_raw(12),
+        size: Size::new(2.0, 2.0),
+        sampling: RenderImageSampling::Pixelated,
+        pixels: Some(tiny_image()),
+        atlas_region: None,
+    });
+    let primitives = vec![
+        Primitive::Shadow(ShadowPrimitive::new(
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Vec2::new(f32::INFINITY, 1.0),
+            -1.0,
+            f32::NAN,
+            -2.0,
+            Color::rgba(f32::NAN, 0.5, 0.25, 1.0),
+        )),
+        Primitive::Rect(RectPrimitive {
+            rect: Rect::new(20.0, 0.0, 10.0, 10.0),
+            fill: Some(Brush::LinearGradient(LinearGradient::between(
+                Point::new(f32::NAN, 0.0),
+                Point::new(1.0, 0.0),
+                Color::WHITE,
+                Color::BLACK,
+            ))),
+            stroke: Some(Stroke::new(-1.0, Brush::Solid(Color::WHITE))),
+            radius: CornerRadius {
+                top_left: f32::NAN,
+                top_right: -1.0,
+                bottom_right: 2.0,
+                bottom_left: 3.0,
+            },
+        }),
+        Primitive::Image(ImagePrimitive {
+            image: ImageId::from_raw(12),
+            rect: Rect::new(40.0, 0.0, 8.0, 8.0),
+            tint: Some(Color::rgba(1.0, f32::NAN, 0.0, 1.0)),
+        }),
+    ];
+
+    let translation = translate_primitives(&primitives, &resources);
+
+    assert_eq!(
+        translation.diagnostics,
+        vec![
+            RenderDiagnostic::InvalidGeometry("shadow_offset"),
+            RenderDiagnostic::InvalidGeometry("shadow_blur"),
+            RenderDiagnostic::InvalidGeometry("shadow_spread"),
+            RenderDiagnostic::InvalidGeometry("shadow_radius"),
+            RenderDiagnostic::InvalidGeometry("shadow_color"),
+            RenderDiagnostic::InvalidGeometry("rect_fill"),
+            RenderDiagnostic::InvalidGeometry("rect_stroke"),
+            RenderDiagnostic::InvalidGeometry("rect_radius"),
+            RenderDiagnostic::InvalidGeometry("image_tint"),
+        ]
+    );
+    assert_eq!(
+        render_translation_snapshot(&translation),
+        "commands:\n  0: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] shadow rect=(0.000, 0.000, 10.000, 10.000) offset=(0.000, 1.000) blur=0.000 spread=0.000 radius=0.000 color=rgba(0.000, 0.500, 0.250, 1.000)\n  1: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] rect rect=(20.000, 0.000, 10.000, 10.000) fill=rgba(1.000, 1.000, 1.000, 1.000) stroke=none radius=(0.000, 0.000, 2.000, 3.000)\n  2: layer=0 transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000] clips=[] image#12 rect=(40.000, 0.000, 8.000, 8.000) tint=rgba(1.000, 0.000, 0.000, 1.000)\ndiagnostics:\n  invalid_geometry:shadow_offset\n  invalid_geometry:shadow_blur\n  invalid_geometry:shadow_spread\n  invalid_geometry:shadow_radius\n  invalid_geometry:shadow_color\n  invalid_geometry:rect_fill\n  invalid_geometry:rect_stroke\n  invalid_geometry:rect_radius\n  invalid_geometry:image_tint"
+    );
+}
+
+#[test]
+fn render_translation_conformance_reports_invalid_stack_primitives() {
+    let primitives = vec![
+        Primitive::ClipBegin {
+            id: ClipId::from_raw(1),
+            rect: Rect::new(0.0, 0.0, f32::NAN, 10.0),
+        },
+        Primitive::TransformBegin(Transform {
+            m11: f32::INFINITY,
+            ..Transform::IDENTITY
+        }),
+        Primitive::LayerEnd {
+            id: LayerId::from_raw(99),
+        },
+        Primitive::TransformEnd,
+        Primitive::LayerBegin {
+            id: LayerId::from_raw(2),
+        },
+        Primitive::ClipBegin {
+            id: ClipId::from_raw(3),
+            rect: Rect::new(1.0, 2.0, 30.0, 20.0),
+        },
+        Primitive::TransformBegin(Transform::translation(Vec2::new(4.0, 5.0))),
+        Primitive::Rect(RectPrimitive {
+            rect: Rect::new(6.0, 7.0, 8.0, 9.0),
+            fill: Some(Brush::Solid(Color::WHITE)),
+            stroke: None,
+            radius: CornerRadius::all(0.0),
+        }),
+    ];
+
+    let translation = translate_primitives(&primitives, &RenderResources::new());
+
+    assert_eq!(
+        render_translation_snapshot(&translation),
+        "commands:\n  0: layer=2 transform=[1.000, 0.000, 0.000, 1.000, 4.000, 5.000] clips=[{rect=(1.000, 2.000, 30.000, 20.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}] rect rect=(6.000, 7.000, 8.000, 9.000) fill=rgba(1.000, 1.000, 1.000, 1.000) stroke=none radius=(0.000, 0.000, 0.000, 0.000)\ndiagnostics:\n  invalid_geometry:clip\n  invalid_geometry:transform\n  invalid_geometry:layer_stack\n  invalid_geometry:transform_stack\n  invalid_geometry:clip_stack\n  invalid_geometry:layer_stack\n  invalid_geometry:transform_stack"
+    );
+}
+
+#[test]
 fn render_translation_conformance_drops_invalid_resource_source_geometry() {
     let mut resources = RenderResources::new();
     resources.register_texture(TextureResource {
