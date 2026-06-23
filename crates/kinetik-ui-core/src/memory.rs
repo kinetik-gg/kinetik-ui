@@ -19,6 +19,8 @@ pub struct UiMemory {
     secondary_pressed: Option<WidgetId>,
     /// Widget currently holding pointer capture.
     pointer_capture: Option<WidgetId>,
+    /// Pointer interaction was cancelled at this frame's runtime boundary.
+    pointer_interaction_cancelled: bool,
     /// Widget currently acting as an active drag source.
     drag_source: Option<WidgetId>,
     /// Drag source released during this frame.
@@ -40,6 +42,7 @@ impl UiMemory {
     pub fn begin_frame(&mut self) {
         self.hovered = None;
         self.released_drag_source = None;
+        self.pointer_interaction_cancelled = false;
     }
 
     /// Returns the widget hovered during the current frame.
@@ -76,6 +79,12 @@ impl UiMemory {
     #[must_use]
     pub const fn pointer_capture(&self) -> Option<WidgetId> {
         self.pointer_capture
+    }
+
+    /// Returns true when pointer interaction was cancelled before primitive evaluation.
+    #[must_use]
+    pub const fn pointer_interaction_cancelled(&self) -> bool {
+        self.pointer_interaction_cancelled
     }
 
     /// Returns the widget currently acting as an active drag source.
@@ -210,6 +219,21 @@ impl UiMemory {
         self.released_drag_source = None;
     }
 
+    /// Cancels active pointer interaction while preserving unrelated retained state.
+    pub fn cancel_pointer_interaction(&mut self) -> bool {
+        let cancelled = self.active.is_some()
+            || self.pressed.is_some()
+            || self.secondary_pressed.is_some()
+            || self.pointer_capture.is_some()
+            || self.drag_source.is_some();
+        if cancelled {
+            self.clear_drag();
+            self.clear_interaction();
+            self.pointer_interaction_cancelled = true;
+        }
+        cancelled
+    }
+
     /// Releases pointer capture when it is held by the provided widget.
     pub fn release_pointer_capture(&mut self, id: WidgetId) {
         if self.pointer_capture == Some(id) {
@@ -278,6 +302,7 @@ mod tests {
         assert_eq!(memory.pressed(), None);
         assert_eq!(memory.secondary_pressed(), None);
         assert_eq!(memory.pointer_capture(), None);
+        assert!(!memory.pointer_interaction_cancelled());
         assert_eq!(memory.drag_source(), None);
         assert_eq!(memory.released_drag_source(), None);
         assert_eq!(memory.text_input_owner(), None);
@@ -330,7 +355,38 @@ mod tests {
         assert_eq!(memory.pressed(), None);
         assert_eq!(memory.secondary_pressed(), None);
         assert_eq!(memory.pointer_capture(), None);
+        assert!(!memory.pointer_interaction_cancelled());
         assert_eq!(memory.drag_source(), Some(id));
+    }
+
+    #[test]
+    fn cancels_pointer_interaction_without_clearing_unrelated_state() {
+        let focused = WidgetId::from_key("focused");
+        let pointer_owner = WidgetId::from_key("pointer-owner");
+        let drag_owner = WidgetId::from_key("drag-owner");
+        let mut memory = UiMemory::new();
+        memory.focus(focused);
+        memory.set_text_input_owner(focused);
+        memory.activate(pointer_owner);
+        memory.press(pointer_owner);
+        memory.press_secondary(pointer_owner);
+        memory.capture_pointer(pointer_owner);
+        memory.start_drag(drag_owner);
+
+        assert!(memory.cancel_pointer_interaction());
+
+        assert_eq!(memory.active(), None);
+        assert_eq!(memory.pressed(), None);
+        assert_eq!(memory.secondary_pressed(), None);
+        assert_eq!(memory.pointer_capture(), None);
+        assert_eq!(memory.drag_source(), None);
+        assert_eq!(memory.released_drag_source(), None);
+        assert!(memory.pointer_interaction_cancelled());
+        assert_eq!(memory.focused(), Some(focused));
+        assert_eq!(memory.text_input_owner(), Some(focused));
+
+        memory.begin_frame();
+        assert!(!memory.pointer_interaction_cancelled());
     }
 
     #[test]
