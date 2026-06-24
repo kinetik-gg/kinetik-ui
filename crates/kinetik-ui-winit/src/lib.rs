@@ -893,6 +893,18 @@ mod tests {
     }
 
     #[test]
+    fn pointer_conversion_uses_one_for_invalid_scale_factor() {
+        let mut adapter = WinitInputAdapter::new(ScaleFactor::new(f64::NAN));
+
+        adapter.pointer_moved(PhysicalPosition::new(24.0, 16.0));
+
+        assert_eq!(
+            adapter.input().pointer.position,
+            Some(Point::new(24.0, 16.0))
+        );
+    }
+
+    #[test]
     fn pointer_leave_clears_hover_and_resets_next_move_delta() {
         let mut adapter = WinitInputAdapter::new(ScaleFactor::ONE);
 
