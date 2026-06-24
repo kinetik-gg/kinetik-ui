@@ -132,6 +132,7 @@ impl ShapedTextLayout {
     /// Returns the caret rectangle for a UTF-8 byte offset.
     #[must_use]
     pub fn caret_rect(&self, byte_offset: usize) -> Rect {
+        let byte_offset = self.clamp_to_layout_boundary(byte_offset);
         let Some(line) = self.line_for_offset(byte_offset) else {
             return Rect::new(
                 0.0,
@@ -147,9 +148,12 @@ impl ShapedTextLayout {
     /// Returns selection rectangles for a UTF-8 byte range.
     #[must_use]
     pub fn selection_rects(&self, range: core::ops::Range<usize>) -> Vec<Rect> {
-        if range.is_empty() {
+        let start = self.clamp_to_layout_boundary(range.start);
+        let end = self.clamp_to_layout_boundary(range.end);
+        if start >= end {
             return Vec::new();
         }
+        let range = start..end;
 
         let mut rects = Vec::new();
         for line in &self.lines {
@@ -247,7 +251,25 @@ impl ShapedTextLayout {
             }
         }
 
-        nearest
+        self.clamp_to_layout_boundary(nearest)
+    }
+
+    fn clamp_to_layout_boundary(&self, byte_offset: usize) -> usize {
+        self.layout_boundaries()
+            .filter(|boundary| *boundary <= byte_offset)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn layout_boundaries(&self) -> impl Iterator<Item = usize> + '_ {
+        self.lines
+            .iter()
+            .flat_map(|line| [line.text_start, line.text_end])
+            .chain(
+                self.runs
+                    .iter()
+                    .flat_map(|run| run.glyphs.iter().flat_map(|glyph| [glyph.start, glyph.end])),
+            )
     }
 
     fn line_for_offset(&self, byte_offset: usize) -> Option<&ShapedTextLine> {
@@ -879,9 +901,10 @@ impl TextComposition {
     /// Creates a composition snapshot.
     #[must_use]
     pub fn new(text: impl Into<String>, selection: Option<TextRange>) -> Self {
+        let text = text.into();
         Self {
-            text: text.into(),
-            selection,
+            selection: selection.map(|selection| clamp_text_range(&text, selection)),
+            text,
         }
     }
 }
@@ -1199,6 +1222,13 @@ fn next_boundary(text: &str, offset: usize) -> Option<usize> {
         .or_else(|| (offset < text.len()).then_some(text.len()))
 }
 
+fn clamp_text_range(text: &str, range: TextRange) -> TextRange {
+    TextRange::new(
+        clamp_boundary(text, range.start),
+        clamp_boundary(text, range.end),
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {
@@ -1407,6 +1437,31 @@ mod tests {
     }
 
     #[test]
+    fn shaped_text_layout_clamps_geometry_offsets_to_utf8_boundaries() {
+        let mut engine = CosmicTextEngine::new();
+        let text = "éa";
+        let key = TextLayoutKey::new(text, TextStyle::new("sans-serif", 14.0, 20.0), 200.0, false);
+        let layout = engine.shape_text(&key);
+        let after_first_character = "é".len();
+
+        assert_eq!(layout.caret_rect(1), layout.caret_rect(0));
+        assert_eq!(
+            layout.selection_rects(1..after_first_character),
+            layout.selection_rects(0..after_first_character)
+        );
+
+        let first_caret = layout.caret_rect(0);
+        let second_caret = layout.caret_rect(after_first_character);
+        let hit = layout.hit_test_point(
+            (first_caret.x + second_caret.x) * 0.5,
+            first_caret.y + first_caret.height * 0.5,
+        );
+
+        assert!(text.is_char_boundary(hit));
+        assert!(hit == 0 || hit == after_first_character);
+    }
+
+    #[test]
     fn shaped_text_layout_reports_empty_layout() {
         let layout = ShapedTextLayout {
             size: kinetik_ui_core::Size::new(0.0, 20.0),
@@ -1435,6 +1490,24 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(store.len(), 1);
         assert!(!store.layout(first).expect("layout is cached").is_empty());
+    }
+
+    #[test]
+    fn text_layout_store_reuses_deterministic_ids_after_clear() {
+        let key = TextLayoutKey::new(
+            "Stable",
+            TextStyle::new("sans-serif", 12.0, 16.0),
+            100.0,
+            false,
+        );
+        let mut store = TextLayoutStore::new();
+
+        let first = store.layout_id(key.clone());
+        store.clear();
+        let second = store.layout_id(key);
+
+        assert_eq!(first, second);
+        assert_eq!(store.len(), 1);
     }
 
     #[test]
@@ -1632,6 +1705,41 @@ mod tests {
     }
 
     #[test]
+    fn composition_selection_clamps_to_preedit_utf8_boundaries() {
+        let mut state = TextEditState::new("base");
+
+        state.apply_input(
+            &[
+                TextInputEvent::Composition {
+                    text: "éa".to_owned(),
+                    selection: Some(TextRange::new(1, 99)),
+                },
+                TextInputEvent::CompositionEnd,
+            ],
+            &[],
+        );
+
+        assert_eq!(state.text, "base");
+        assert_eq!(state.composition, None);
+
+        state.apply_input(
+            &[TextInputEvent::Composition {
+                text: "éa".to_owned(),
+                selection: Some(TextRange::new(1, 99)),
+            }],
+            &[],
+        );
+
+        assert_eq!(
+            state.composition,
+            Some(TextComposition::new(
+                "éa",
+                Some(TextRange::new(0, "éa".len()))
+            ))
+        );
+    }
+
+    #[test]
     fn keyboard_shortcuts_select_all_undo_and_redo() {
         let modifiers = Modifiers::new(false, true, false, false);
         let mut state = TextEditState::new("abc");
@@ -1683,6 +1791,27 @@ mod tests {
         assert_eq!(state.text, "a");
         assert!(state.redo());
         assert_eq!(state.text, "ab");
+    }
+
+    #[test]
+    fn undo_and_redo_preserve_repeated_selection_replacements() {
+        let mut state = TextEditState::new("alpha beta");
+
+        state.set_selection(TextSelection::new(0, 5));
+        state.insert_text("one");
+        state.set_selection(TextSelection::new(4, 8));
+        state.insert_text("two");
+
+        assert_eq!(state.text, "one two");
+        assert!(state.undo());
+        assert_eq!(state.text, "one beta");
+        assert!(state.undo());
+        assert_eq!(state.text, "alpha beta");
+        assert!(state.redo());
+        assert_eq!(state.text, "one beta");
+        assert!(state.redo());
+        assert_eq!(state.text, "one two");
+        assert!(!state.redo());
     }
 
     fn query_font_bytes<'a>(
