@@ -7,7 +7,7 @@ use kinetik_ui_render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
     TextLayoutResource, TextureResource,
 };
-use kinetik_ui_text::{ShapedTextLayout, TextLayoutKey, TextStyle};
+use kinetik_ui_text::{ShapedTextLayout, TextLayoutKey, TextLayoutStore, TextStyle};
 
 mod support;
 
@@ -124,6 +124,49 @@ fn resource_snapshot_conformance_omits_raw_payloads_and_backend_objects() {
     assert!(!snapshot.contains("5, 6, 7, 8"));
     assert!(!snapshot.contains("RenderImage"));
     assert!(!snapshot.contains("Arc"));
+}
+
+#[test]
+fn resource_snapshot_conformance_registers_shaped_text_store_exports() {
+    let mut store = TextLayoutStore::new();
+    let key = TextLayoutKey::new(
+        "Glyph payload stays hidden",
+        TextStyle::new("sans-serif", 12.0, 16.0),
+        200.0,
+        false,
+    );
+    let id = store.layout_id(key);
+    let layout = store.layout(id).expect("layout is shaped");
+    let expected_line_count = layout.line_count;
+    let expected_glyph_count = layout.glyph_count();
+    let mut resources = RenderResources::new();
+
+    resources.register_text_layouts(store.layouts());
+
+    let snapshot = resources.snapshot();
+    assert_eq!(snapshot.text_layouts.len(), 1);
+    assert_eq!(snapshot.text_layouts[0].id, id.raw());
+    assert_eq!(snapshot.text_layouts[0].line_count, expected_line_count);
+    assert_eq!(snapshot.text_layouts[0].glyph_count, expected_glyph_count);
+    assert!(snapshot.text_layouts[0].glyph_count > 0);
+
+    let snapshot_text = snapshot.to_text();
+    assert_snapshot_text(
+        "resource_snapshot_conformance_registers_shaped_text_store_exports",
+        &format!(
+            "resources:\n  text_layout#{id} size={width:.3}x{height:.3} lines={lines} glyphs={glyphs}",
+            id = id.raw(),
+            width = snapshot.text_layouts[0].width.get(),
+            height = snapshot.text_layouts[0].height.get(),
+            lines = expected_line_count,
+            glyphs = expected_glyph_count,
+        ),
+        &snapshot_text,
+    );
+    assert!(!snapshot_text.contains("Glyph payload stays hidden"));
+    assert!(!snapshot_text.contains("ShapedGlyph"));
+    assert!(!snapshot_text.contains("PenikoFont"));
+    assert!(!snapshot_text.contains("Inter"));
 }
 
 #[test]
