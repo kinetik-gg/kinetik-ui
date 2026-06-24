@@ -976,6 +976,18 @@ impl TreeModel {
         rows
     }
 
+    /// Computes visible item IDs from the current expansion state.
+    ///
+    /// Invalid models return no visible item IDs for the same reason as
+    /// [`Self::visible_rows`].
+    #[must_use]
+    pub fn visible_item_ids(&self, expansion: &TreeExpansion) -> Vec<ItemId> {
+        self.visible_rows(expansion)
+            .into_iter()
+            .map(|row| row.id)
+            .collect()
+    }
+
     fn index_by_id(&self) -> BTreeMap<ItemId, usize> {
         self.items
             .iter()
@@ -1092,9 +1104,54 @@ impl TreeExpansion {
         changed
     }
 
+    /// Removes expanded IDs that are not present in a valid tree model.
+    ///
+    /// Invalid models clear expansion state. This keeps cleanup deterministic
+    /// and avoids interpreting malformed parent links.
+    pub fn retain_model(&mut self, model: &TreeModel) -> bool {
+        if model.validate().is_err() {
+            return self.clear_changed();
+        }
+
+        let ids = model
+            .items
+            .iter()
+            .map(|item| item.id)
+            .collect::<BTreeSet<_>>();
+        self.retain_ids(&ids)
+    }
+
+    /// Removes expanded IDs that are not currently visible in the tree.
+    ///
+    /// This also removes stale IDs, because unknown IDs cannot appear in the
+    /// model's visible row list. Invalid models clear expansion state.
+    pub fn retain_visible(&mut self, model: &TreeModel) -> bool {
+        if model.validate().is_err() {
+            return self.clear_changed();
+        }
+
+        let visible = model
+            .visible_item_ids(self)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        self.retain_ids(&visible)
+    }
+
     /// Clears all expansion state.
     pub fn clear(&mut self) {
         self.expanded.clear();
+    }
+
+    fn retain_ids(&mut self, ids: &BTreeSet<ItemId>) -> bool {
+        let before = self.expanded.len();
+        self.expanded.retain(|item| ids.contains(item));
+        self.expanded.len() != before
+    }
+
+    fn clear_changed(&mut self) -> bool {
+        let changed = !self.expanded.is_empty();
+        self.clear();
+        changed
     }
 }
 
