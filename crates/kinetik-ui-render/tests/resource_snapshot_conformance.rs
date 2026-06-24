@@ -1,6 +1,6 @@
 //! Backend-neutral resource snapshot conformance tests.
 
-use std::sync::Arc;
+use std::{fs, sync::Arc};
 
 use kinetik_ui_core::{ImageId, Rect, Size, TextLayoutId, TextureId};
 use kinetik_ui_render::{
@@ -8,6 +8,12 @@ use kinetik_ui_render::{
     TextLayoutResource, TextureResource,
 };
 use kinetik_ui_text::{ShapedTextLayout, TextLayoutKey, TextStyle};
+
+mod support;
+
+use support::resource_snapshot_artifacts::{
+    artifact_paths, assert_snapshot_text, emit_snapshot_artifacts,
+};
 
 fn empty_layout(width: f32, height: f32, line_count: usize) -> Arc<ShapedTextLayout> {
     Arc::new(ShapedTextLayout {
@@ -69,9 +75,10 @@ fn resource_snapshot_conformance_sorts_resources_by_handle() {
         layout: empty_layout(10.0, 16.0, 1),
     });
 
-    assert_eq!(
-        resources.snapshot().to_text(),
-        "resources:\n  image#1 size=2.000x1.000 sampling=ui_icon pixels=true atlas=none\n  image#9 size=8.000x8.000 sampling=smooth pixels=false atlas=none\n  texture#4 size=4.000x2.000 sampling=pixelated snapshot=true\n  texture#40 size=32.000x16.000 sampling=high_quality snapshot=false\n  text_layout#3 size=10.000x16.000 lines=1 glyphs=0\n  text_layout#12 size=30.000x16.000 lines=1 glyphs=0"
+    assert_snapshot_text(
+        "resource_snapshot_conformance_sorts_resources_by_handle",
+        "resources:\n  image#1 size=2.000x1.000 sampling=ui_icon pixels=true atlas=none\n  image#9 size=8.000x8.000 sampling=smooth pixels=false atlas=none\n  texture#4 size=4.000x2.000 sampling=pixelated snapshot=true\n  texture#40 size=32.000x16.000 sampling=high_quality snapshot=false\n  text_layout#3 size=10.000x16.000 lines=1 glyphs=0\n  text_layout#12 size=30.000x16.000 lines=1 glyphs=0",
+        &resources.snapshot().to_text(),
     );
 }
 
@@ -108,9 +115,10 @@ fn resource_snapshot_conformance_omits_raw_payloads_and_backend_objects() {
 
     let snapshot = resources.snapshot().to_text();
 
-    assert_eq!(
-        snapshot,
-        "resources:\n  image#5 size=0.000x0.000 sampling=pixelated pixels=true atlas=2:(1.000,2.000,0.000,0.000)\n  texture#6 size=0.000x0.000 sampling=smooth snapshot=true\n  text_layout#7 size=0.000x0.000 lines=2 glyphs=0"
+    assert_snapshot_text(
+        "resource_snapshot_conformance_omits_raw_payloads_and_backend_objects",
+        "resources:\n  image#5 size=0.000x0.000 sampling=pixelated pixels=true atlas=2:(1.000,2.000,0.000,0.000)\n  texture#6 size=0.000x0.000 sampling=smooth snapshot=true\n  text_layout#7 size=0.000x0.000 lines=2 glyphs=0",
+        &snapshot,
     );
     assert!(!snapshot.contains("1, 2, 3, 4"));
     assert!(!snapshot.contains("5, 6, 7, 8"));
@@ -174,9 +182,10 @@ fn resource_snapshot_conformance_keeps_mixed_inventory_stable_and_payload_free()
 
     let snapshot = resources.snapshot().to_text();
 
-    assert_eq!(
-        snapshot,
-        "resources:\n  image#7 size=128.000x128.000 sampling=ui_icon pixels=true atlas=none\n  image#24 size=64.000x64.000 sampling=smooth pixels=false atlas=7:(4.000,8.000,16.000,12.000)\n  texture#3 size=8.000x8.000 sampling=pixelated snapshot=false\n  texture#102 size=320.000x180.000 sampling=high_quality snapshot=true\n  text_layout#2 size=48.000x15.000 lines=1 glyphs=0\n  text_layout#88 size=92.000x36.000 lines=2 glyphs=0"
+    assert_snapshot_text(
+        "resource_snapshot_conformance_keeps_mixed_inventory_stable_and_payload_free",
+        "resources:\n  image#7 size=128.000x128.000 sampling=ui_icon pixels=true atlas=none\n  image#24 size=64.000x64.000 sampling=smooth pixels=false atlas=7:(4.000,8.000,16.000,12.000)\n  texture#3 size=8.000x8.000 sampling=pixelated snapshot=false\n  texture#102 size=320.000x180.000 sampling=high_quality snapshot=true\n  text_layout#2 size=48.000x15.000 lines=1 glyphs=0\n  text_layout#88 size=92.000x36.000 lines=2 glyphs=0",
+        &snapshot,
     );
     assert_eq!(snapshot, resources.snapshot().to_text());
     assert!(!snapshot.contains("Hidden snapshot payload"));
@@ -219,9 +228,10 @@ fn resource_snapshot_conformance_sanitizes_and_rounds_unstable_values() {
 
     let snapshot = resources.snapshot().to_text();
 
-    assert_eq!(
-        snapshot,
-        "resources:\n  image#3 size=0.000x2.346 sampling=smooth pixels=true atlas=1:(0.000,0.000,3.457,0.000)\n  texture#2 size=0.000x4.568 sampling=high_quality snapshot=true\n  text_layout#8 size=12.346x0.000 lines=1 glyphs=0"
+    assert_snapshot_text(
+        "resource_snapshot_conformance_sanitizes_and_rounds_unstable_values",
+        "resources:\n  image#3 size=0.000x2.346 sampling=smooth pixels=true atlas=1:(0.000,0.000,3.457,0.000)\n  texture#2 size=0.000x4.568 sampling=high_quality snapshot=true\n  text_layout#8 size=12.346x0.000 lines=1 glyphs=0",
+        &snapshot,
     );
     assert_eq!(snapshot, resources.snapshot().to_text());
     assert!(!snapshot.contains("Text payload stays out"));
@@ -230,4 +240,57 @@ fn resource_snapshot_conformance_sanitizes_and_rounds_unstable_values() {
     assert!(!snapshot.contains("NaN"));
     assert!(!snapshot.contains("inf"));
     assert!(!snapshot.contains("-0.000"));
+}
+
+#[test]
+fn resource_snapshot_artifact_helper_formats_paths_under_target() {
+    let paths = artifact_paths("Resource Snapshot: Example/Case");
+    let directory = paths.directory.to_string_lossy().replace('\\', "/");
+
+    assert!(directory.ends_with(
+        "target/kinetik-ui-artifacts/kinetik-ui-render/resource-snapshots/resource-snapshot-example-case"
+    ));
+    assert!(paths.expected.ends_with("expected.txt"));
+    assert!(paths.actual.ends_with("actual.txt"));
+    assert!(paths.diff.ends_with("diff.txt"));
+}
+
+#[test]
+fn resource_snapshot_artifact_helper_writes_explicit_artifacts_without_panicking() {
+    let snapshot_name = "explicit artifact emission";
+    let paths = artifact_paths(snapshot_name);
+    let _ = fs::remove_dir_all(&paths.directory);
+
+    let paths = emit_snapshot_artifacts(
+        snapshot_name,
+        "resources:\n  image#1 size=1.000x1.000",
+        "resources:\n  image#2 size=2.000x2.000",
+    )
+    .expect("artifact emission should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&paths.expected).expect("expected artifact should be readable"),
+        "resources:\n  image#1 size=1.000x1.000"
+    );
+    assert_eq!(
+        fs::read_to_string(&paths.actual).expect("actual artifact should be readable"),
+        "resources:\n  image#2 size=2.000x2.000"
+    );
+
+    let diff = fs::read_to_string(&paths.diff).expect("diff artifact should be readable");
+    assert!(diff.contains("--- expected"));
+    assert!(diff.contains("+++ actual"));
+    assert!(diff.contains("-   image#1 size=1.000x1.000"));
+    assert!(diff.contains("+   image#2 size=2.000x2.000"));
+}
+
+#[test]
+fn resource_snapshot_artifact_helper_does_not_write_matching_artifacts() {
+    let snapshot_name = "matching comparisons write no artifacts";
+    let paths = artifact_paths(snapshot_name);
+    let _ = fs::remove_dir_all(&paths.directory);
+
+    assert_snapshot_text(snapshot_name, "resources:", "resources:");
+
+    assert!(!paths.directory.exists());
 }

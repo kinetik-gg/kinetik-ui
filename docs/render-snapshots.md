@@ -28,6 +28,21 @@ Do not snapshot raw pixel bytes, font bytes, or backend-native resource objects.
 Snapshot numbers are formatted to three decimals. Non-finite values and negative
 zero are normalized to `0.000` before text formatting.
 
+Resource conformance tests keep expected text inline in the test source. The
+inline literal is the source of truth; tests do not bless, update, or rewrite
+source files. Matching comparisons do not write artifacts.
+
+When a backend-neutral resource snapshot mismatch occurs, the test helper writes
+review artifacts under `target/kinetik-ui-artifacts/kinetik-ui-render/resource-snapshots/`:
+
+- `expected.txt`
+- `actual.txt`
+- `diff.txt`
+
+The panic message includes these paths so a human can inspect the generated
+files and then intentionally edit the inline expected literal when the behavior
+change is correct.
+
 ## Command Snapshots
 
 Vello command snapshots serialize translated commands after sanitization but
