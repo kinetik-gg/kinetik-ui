@@ -3,9 +3,10 @@
 use std::time::Duration;
 
 use crate::{
-    ClipboardText, FrameContext, FrameOutput, Key, KeyEvent, KeyState, Modifiers, MouseButton,
-    PhysicalKey, Point, ScaleFactor, Size, TextInputEvent, TextRange, TimeInfo, Ui, UiInput,
-    UiMemory, Vec2, ViewportInfo, WidgetId,
+    ActionQueue, ClipboardText, FrameContext, FrameOutput, FrameWarning, Key, KeyEvent, KeyState,
+    Modifiers, MouseButton, PhysicalKey, PlatformRequest, Point, Primitive, RepaintRequest,
+    ScaleFactor, SemanticTree, Size, TextInputEvent, TextRange, TimeInfo, Ui, UiInput, UiMemory,
+    Vec2, ViewportInfo, WidgetId,
 };
 
 /// Small core-only harness for building deterministic UI frames in tests.
@@ -115,6 +116,48 @@ impl UiTestHarness {
     #[must_use]
     pub const fn last_output(&self) -> Option<&FrameOutput> {
         self.last_output.as_ref()
+    }
+
+    /// Returns the most recent render primitives, if a frame has been run.
+    #[must_use]
+    pub fn last_primitives(&self) -> Option<&[Primitive]> {
+        self.last_output
+            .as_ref()
+            .map(|output| output.primitives.as_slice())
+    }
+
+    /// Returns the most recent semantic tree, if a frame has been run.
+    #[must_use]
+    pub fn last_semantics(&self) -> Option<&SemanticTree> {
+        self.last_output.as_ref().map(|output| &output.semantics)
+    }
+
+    /// Returns the most recent action queue, if a frame has been run.
+    #[must_use]
+    pub fn last_actions(&self) -> Option<&ActionQueue> {
+        self.last_output.as_ref().map(|output| &output.actions)
+    }
+
+    /// Returns the most recent platform requests, if a frame has been run.
+    #[must_use]
+    pub fn last_platform_requests(&self) -> Option<&[PlatformRequest]> {
+        self.last_output
+            .as_ref()
+            .map(|output| output.platform_requests.as_slice())
+    }
+
+    /// Returns the most recent repaint request, if a frame has been run.
+    #[must_use]
+    pub fn last_repaint(&self) -> Option<RepaintRequest> {
+        self.last_output.as_ref().map(|output| output.repaint)
+    }
+
+    /// Returns the most recent frame warnings, if a frame has been run.
+    #[must_use]
+    pub fn last_warnings(&self) -> Option<&[FrameWarning]> {
+        self.last_output
+            .as_ref()
+            .map(|output| output.warnings.as_slice())
     }
 
     /// Runs one UI frame and returns the closure result plus finalized output.
