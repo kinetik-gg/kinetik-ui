@@ -1,0 +1,382 @@
+//! Windowless Dock/Frame/Panel model conformance tests.
+
+use kinetik_ui_core::{Axis, Point, Rect, Vec2};
+use kinetik_ui_widgets::{
+    Dock, DockDropTarget, DockNode, DockPathElement, DockPlacement, DockRestoreError, DockSnapshot,
+    DockSnapshotNode, DockSplitPath, Frame, FrameId, Panel, PanelId, frame_tabs,
+    resolve_dock_drop_target, solve_dock_layout, solve_dock_splitters, split_ratio_from_drag,
+};
+
+fn panel(id: u64, title: &str) -> Panel {
+    Panel::new(PanelId::from_raw(id), title)
+}
+
+fn frame(id: u64, panels: Vec<Panel>) -> Frame {
+    Frame::new(FrameId::from_raw(id), panels)
+}
+
+fn nested_dock() -> Dock {
+    Dock::new(DockNode::Split {
+        axis: Axis::Horizontal,
+        ratio: 0.3,
+        min_first: 80.0,
+        min_second: 120.0,
+        first: Box::new(DockNode::Frame(frame(1, vec![panel(1, "Media")]))),
+        second: Box::new(DockNode::Split {
+            axis: Axis::Vertical,
+            ratio: 0.6,
+            min_first: 90.0,
+            min_second: 110.0,
+            first: Box::new(DockNode::Frame(frame(
+                2,
+                vec![panel(2, "Viewport"), panel(3, "Inspector")],
+            ))),
+            second: Box::new(DockNode::Frame(frame(3, vec![panel(4, "Timeline")]))),
+        }),
+    })
+}
+
+fn assert_close(left: f32, right: f32) {
+    assert!(
+        (left - right).abs() <= 0.001,
+        "expected {left} to be close to {right}"
+    );
+}
+
+fn frame_rect(dock: &Dock, frame: u64, bounds: Rect) -> Rect {
+    solve_dock_layout(dock, bounds)
+        .into_iter()
+        .find(|layout| layout.frame == FrameId::from_raw(frame))
+        .expect("frame layout")
+        .rect
+}
+
+#[test]
+fn nested_splits_layout_resize_and_snapshot_cycles_are_deterministic() {
+    let mut dock = nested_dock();
+    let bounds = Rect::new(0.0, 0.0, 1000.0, 500.0);
+
+    assert_close(frame_rect(&dock, 1, bounds).width, 300.0);
+    assert_close(frame_rect(&dock, 2, bounds).height, 300.0);
+    assert_close(frame_rect(&dock, 3, bounds).height, 200.0);
+
+    let splitters = solve_dock_splitters(&dock, bounds, 8.0);
+    assert_eq!(splitters.len(), 2);
+    assert_eq!(splitters[0].path, DockSplitPath::root());
+    assert_eq!(
+        splitters[1].path,
+        DockSplitPath::root().child(DockPathElement::Second)
+    );
+
+    assert!(dock.resize_split(
+        &DockSplitPath::root().child(DockPathElement::Second),
+        bounds,
+        Vec2::new(0.0, 50.0),
+    ));
+    assert_close(frame_rect(&dock, 2, bounds).height, 350.0);
+    assert_close(frame_rect(&dock, 3, bounds).height, 150.0);
+
+    let first_snapshot = dock.snapshot();
+    let restored = Dock::restore(first_snapshot.clone()).expect("restore");
+    assert_eq!(restored.snapshot(), first_snapshot);
+    let restored_again = Dock::restore(restored.snapshot()).expect("restore again");
+    assert_eq!(restored_again.snapshot(), first_snapshot);
+}
+
+#[test]
+fn invalid_geometry_is_sanitized_for_layout_splitters_and_drag_ratios() {
+    let mut dock = Dock::new(DockNode::Split {
+        axis: Axis::Horizontal,
+        ratio: f32::NAN,
+        min_first: f32::INFINITY,
+        min_second: -5.0,
+        first: Box::new(DockNode::Frame(frame(1, vec![panel(1, "A")]))),
+        second: Box::new(DockNode::Frame(frame(2, vec![panel(2, "B")]))),
+    });
+    let invalid_bounds = Rect::new(f32::NAN, f32::INFINITY, -100.0, 300.0);
+
+    for layout in solve_dock_layout(&dock, invalid_bounds) {
+        assert!(layout.rect.x.is_finite());
+        assert!(layout.rect.y.is_finite());
+        assert!(layout.rect.width.is_finite());
+        assert!(layout.rect.height.is_finite());
+        assert!(layout.rect.width >= 0.0);
+        assert!(layout.rect.height >= 0.0);
+    }
+
+    let splitters = solve_dock_splitters(&dock, invalid_bounds, f32::NAN);
+    assert_eq!(splitters.len(), 1);
+    assert_close(splitters[0].ratio, 0.5);
+    assert!(splitters[0].min_first.is_finite());
+    assert!(splitters[0].min_second.is_finite());
+
+    let ratio = split_ratio_from_drag(
+        Axis::Horizontal,
+        invalid_bounds,
+        f32::NAN,
+        f32::INFINITY,
+        -1.0,
+        Vec2::new(f32::INFINITY, 0.0),
+    );
+    assert_close(ratio, 0.5);
+
+    assert!(dock.resize_split(
+        &DockSplitPath::root(),
+        invalid_bounds,
+        Vec2::new(f32::INFINITY, 0.0)
+    ));
+    match dock.root {
+        DockNode::Split { ratio, .. } => assert_close(ratio, 0.5),
+        DockNode::Frame(_) => panic!("root split should remain intact"),
+    }
+}
+
+#[test]
+fn drop_targets_distinguish_center_merge_from_edge_split() {
+    let dock = nested_dock();
+    let layout = solve_dock_layout(&dock, Rect::new(0.0, 0.0, 1000.0, 500.0));
+    let new_frame = FrameId::from_raw(9);
+
+    assert_eq!(
+        resolve_dock_drop_target(&layout, Point::new(650.0, 150.0), new_frame),
+        Some(DockDropTarget::tab(FrameId::from_raw(2)))
+    );
+    assert_eq!(
+        resolve_dock_drop_target(&layout, Point::new(998.0, 250.0), new_frame),
+        Some(DockDropTarget::split(
+            FrameId::from_raw(2),
+            DockPlacement::Right,
+            new_frame,
+        ))
+    );
+    assert_eq!(
+        resolve_dock_drop_target(&layout, Point::new(650.0, 498.0), new_frame),
+        Some(DockDropTarget::split(
+            FrameId::from_raw(3),
+            DockPlacement::Bottom,
+            new_frame,
+        ))
+    );
+}
+
+#[test]
+fn tab_merge_split_and_dismissible_policy_round_trip_through_snapshot() {
+    let mut dock = nested_dock();
+    dock.frame_mut(FrameId::from_raw(2))
+        .expect("source frame")
+        .set_panel_dismissible(PanelId::from_raw(3), false);
+    let drag = dock
+        .begin_tab_drag(FrameId::from_raw(2), PanelId::from_raw(3))
+        .expect("drag");
+
+    assert!(dock.drop_tab(
+        drag,
+        DockDropTarget::Split {
+            frame: FrameId::from_raw(1),
+            placement: DockPlacement::Left,
+            new_frame: FrameId::from_raw(9),
+            ratio: 0.4,
+            min_first: 70.0,
+            min_second: 90.0,
+        },
+    ));
+
+    assert_eq!(dock.active_frame(), Some(FrameId::from_raw(9)));
+    let inserted = dock.frame(FrameId::from_raw(9)).expect("inserted frame");
+    assert_eq!(
+        inserted.active_panel().expect("active panel").id,
+        PanelId::from_raw(3)
+    );
+    assert!(!inserted.panel_dismissible(PanelId::from_raw(3)));
+
+    let restored = Dock::restore(dock.snapshot()).expect("restore");
+    assert_eq!(restored.active_frame(), Some(FrameId::from_raw(9)));
+    let restored_inserted = restored
+        .frame(FrameId::from_raw(9))
+        .expect("restored frame");
+    assert_eq!(
+        restored_inserted.active_panel().expect("active panel").id,
+        PanelId::from_raw(3)
+    );
+    assert!(!restored_inserted.panel_dismissible(PanelId::from_raw(3)));
+    let tabs = frame_tabs(restored_inserted);
+    assert_eq!(tabs.len(), 1);
+    assert!(!tabs[0].close_visible);
+    assert!(tabs[0].draggable);
+}
+
+#[test]
+fn invalid_tab_and_split_drops_leave_the_tree_unchanged() {
+    let mut dock = nested_dock();
+    let before = dock.snapshot();
+    let drag = dock
+        .begin_tab_drag(FrameId::from_raw(2), PanelId::from_raw(3))
+        .expect("drag");
+
+    assert!(!dock.drop_tab(drag, DockDropTarget::tab(FrameId::from_raw(99))));
+    assert_eq!(dock.snapshot(), before);
+
+    assert!(!dock.drop_tab(
+        drag,
+        DockDropTarget::split(
+            FrameId::from_raw(99),
+            DockPlacement::Left,
+            FrameId::from_raw(9),
+        )
+    ));
+    assert_eq!(dock.snapshot(), before);
+
+    assert!(!dock.drop_tab(
+        drag,
+        DockDropTarget::Split {
+            frame: FrameId::from_raw(1),
+            placement: DockPlacement::Left,
+            new_frame: FrameId::from_raw(2),
+            ratio: 0.4,
+            min_first: 0.0,
+            min_second: 0.0,
+        },
+    ));
+    assert_eq!(dock.snapshot(), before);
+
+    assert!(!dock.drop_tab(
+        drag,
+        DockDropTarget::Split {
+            frame: FrameId::from_raw(1),
+            placement: DockPlacement::Left,
+            new_frame: FrameId::from_raw(9),
+            ratio: f32::NAN,
+            min_first: 0.0,
+            min_second: 0.0,
+        },
+    ));
+    assert_eq!(dock.snapshot(), before);
+}
+
+#[test]
+fn active_frame_refreshes_deterministically_when_frames_move_or_close() {
+    let mut dock = nested_dock();
+    assert!(dock.set_active_frame(FrameId::from_raw(3)));
+
+    assert!(dock.move_panel(
+        FrameId::from_raw(3),
+        FrameId::from_raw(1),
+        PanelId::from_raw(4),
+    ));
+
+    assert_eq!(dock.active_frame(), Some(FrameId::from_raw(1)));
+    assert!(dock.frame(FrameId::from_raw(3)).is_none());
+    assert_eq!(
+        dock.frame(FrameId::from_raw(1))
+            .expect("target")
+            .active_panel()
+            .expect("active")
+            .id,
+        PanelId::from_raw(4)
+    );
+
+    assert!(dock.set_active_frame(FrameId::from_raw(2)));
+    assert!(dock.merge_frames(FrameId::from_raw(2), FrameId::from_raw(1)));
+    assert_eq!(dock.active_frame(), Some(FrameId::from_raw(1)));
+    assert!(dock.frame(FrameId::from_raw(2)).is_none());
+}
+
+#[test]
+fn snapshot_restore_rejects_invalid_identity_policy_and_split_data() {
+    let duplicate_panels = DockSnapshot {
+        active_frame: Some(FrameId::from_raw(1)),
+        root: DockSnapshotNode::Frame {
+            id: FrameId::from_raw(1),
+            panels: vec![panel(1, "A"), panel(1, "Duplicate")],
+            active: 0,
+            dismissible_panels: vec![PanelId::from_raw(1)],
+        },
+    };
+    assert_eq!(
+        Dock::restore(duplicate_panels).expect_err("duplicate panels"),
+        DockRestoreError::DuplicatePanelId
+    );
+
+    let unknown_policy_panel = DockSnapshot {
+        active_frame: Some(FrameId::from_raw(1)),
+        root: DockSnapshotNode::Frame {
+            id: FrameId::from_raw(1),
+            panels: vec![panel(1, "A")],
+            active: 0,
+            dismissible_panels: vec![PanelId::from_raw(2)],
+        },
+    };
+    assert_eq!(
+        Dock::restore(unknown_policy_panel).expect_err("unknown policy panel"),
+        DockRestoreError::InvalidDismissiblePanel
+    );
+
+    let invalid_split = DockSnapshot {
+        active_frame: Some(FrameId::from_raw(1)),
+        root: DockSnapshotNode::Split {
+            axis: Axis::Horizontal,
+            ratio: 1.25,
+            min_first: 0.0,
+            min_second: 0.0,
+            first: Box::new(DockSnapshotNode::Frame {
+                id: FrameId::from_raw(1),
+                panels: vec![panel(1, "A")],
+                active: 0,
+                dismissible_panels: vec![PanelId::from_raw(1)],
+            }),
+            second: Box::new(DockSnapshotNode::Frame {
+                id: FrameId::from_raw(2),
+                panels: vec![panel(2, "B")],
+                active: 0,
+                dismissible_panels: vec![PanelId::from_raw(2)],
+            }),
+        },
+    };
+    assert_eq!(
+        Dock::restore(invalid_split).expect_err("invalid split"),
+        DockRestoreError::InvalidSplitRatio
+    );
+}
+
+#[test]
+fn panel_remains_passive_metadata_when_frame_and_dock_policy_changes() {
+    let mut dock = nested_dock();
+    let original_panel = dock
+        .frame(FrameId::from_raw(2))
+        .expect("frame")
+        .panels
+        .iter()
+        .find(|panel| panel.id == PanelId::from_raw(3))
+        .expect("panel")
+        .clone();
+
+    assert!(
+        dock.frame_mut(FrameId::from_raw(2))
+            .expect("frame")
+            .set_panel_dismissible(original_panel.id, false)
+    );
+    let drag = dock
+        .begin_tab_drag(FrameId::from_raw(2), original_panel.id)
+        .expect("drag");
+    assert!(dock.drop_tab(
+        drag,
+        DockDropTarget::split(
+            FrameId::from_raw(1),
+            DockPlacement::Bottom,
+            FrameId::from_raw(9),
+        )
+    ));
+
+    let moved_panel = dock
+        .frame(FrameId::from_raw(9))
+        .expect("inserted frame")
+        .active_panel()
+        .expect("active panel");
+    assert_eq!(moved_panel, &original_panel);
+    assert!(
+        !dock
+            .frame(FrameId::from_raw(9))
+            .expect("inserted frame")
+            .panel_dismissible(original_panel.id)
+    );
+}
