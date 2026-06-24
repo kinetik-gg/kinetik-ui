@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use kinetik_ui::core::Size;
 
 use crate::app::{ShowcaseApp, ShowcasePage};
-use crate::raster::{rasterize, write_bmp};
+use crate::raster::{RasterSmokeSummary, rasterize, write_bmp};
 
 /// Default root for manually inspectable showcase review dumps.
 pub const DEFAULT_REVIEW_DUMP_ROOT: &str =
@@ -79,6 +79,10 @@ pub struct ReviewDumpFrame {
     pub warning_count: usize,
     /// Written CPU raster BMP path.
     pub bmp_path: PathBuf,
+    /// Written CPU pixel smoke summary path.
+    pub smoke_path: PathBuf,
+    /// Compact CPU pixel smoke summary.
+    pub smoke_summary: RasterSmokeSummary,
 }
 
 /// Returns the deterministic default dump root.
@@ -132,14 +136,22 @@ pub fn dump_review_artifacts_to_dir(
 
         let page_name = page_name(page);
         let bmp_path = directory.join(format!("{page_name}.bmp"));
+        let smoke_path = directory.join(format!("{page_name}-pixel-smoke.txt"));
         let frame = rasterize(&app.output().primitives, request.width, request.height);
+        let smoke_summary = frame.smoke_summary();
         write_bmp(&frame, &bmp_path)?;
+        fs::write(
+            &smoke_path,
+            smoke_text(page_name, &bmp_path, &smoke_summary),
+        )?;
 
         frames.push(ReviewDumpFrame {
             page_name,
             primitive_count: app.output().primitives.len(),
             warning_count: app.output().warnings.len(),
             bmp_path,
+            smoke_path,
+            smoke_summary,
         });
     }
 
@@ -213,10 +225,53 @@ fn manifest_text(
         writeln!(text, "primitive_count: {}", frame.primitive_count).expect("write manifest text");
         writeln!(text, "warning_count: {}", frame.warning_count).expect("write manifest text");
         writeln!(text, "artifact: {}", frame.bmp_path.display()).expect("write manifest text");
+        writeln!(text, "pixel_smoke_artifact: {}", frame.smoke_path.display())
+            .expect("write manifest text");
+        write_smoke_fields(&mut text, &frame.smoke_summary);
         text.push('\n');
     }
 
     text
+}
+
+fn smoke_text(page_name: &str, bmp_path: &Path, summary: &RasterSmokeSummary) -> String {
+    let mut text = String::new();
+    writeln!(text, "Kinetik UI Showcase CPU Pixel Smoke").expect("write smoke text");
+    writeln!(text, "page: {page_name}").expect("write smoke text");
+    writeln!(text, "artifact: {}", bmp_path.display()).expect("write smoke text");
+    write_smoke_fields(&mut text, summary);
+    text
+}
+
+fn write_smoke_fields(text: &mut String, summary: &RasterSmokeSummary) {
+    writeln!(
+        text,
+        "pixel_dimensions: {}x{}",
+        summary.width, summary.height
+    )
+    .expect("write smoke text");
+    writeln!(text, "total_pixels: {}", summary.total_pixels).expect("write smoke text");
+    writeln!(
+        text,
+        "has_visible_variation: {}",
+        summary.has_visible_variation
+    )
+    .expect("write smoke text");
+    writeln!(
+        text,
+        "non_first_pixel_count: {}",
+        summary.non_first_pixel_count
+    )
+    .expect("write smoke text");
+    writeln!(text, "unique_color_count: {}", summary.unique_color_count).expect("write smoke text");
+    writeln!(text, "unique_color_limit: {}", summary.unique_color_limit).expect("write smoke text");
+    writeln!(
+        text,
+        "unique_color_count_capped: {}",
+        summary.unique_color_count_capped
+    )
+    .expect("write smoke text");
+    writeln!(text, "checksum: {:016x}", summary.checksum).expect("write smoke text");
 }
 
 fn stable_label(label: &str) -> String {
@@ -290,8 +345,17 @@ mod tests {
             dump.frames[0].bmp_path.file_name().unwrap(),
             "components.bmp"
         );
+        assert_eq!(
+            dump.frames[0].smoke_path.file_name().unwrap(),
+            "components-pixel-smoke.txt"
+        );
+        assert_eq!(dump.frames[0].smoke_summary.width, 320);
+        assert_eq!(dump.frames[0].smoke_summary.height, 200);
+        assert!(dump.frames[0].smoke_summary.has_visible_variation);
+        assert!(dump.frames[0].smoke_summary.unique_color_count >= 8);
         assert!(std::fs::metadata(&dump.manifest_path).unwrap().len() > 0);
         assert!(std::fs::metadata(&dump.frames[0].bmp_path).unwrap().len() > 54);
+        assert!(std::fs::metadata(&dump.frames[0].smoke_path).unwrap().len() > 0);
 
         let manifest = std::fs::read_to_string(&dump.manifest_path).expect("manifest");
         assert!(manifest.contains("page: components"));
@@ -300,6 +364,61 @@ mod tests {
         assert!(manifest.contains("primitive_count: "));
         assert!(manifest.contains("warning_count: "));
         assert!(manifest.contains("components.bmp"));
+        assert!(manifest.contains("pixel_smoke_artifact: "));
+        assert!(manifest.contains("components-pixel-smoke.txt"));
+        assert!(manifest.contains("pixel_dimensions: 320x200"));
+        assert!(manifest.contains("has_visible_variation: true"));
+        assert!(manifest.contains("unique_color_count: "));
+        assert!(manifest.contains("checksum: "));
+
+        let smoke = std::fs::read_to_string(&dump.frames[0].smoke_path).expect("smoke");
+        assert!(smoke.contains("page: components"));
+        assert!(smoke.contains("artifact: "));
+        assert!(smoke.contains("pixel_dimensions: 320x200"));
+        assert!(smoke.contains("total_pixels: 64000"));
+        assert!(smoke.contains("has_visible_variation: true"));
+        assert!(smoke.contains("unique_color_count: "));
+        assert!(smoke.contains("checksum: "));
+
+        let _ = std::fs::remove_dir_all(&dump.directory);
+    }
+
+    #[test]
+    fn dump_writes_smoke_metadata_for_each_frame() {
+        let directory = std::env::temp_dir().join(format!(
+            "kinetik-ui-showcase-review-dump-all-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        let request = ReviewDumpRequest::new("test dump all", 240, 160)
+            .with_logical_size(Size::new(240.0, 160.0));
+
+        let dump = dump_review_artifacts_to_dir(&request, &directory).expect("dump artifacts");
+        let manifest = std::fs::read_to_string(&dump.manifest_path).expect("manifest");
+
+        assert_eq!(dump.frames.len(), 5);
+        for frame in &dump.frames {
+            assert!(frame.smoke_path.starts_with(&dump.directory));
+            assert!(std::fs::metadata(&frame.smoke_path).unwrap().len() > 0);
+            assert!(
+                frame.smoke_summary.has_visible_variation,
+                "{}",
+                frame.page_name
+            );
+            assert!(
+                frame.smoke_summary.unique_color_count >= 2,
+                "{}",
+                frame.page_name
+            );
+            assert!(
+                manifest.contains(&format!(
+                    "pixel_smoke_artifact: {}",
+                    frame.smoke_path.display()
+                )),
+                "{}",
+                frame.page_name
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&dump.directory);
     }
