@@ -2,11 +2,12 @@
 
 use kinetik_ui_core::{
     CursorShape, IconId, PlatformRequest, Point, PointerButtonState, PointerInput, Primitive, Rect,
-    RepaintRequest, SemanticRole, SemanticValue, UiInput, UiMemory, WidgetId, default_dark_theme,
+    RepaintRequest, SemanticRole, SemanticValue, Theme, UiInput, UiMemory, WidgetId,
+    default_dark_theme,
 };
 use kinetik_ui_widgets::{
-    Ui, button, checkbox_with_label, icon_button_with_label, label, panel, radio_button_with_label,
-    slider_with_label, toggle_with_label,
+    Ui, WidgetOutput, button, checkbox_with_label, icon_button_with_label, label, panel,
+    radio_button_with_label, slider_with_label, toggle_with_label,
 };
 
 fn pointer_input(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInput {
@@ -36,6 +37,87 @@ fn interactive_request(output: &kinetik_ui_widgets::WidgetOutput, cursor: Cursor
     output
         .platform_requests
         .contains(&PlatformRequest::SetCursor(cursor))
+}
+
+#[derive(Clone, Copy)]
+enum BasicComponentCase {
+    Button,
+    IconButton,
+    Checkbox,
+    Radio,
+    Toggle,
+    Slider,
+}
+
+impl BasicComponentCase {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Button => "button",
+            Self::IconButton => "icon button",
+            Self::Checkbox => "checkbox",
+            Self::Radio => "radio",
+            Self::Toggle => "toggle",
+            Self::Slider => "slider",
+        }
+    }
+
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Button => "button",
+            Self::IconButton => "icon",
+            Self::Checkbox => "checkbox",
+            Self::Radio => "radio",
+            Self::Toggle => "toggle",
+            Self::Slider => "slider",
+        }
+    }
+}
+
+fn component_output(
+    case: BasicComponentCase,
+    id: WidgetId,
+    rect: Rect,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    match case {
+        BasicComponentCase::Button => button(id, rect, "Run", input, memory, theme, disabled),
+        BasicComponentCase::IconButton => icon_button_with_label(
+            id,
+            rect,
+            IconId::from_raw(7),
+            "Save",
+            input,
+            memory,
+            theme,
+            disabled,
+        ),
+        BasicComponentCase::Checkbox => {
+            checkbox_with_label(id, rect, "Snap", false, input, memory, theme, disabled)
+        }
+        BasicComponentCase::Radio => {
+            radio_button_with_label(id, rect, "Mode", false, input, memory, theme, disabled)
+        }
+        BasicComponentCase::Toggle => {
+            toggle_with_label(id, rect, "Loop", false, input, memory, theme, disabled)
+        }
+        BasicComponentCase::Slider => {
+            let mut value = 0.25;
+            slider_with_label(
+                id,
+                rect,
+                "Opacity",
+                &mut value,
+                0.0..=1.0,
+                input,
+                memory,
+                theme,
+                disabled,
+            )
+        }
+    }
 }
 
 fn assert_disabled_not_focused(name: &str, output: &kinetik_ui_widgets::WidgetOutput) {
@@ -82,6 +164,86 @@ fn assert_disabled_after_enabled_press<F, G, H>(
     assert!(!disabled.semantics[0].state.pressed, "{name}");
     assert_eq!(disabled.primitives, fresh.primitives, "{name}");
     assert_eq!(disabled.semantics, fresh.semantics, "{name}");
+}
+
+fn assert_disabled_component_clears_retained_active(case: BasicComponentCase) {
+    let theme = default_dark_theme();
+    let rect = stage9_rect();
+    let held = pointer_input(4.0, 4.0, true, false, false);
+    let pressed = pressed_at(4.0, 4.0);
+    let key = format!("retained-{}", case.key());
+
+    assert_disabled_after_enabled_press(
+        case.name(),
+        |memory| {
+            component_output(
+                case,
+                WidgetId::from_key(&key),
+                rect,
+                &pressed,
+                memory,
+                &theme,
+                false,
+            )
+        },
+        |memory| {
+            component_output(
+                case,
+                WidgetId::from_key(&key),
+                rect,
+                &held,
+                memory,
+                &theme,
+                true,
+            )
+        },
+        |memory| {
+            component_output(
+                case,
+                WidgetId::from_key(&key),
+                rect,
+                &held,
+                memory,
+                &theme,
+                true,
+            )
+        },
+    );
+}
+
+fn assert_selection_control_clicks_and_respects_disabled(case: BasicComponentCase) {
+    let name = case.name();
+    let theme = default_dark_theme();
+    let rect = stage9_rect();
+    let id = WidgetId::from_key(case.key());
+    let mut memory = UiMemory::new();
+    let pressed = pressed_at(4.0, 4.0);
+
+    component_output(case, id, rect, &pressed, &mut memory, &theme, false);
+
+    let released = released_at(4.0, 4.0);
+    let output = component_output(case, id, rect, &released, &mut memory, &theme, false);
+    let response = output.response.expect(name);
+    assert!(response.clicked, "{name}");
+    assert!(response.state.selected, "{name}");
+    assert_eq!(output.semantics[0].state.checked, Some(true), "{name}");
+
+    let disabled = component_output(
+        case,
+        WidgetId::from_key(format!("{}-disabled", case.key())),
+        rect,
+        &pressed_at(4.0, 4.0),
+        &mut UiMemory::new(),
+        &theme,
+        true,
+    );
+    let response = disabled.response.expect(name);
+    assert!(response.state.disabled, "{name}");
+    assert!(!response.clicked, "{name}");
+    assert!(!response.state.pressed, "{name}");
+    assert!(!response.state.selected, "{name}");
+    assert_eq!(disabled.semantics[0].state.checked, Some(false), "{name}");
+    assert!(disabled.platform_requests.is_empty(), "{name}");
 }
 
 #[test]
@@ -449,386 +611,26 @@ fn stage9_disabled_components_do_not_report_focus_when_already_focused() {
 
 #[test]
 fn stage9_disabled_components_do_not_report_retained_active_or_pressed() {
-    let theme = default_dark_theme();
-    let rect = stage9_rect();
-    let held = pointer_input(4.0, 4.0, true, false, false);
-
-    assert_disabled_after_enabled_press(
-        "button",
-        |memory| {
-            button(
-                WidgetId::from_key("retained-button"),
-                rect,
-                "Run",
-                &pressed_at(4.0, 4.0),
-                memory,
-                &theme,
-                false,
-            )
-        },
-        |memory| {
-            button(
-                WidgetId::from_key("retained-button"),
-                rect,
-                "Run",
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-        |memory| {
-            button(
-                WidgetId::from_key("retained-button"),
-                rect,
-                "Run",
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-    );
-
-    assert_disabled_after_enabled_press(
-        "icon button",
-        |memory| {
-            icon_button_with_label(
-                WidgetId::from_key("retained-icon"),
-                rect,
-                IconId::from_raw(7),
-                "Save",
-                &pressed_at(4.0, 4.0),
-                memory,
-                &theme,
-                false,
-            )
-        },
-        |memory| {
-            icon_button_with_label(
-                WidgetId::from_key("retained-icon"),
-                rect,
-                IconId::from_raw(7),
-                "Save",
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-        |memory| {
-            icon_button_with_label(
-                WidgetId::from_key("retained-icon"),
-                rect,
-                IconId::from_raw(7),
-                "Save",
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-    );
-
-    assert_disabled_after_enabled_press(
-        "checkbox",
-        |memory| {
-            checkbox_with_label(
-                WidgetId::from_key("retained-checkbox"),
-                rect,
-                "Snap",
-                false,
-                &pressed_at(4.0, 4.0),
-                memory,
-                &theme,
-                false,
-            )
-        },
-        |memory| {
-            checkbox_with_label(
-                WidgetId::from_key("retained-checkbox"),
-                rect,
-                "Snap",
-                false,
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-        |memory| {
-            checkbox_with_label(
-                WidgetId::from_key("retained-checkbox"),
-                rect,
-                "Snap",
-                false,
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-    );
-
-    assert_disabled_after_enabled_press(
-        "radio",
-        |memory| {
-            radio_button_with_label(
-                WidgetId::from_key("retained-radio"),
-                rect,
-                "Mode",
-                false,
-                &pressed_at(4.0, 4.0),
-                memory,
-                &theme,
-                false,
-            )
-        },
-        |memory| {
-            radio_button_with_label(
-                WidgetId::from_key("retained-radio"),
-                rect,
-                "Mode",
-                false,
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-        |memory| {
-            radio_button_with_label(
-                WidgetId::from_key("retained-radio"),
-                rect,
-                "Mode",
-                false,
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-    );
-
-    assert_disabled_after_enabled_press(
-        "toggle",
-        |memory| {
-            toggle_with_label(
-                WidgetId::from_key("retained-toggle"),
-                rect,
-                "Loop",
-                false,
-                &pressed_at(4.0, 4.0),
-                memory,
-                &theme,
-                false,
-            )
-        },
-        |memory| {
-            toggle_with_label(
-                WidgetId::from_key("retained-toggle"),
-                rect,
-                "Loop",
-                false,
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-        |memory| {
-            toggle_with_label(
-                WidgetId::from_key("retained-toggle"),
-                rect,
-                "Loop",
-                false,
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-    );
-
-    assert_disabled_after_enabled_press(
-        "slider",
-        |memory| {
-            let mut value = 0.25;
-            slider_with_label(
-                WidgetId::from_key("retained-slider"),
-                rect,
-                "Opacity",
-                &mut value,
-                0.0..=1.0,
-                &pressed_at(4.0, 4.0),
-                memory,
-                &theme,
-                false,
-            )
-        },
-        |memory| {
-            let mut value = 0.25;
-            slider_with_label(
-                WidgetId::from_key("retained-slider"),
-                rect,
-                "Opacity",
-                &mut value,
-                0.0..=1.0,
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-        |memory| {
-            let mut value = 0.25;
-            slider_with_label(
-                WidgetId::from_key("retained-slider"),
-                rect,
-                "Opacity",
-                &mut value,
-                0.0..=1.0,
-                &held,
-                memory,
-                &theme,
-                true,
-            )
-        },
-    );
+    for case in [
+        BasicComponentCase::Button,
+        BasicComponentCase::IconButton,
+        BasicComponentCase::Checkbox,
+        BasicComponentCase::Radio,
+        BasicComponentCase::Toggle,
+        BasicComponentCase::Slider,
+    ] {
+        assert_disabled_component_clears_retained_active(case);
+    }
 }
 
 #[test]
 fn stage9_selection_controls_click_toggle_and_respect_disabled_state() {
-    let theme = default_dark_theme();
-    let rect = stage9_rect();
-
-    for control in ["checkbox", "radio", "toggle"] {
-        let id = WidgetId::from_key(control);
-        let mut memory = UiMemory::new();
-        let pressed = pressed_at(4.0, 4.0);
-        match control {
-            "checkbox" => {
-                checkbox_with_label(
-                    id,
-                    rect,
-                    "Snap",
-                    false,
-                    &pressed,
-                    &mut memory,
-                    &theme,
-                    false,
-                );
-            }
-            "radio" => {
-                radio_button_with_label(
-                    id,
-                    rect,
-                    "Mode",
-                    false,
-                    &pressed,
-                    &mut memory,
-                    &theme,
-                    false,
-                );
-            }
-            "toggle" => {
-                toggle_with_label(
-                    id,
-                    rect,
-                    "Loop",
-                    false,
-                    &pressed,
-                    &mut memory,
-                    &theme,
-                    false,
-                );
-            }
-            _ => unreachable!(),
-        };
-
-        let released = released_at(4.0, 4.0);
-        let output = match control {
-            "checkbox" => checkbox_with_label(
-                id,
-                rect,
-                "Snap",
-                false,
-                &released,
-                &mut memory,
-                &theme,
-                false,
-            ),
-            "radio" => radio_button_with_label(
-                id,
-                rect,
-                "Mode",
-                false,
-                &released,
-                &mut memory,
-                &theme,
-                false,
-            ),
-            "toggle" => toggle_with_label(
-                id,
-                rect,
-                "Loop",
-                false,
-                &released,
-                &mut memory,
-                &theme,
-                false,
-            ),
-            _ => unreachable!(),
-        };
-        let response = output.response.expect(control);
-        assert!(response.clicked, "{control}");
-        assert!(response.state.selected, "{control}");
-        assert_eq!(output.semantics[0].state.checked, Some(true), "{control}");
-
-        let disabled = match control {
-            "checkbox" => checkbox_with_label(
-                WidgetId::from_key(format!("{control}-disabled")),
-                rect,
-                "Snap",
-                false,
-                &pressed_at(4.0, 4.0),
-                &mut UiMemory::new(),
-                &theme,
-                true,
-            ),
-            "radio" => radio_button_with_label(
-                WidgetId::from_key(format!("{control}-disabled")),
-                rect,
-                "Mode",
-                false,
-                &pressed_at(4.0, 4.0),
-                &mut UiMemory::new(),
-                &theme,
-                true,
-            ),
-            "toggle" => toggle_with_label(
-                WidgetId::from_key(format!("{control}-disabled")),
-                rect,
-                "Loop",
-                false,
-                &pressed_at(4.0, 4.0),
-                &mut UiMemory::new(),
-                &theme,
-                true,
-            ),
-            _ => unreachable!(),
-        };
-        let response = disabled.response.expect(control);
-        assert!(response.state.disabled, "{control}");
-        assert!(!response.clicked, "{control}");
-        assert!(!response.state.pressed, "{control}");
-        assert!(!response.state.selected, "{control}");
-        assert_eq!(
-            disabled.semantics[0].state.checked,
-            Some(false),
-            "{control}"
-        );
-        assert!(disabled.platform_requests.is_empty(), "{control}");
+    for case in [
+        BasicComponentCase::Checkbox,
+        BasicComponentCase::Radio,
+        BasicComponentCase::Toggle,
+    ] {
+        assert_selection_control_clicks_and_respects_disabled(case);
     }
 }
 
@@ -893,7 +695,7 @@ fn stage9_slider_updates_finitely_and_respects_disabled_state() {
     assert!(!response.state.active);
     assert!(!response.clicked);
     assert!(!response.dragged);
-    assert_eq!(disabled_value, 0.25);
+    assert!((disabled_value - 0.25).abs() < f32::EPSILON);
     assert!(disabled.platform_requests.is_empty());
 }
 
