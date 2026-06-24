@@ -16,6 +16,19 @@ fn harness_runs_two_frames_with_stable_memory() {
     let hovered = WidgetId::from_key("hovered");
     let scroll = WidgetId::from_key("scroll");
 
+    assert_eq!(harness.viewport().logical_size, Size::new(320.0, 200.0));
+    assert_eq!(harness.viewport().scale_factor, ScaleFactor::new(2.0));
+    assert_eq!(harness.viewport().physical_size.width, 640);
+    assert_eq!(harness.viewport().physical_size.height, 400);
+    assert_eq!(harness.time().frame_index, 0);
+    assert_eq!(harness.last_output(), None);
+    assert_eq!(harness.last_primitives(), None);
+    assert_eq!(harness.last_semantics(), None);
+    assert_eq!(harness.last_actions(), None);
+    assert_eq!(harness.last_platform_requests(), None);
+    assert_eq!(harness.last_repaint(), None);
+    assert_eq!(harness.last_warnings(), None);
+
     let (first_time, first_output) = harness.run_frame(|ui| {
         ui.memory_mut().focus(focused);
         ui.memory_mut().set_hovered(hovered);
@@ -29,6 +42,7 @@ fn harness_runs_two_frames_with_stable_memory() {
     assert_eq!(first_output.warnings, Vec::new());
     assert_eq!(harness.memory().focused(), Some(focused));
     assert_eq!(harness.memory().hovered(), Some(hovered));
+    assert_eq!(harness.last_output(), Some(&first_output));
 
     harness.advance_frame(Duration::from_millis(16));
     let (second, _) = harness.run_frame(|ui| {
@@ -46,6 +60,12 @@ fn harness_runs_two_frames_with_stable_memory() {
     assert_eq!(second.1, Some(focused));
     assert_eq!(second.2, None);
     assert_eq!(second.3, Vec2::new(12.0, 24.0));
+
+    harness.set_viewport(Size::new(200.0, 120.0), ScaleFactor::new(1.5));
+    assert_eq!(harness.viewport().logical_size, Size::new(200.0, 120.0));
+    assert_eq!(harness.viewport().scale_factor, ScaleFactor::new(1.5));
+    assert_eq!(harness.viewport().physical_size.width, 300);
+    assert_eq!(harness.viewport().physical_size.height, 180);
 }
 
 #[test]
@@ -55,6 +75,7 @@ fn input_events_are_visible_only_in_the_intended_frame() {
 
     harness.set_pointer_position(Point::new(10.0, 20.0));
     harness.pointer_press(MouseButton::Primary);
+    harness.set_click_count(2);
     harness.wheel(Vec2::new(1.0, -2.0));
     harness.set_modifiers(Modifiers::new(false, true, false, false));
     harness.key_press(Key::Character("s".to_owned()));
@@ -68,6 +89,7 @@ fn input_events_are_visible_only_in_the_intended_frame() {
     let (pressed_frame, _) = harness.run_frame(|ui| ui.input().clone());
 
     assert_eq!(pressed_frame.pointer.position, Some(Point::new(10.0, 20.0)));
+    assert_eq!(pressed_frame.pointer.click_count, 2);
     assert!(pressed_frame.pointer.primary.down);
     assert!(pressed_frame.pointer.primary.pressed);
     assert!(!pressed_frame.pointer.primary.released);
@@ -88,6 +110,7 @@ fn input_events_are_visible_only_in_the_intended_frame() {
     let (held_frame, _) = harness.run_frame(|ui| ui.input().clone());
 
     assert!(held_frame.pointer.primary.down);
+    assert_eq!(held_frame.pointer.click_count, 0);
     assert!(!held_frame.pointer.primary.pressed);
     assert!(!held_frame.pointer.primary.released);
     assert_eq!(held_frame.pointer.wheel_delta, Vec2::ZERO);
@@ -167,4 +190,16 @@ fn frame_output_channels_are_inspectable_and_deterministic() {
         vec![FrameWarning::DuplicateWidgetId { id: registered_id }]
     );
     assert_eq!(harness.last_output(), Some(&output));
+    assert_eq!(
+        harness.last_primitives(),
+        Some(output.primitives.as_slice())
+    );
+    assert_eq!(harness.last_semantics(), Some(&output.semantics));
+    assert_eq!(harness.last_actions(), Some(&output.actions));
+    assert_eq!(
+        harness.last_platform_requests(),
+        Some(output.platform_requests.as_slice())
+    );
+    assert_eq!(harness.last_repaint(), Some(output.repaint));
+    assert_eq!(harness.last_warnings(), Some(output.warnings.as_slice()));
 }
