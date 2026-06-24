@@ -23,6 +23,7 @@ fn tiny_image() -> RenderImage {
 }
 
 const NESTED_CONTEXT_SNAPSHOT: &str = "commands:\n  0: layer=13 transform=[2.000, 0.000, 0.000, 2.000, 4.000, 6.000] clips=[{rect=(0.000, 0.000, 100.000, 80.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}, {rect=(5.000, 6.000, 50.000, 40.000) transform=[1.000, 0.000, 0.000, 1.000, 1.000, 2.000]}] shadow rect=(2.000, 3.000, 12.000, 8.000) offset=(1.500, 2.500) blur=4.000 spread=1.000 radius=3.000 color=rgba(0.000, 0.000, 0.000, 0.250)\n  1: layer=13 transform=[2.000, 0.000, 0.000, 2.000, 4.000, 6.000] clips=[{rect=(0.000, 0.000, 100.000, 80.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}, {rect=(5.000, 6.000, 50.000, 40.000) transform=[1.000, 0.000, 0.000, 1.000, 1.000, 2.000]}] line from=(0.000, 0.000) to=(10.000, 5.000) stroke=2.000 rgba(0.750, 0.500, 0.250, 1.000)\n  2: layer=13 transform=[2.000, 0.000, 0.000, 2.000, 4.000, 6.000] clips=[{rect=(0.000, 0.000, 100.000, 80.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}, {rect=(5.000, 6.000, 50.000, 40.000) transform=[1.000, 0.000, 0.000, 1.000, 1.000, 2.000]}] path elements=[M(0.000, 0.000), L(8.000, 0.000), Q(10.000, 2.000; 8.000, 4.000), C(6.000, 6.000; 2.000, 6.000; 0.000, 4.000), Z] fill=linear(0.000,0.000)-(12.000,0.000)[rgba(1.000, 0.000, 0.000, 1.000)@0.000,rgba(0.000, 0.000, 1.000, 1.000)@1.000] stroke=1.500 rgba(0.100, 0.200, 0.300, 0.400)\n  3: layer=12 transform=[1.000, 0.000, 0.000, 1.000, 1.000, 2.000] clips=[{rect=(0.000, 0.000, 100.000, 80.000) transform=[1.000, 0.000, 0.000, 1.000, 0.000, 0.000]}] rect rect=(20.000, 10.000, 24.000, 12.000) fill=none stroke=1.000 linear(0.000,0.000)-(0.000,10.000)[rgba(1.000, 1.000, 1.000, 1.000)@0.000,rgba(0.000, 0.000, 0.000, 1.000)@1.000] radius=(0.000, 0.000, 0.000, 0.000)\ndiagnostics:";
+const FRACTIONAL_SNAP_TEXTURE_OVERLAY_SNAPSHOT: &str = "commands:\n  0: layer=30 transform=[1.250, 0.000, 0.000, 1.250, 1.600, 0.000] clips=[{rect=(8.000, 8.000, 48.000, 32.000) transform=[1.000, 0.000, 0.000, 1.000, 0.400, 0.800]}, {rect=(9.600, 9.600, 12.800, 9.600) transform=[1.250, 0.000, 0.000, 1.250, 1.600, 0.000]}] texture#42 rect=(10.400, 11.200, 5.600, 6.400) source_size=2.000x2.000\n  1: layer=30 transform=[1.250, 0.000, 0.000, 1.250, 1.600, 0.000] clips=[{rect=(8.000, 8.000, 48.000, 32.000) transform=[1.000, 0.000, 0.000, 1.000, 0.400, 0.800]}, {rect=(9.600, 9.600, 12.800, 9.600) transform=[1.250, 0.000, 0.000, 1.250, 1.600, 0.000]}] line from=(10.400, 11.200) to=(16.000, 11.200) stroke=0.800 rgba(0.000, 1.000, 1.000, 1.000)\n  2: layer=30 transform=[1.250, 0.000, 0.000, 1.250, 1.600, 0.000] clips=[{rect=(8.000, 8.000, 48.000, 32.000) transform=[1.000, 0.000, 0.000, 1.000, 0.400, 0.800]}, {rect=(9.600, 9.600, 12.800, 9.600) transform=[1.250, 0.000, 0.000, 1.250, 1.600, 0.000]}] rect rect=(10.400, 11.200, 5.600, 6.400) fill=none stroke=0.800 rgba(1.000, 1.000, 1.000, 1.000) radius=(0.000, 0.000, 0.000, 0.000)\ndiagnostics:";
 
 fn red_to_blue_gradient() -> Brush {
     Brush::LinearGradient(
@@ -188,6 +189,75 @@ fn render_translation_conformance_preserves_nested_context_geometry_and_brushes(
     assert_eq!(
         render_translation_snapshot(&translation),
         NESTED_CONTEXT_SNAPSHOT
+    );
+}
+
+#[test]
+fn render_translation_conformance_preserves_fractional_snapped_texture_overlay_context() {
+    let mut resources = RenderResources::new();
+    resources.register_texture(TextureResource {
+        id: TextureId::from_raw(42),
+        size: Size::new(2.0, 2.0),
+        sampling: RenderImageSampling::Smooth,
+        snapshot: Some(tiny_image()),
+    });
+    let snapped_texture_rect = Rect::new(10.4, 11.2, 5.6, 6.4);
+    let primitives = vec![
+        Primitive::LayerBegin {
+            id: LayerId::from_raw(30),
+        },
+        Primitive::TransformBegin(Transform::translation(Vec2::new(0.4, 0.8))),
+        Primitive::ClipBegin {
+            id: ClipId::from_raw(31),
+            rect: Rect::new(8.0, 8.0, 48.0, 32.0),
+        },
+        Primitive::TransformBegin(Transform {
+            m11: 1.25,
+            m12: 0.0,
+            m21: 0.0,
+            m22: 1.25,
+            dx: 1.2,
+            dy: -0.8,
+        }),
+        Primitive::ClipBegin {
+            id: ClipId::from_raw(32),
+            rect: Rect::new(9.6, 9.6, 12.8, 9.6),
+        },
+        Primitive::Texture(TexturePrimitive {
+            texture: TextureId::from_raw(42),
+            rect: snapped_texture_rect,
+            source_size: Size::new(2.0, 2.0),
+        }),
+        Primitive::Line(LinePrimitive {
+            from: Point::new(snapped_texture_rect.x, snapped_texture_rect.y),
+            to: Point::new(snapped_texture_rect.max_x(), snapped_texture_rect.y),
+            stroke: Stroke::new(0.8, Brush::Solid(Color::rgba(0.0, 1.0, 1.0, 1.0))),
+        }),
+        Primitive::Rect(RectPrimitive {
+            rect: snapped_texture_rect,
+            fill: None,
+            stroke: Some(Stroke::new(0.8, Brush::Solid(Color::WHITE))),
+            radius: CornerRadius::all(0.0),
+        }),
+        Primitive::ClipEnd {
+            id: ClipId::from_raw(32),
+        },
+        Primitive::TransformEnd,
+        Primitive::ClipEnd {
+            id: ClipId::from_raw(31),
+        },
+        Primitive::TransformEnd,
+        Primitive::LayerEnd {
+            id: LayerId::from_raw(30),
+        },
+    ];
+
+    let translation = translate_primitives(&primitives, &resources);
+
+    assert!(translation.diagnostics.is_empty());
+    assert_eq!(
+        render_translation_snapshot(&translation),
+        FRACTIONAL_SNAP_TEXTURE_OVERLAY_SNAPSHOT
     );
 }
 
