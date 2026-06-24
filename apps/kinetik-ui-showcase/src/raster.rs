@@ -30,6 +30,29 @@ pub struct RasterFrame {
     pub pixels: Vec<Pixel>,
 }
 
+/// Compact deterministic smoke metadata for a CPU raster frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RasterSmokeSummary {
+    /// Frame width in pixels.
+    pub width: usize,
+    /// Frame height in pixels.
+    pub height: usize,
+    /// Number of pixels stored in the frame.
+    pub total_pixels: usize,
+    /// True when at least one pixel differs from the first pixel.
+    pub has_visible_variation: bool,
+    /// Number of pixels that differ from the first pixel.
+    pub non_first_pixel_count: usize,
+    /// Bounded count of unique colors observed in the frame.
+    pub unique_color_count: usize,
+    /// Maximum number of unique colors counted.
+    pub unique_color_limit: usize,
+    /// True when the unique color count reached the configured limit.
+    pub unique_color_count_capped: bool,
+    /// Deterministic checksum over dimensions and packed pixel values.
+    pub checksum: u64,
+}
+
 impl RasterFrame {
     /// Creates a blank frame.
     #[must_use]
@@ -69,6 +92,64 @@ impl RasterFrame {
         }
         false
     }
+
+    /// Returns compact deterministic smoke metadata for this frame.
+    #[must_use]
+    pub fn smoke_summary(&self) -> RasterSmokeSummary {
+        self.smoke_summary_with_unique_color_limit(256)
+    }
+
+    /// Returns compact smoke metadata with a caller-provided unique color cap.
+    #[must_use]
+    pub fn smoke_summary_with_unique_color_limit(
+        &self,
+        unique_color_limit: usize,
+    ) -> RasterSmokeSummary {
+        let first = self.pixels.first().copied();
+        let mut unique_colors = Vec::new();
+        let mut checksum = FNV_OFFSET_BASIS;
+        checksum = fnv1a(checksum, &(self.width as u64).to_le_bytes());
+        checksum = fnv1a(checksum, &(self.height as u64).to_le_bytes());
+
+        let mut non_first_pixel_count = 0;
+        let mut unique_color_count_capped = false;
+        for pixel in &self.pixels {
+            if first.is_some_and(|first| *pixel != first) {
+                non_first_pixel_count += 1;
+            }
+            if !unique_colors.contains(pixel) {
+                if unique_colors.len() < unique_color_limit {
+                    unique_colors.push(*pixel);
+                } else {
+                    unique_color_count_capped = true;
+                }
+            }
+            checksum = fnv1a(checksum, &pixel.to_le_bytes());
+        }
+
+        RasterSmokeSummary {
+            width: self.width,
+            height: self.height,
+            total_pixels: self.pixels.len(),
+            has_visible_variation: non_first_pixel_count > 0,
+            non_first_pixel_count,
+            unique_color_count: unique_colors.len(),
+            unique_color_limit,
+            unique_color_count_capped,
+            checksum,
+        }
+    }
+}
+
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+fn fnv1a(mut checksum: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
+        checksum ^= u64::from(*byte);
+        checksum = checksum.wrapping_mul(FNV_PRIME);
+    }
+    checksum
 }
 
 /// Rasterizes primitives into a preview frame.
@@ -861,6 +942,23 @@ mod tests {
                 .count()
                 > 50_000
         );
+    }
+
+    #[test]
+    fn raster_smoke_summary_reports_showcase_variation() {
+        let app = ShowcaseApp::new();
+        let frame = rasterize(&app.primitives(), 320, 200);
+        let summary = frame.smoke_summary();
+
+        assert_eq!(summary.width, 320);
+        assert_eq!(summary.height, 200);
+        assert_eq!(summary.total_pixels, 64_000);
+        assert!(summary.has_visible_variation);
+        assert!(summary.non_first_pixel_count > 1_000);
+        assert!(summary.unique_color_count >= 8);
+        assert_eq!(summary.unique_color_limit, 256);
+        assert_ne!(summary.checksum, 0);
+        assert_eq!(summary, frame.smoke_summary());
     }
 
     #[test]
