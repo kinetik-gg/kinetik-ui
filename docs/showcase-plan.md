@@ -58,6 +58,9 @@ cargo run -p kinetik-ui-showcase -- --dump-review-artifacts review-label --page 
 
 Review dumps are written under
 `target/kinetik-ui-artifacts/kinetik-ui-showcase/review-dumps/` and include a
-`manifest.txt` plus CPU raster BMP frames for the selected page, or all showcase
-pages when `--page` is omitted. They are manual review outputs only; they are not
-committed baselines and there is no bless/update workflow.
+`manifest.txt`, CPU raster BMP frames, and `<page>-pixel-smoke.txt` summaries for
+the selected page, or all showcase pages when `--page` is omitted. Pixel-smoke
+summaries record dimensions, total pixels, visible variation, non-first-pixel
+count, bounded unique color count, and a deterministic checksum for manual
+comparison. They are manual review outputs only; they are not committed baselines
+and there is no bless/update workflow.
