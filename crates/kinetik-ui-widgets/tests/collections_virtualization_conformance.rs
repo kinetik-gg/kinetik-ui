@@ -7,8 +7,8 @@ mod collections_virtualization_conformance {
     use kinetik_ui_core::Rect;
     use kinetik_ui_widgets::{
         ItemId, ListLayout, Selection, TableColumn, TableColumnConstraints, TableLayout,
-        TreeLayout, TreeRow, VirtualRangeRequest, VirtualWindow, VirtualWindowRequest,
-        virtual_range, virtual_window,
+        TreeExpansion, TreeItem, TreeLayout, TreeModel, TreeRow, VirtualRangeRequest,
+        VirtualWindow, VirtualWindowRequest, virtual_range, virtual_window,
     };
 
     fn request(
@@ -137,6 +137,31 @@ mod collections_virtualization_conformance {
 
     fn id(raw: u64) -> ItemId {
         ItemId::from_raw(raw)
+    }
+
+    fn tree_model() -> TreeModel {
+        TreeModel::new(vec![
+            TreeItem {
+                id: id(1),
+                parent: None,
+                has_children: false,
+            },
+            TreeItem {
+                id: id(2),
+                parent: Some(id(1)),
+                has_children: false,
+            },
+            TreeItem {
+                id: id(3),
+                parent: Some(id(2)),
+                has_children: false,
+            },
+            TreeItem {
+                id: id(4),
+                parent: None,
+                has_children: true,
+            },
+        ])
     }
 
     fn table_constraints(
@@ -505,6 +530,86 @@ mod collections_virtualization_conformance {
         assert_eq!(rects[2].row.id, ItemId::from_raw(3));
         assert_approx(rects[0].rect.y, 85.0);
         assert_approx(rects[2].content_rect.x, 22.0);
+    }
+
+    #[test]
+    fn tree_expansion_retain_model_removes_stale_ids() {
+        let tree = TreeModel::new(vec![
+            TreeItem {
+                id: id(1),
+                parent: None,
+                has_children: false,
+            },
+            TreeItem {
+                id: id(2),
+                parent: Some(id(1)),
+                has_children: false,
+            },
+        ]);
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(id(2));
+        expansion.expand(id(99));
+
+        assert!(expansion.retain_model(&tree));
+        assert_eq!(expansion.expanded(), vec![id(2)]);
+    }
+
+    #[test]
+    fn tree_expansion_retain_visible_removes_hidden_descendants() {
+        let tree = tree_model();
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(id(2));
+
+        assert_eq!(tree.visible_item_ids(&expansion), vec![id(1), id(4)]);
+        assert!(expansion.retain_visible(&tree));
+        assert!(expansion.expanded().is_empty());
+    }
+
+    #[test]
+    fn tree_expansion_retain_visible_is_deterministic_and_idempotent() {
+        let tree = tree_model();
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(id(3));
+        expansion.expand(id(1));
+        expansion.expand(id(2));
+        expansion.expand(id(99));
+
+        assert_eq!(expansion.expanded(), vec![id(1), id(2), id(3), id(99)]);
+        assert!(expansion.retain_visible(&tree));
+        assert_eq!(expansion.expanded(), vec![id(1), id(2), id(3)]);
+
+        assert!(!expansion.retain_visible(&tree));
+        assert_eq!(expansion.expanded(), vec![id(1), id(2), id(3)]);
+    }
+
+    #[test]
+    fn unknown_expansion_ids_do_not_affect_tree_visible_rows_before_cleanup() {
+        let tree = tree_model();
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(id(1));
+        expansion.expand(id(404));
+
+        assert_eq!(tree.visible_item_ids(&expansion), vec![id(1), id(2), id(4)]);
+
+        assert!(expansion.retain_model(&tree));
+        assert_eq!(expansion.expanded(), vec![id(1)]);
+        assert_eq!(tree.visible_item_ids(&expansion), vec![id(1), id(2), id(4)]);
+    }
+
+    #[test]
+    fn invalid_tree_cleanup_clears_expansion_without_panicking() {
+        let invalid = TreeModel::new(vec![TreeItem {
+            id: id(1),
+            parent: Some(id(99)),
+            has_children: false,
+        }]);
+        let mut expansion = TreeExpansion::new();
+        expansion.expand(id(1));
+        expansion.expand(id(99));
+
+        assert!(expansion.retain_model(&invalid));
+        assert!(expansion.expanded().is_empty());
+        assert!(!expansion.retain_visible(&invalid));
     }
 
     #[test]
