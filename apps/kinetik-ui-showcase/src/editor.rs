@@ -11,6 +11,7 @@ use kinetik_ui::core::{
     Brush, ClipId, Color, CornerRadius, CursorShape, ImagePrimitive, Key, KeyState, LinePrimitive,
     Modifiers, PlatformRequest, Point, Primitive, Rect, RectPrimitive, RepaintRequest,
     SemanticNode, SemanticRole, Shortcut, Size, Stroke, TextPrimitive, TextureId, Theme, Vec2,
+    WidgetId,
 };
 use kinetik_ui::render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
@@ -18,12 +19,13 @@ use kinetik_ui::render::{
 };
 use kinetik_ui::text::TextEditState;
 use kinetik_ui::widgets::{
-    Dock, DockNode, Frame, FrameId, FrameTab, GridColumns, GridLayout, Guide, ItemId, ListLayout,
-    Menu, MenuItem, MenuOverlay, OverlayDismissal, OverlayEntry, OverlayId, OverlayKind,
-    OverlayStack, PanZoom, Panel, PanelId, PopoverPlacement, PopoverRequest, PropertyGridLayout,
-    PropertyGridRow, TableColumn, TableLayout, TreeExpansion, TreeItem, TreeLayout, TreeModel, Ui,
+    Dock, DockDropTarget, DockDropZone, DockNode, DockPlacement, DockTabDrag, Frame, FrameId,
+    FrameLayout, FrameTab, GridColumns, GridLayout, Guide, ItemId, ListLayout, Menu, MenuItem,
+    MenuOverlay, OverlayDismissal, OverlayEntry, OverlayId, OverlayKind, OverlayStack, PanZoom,
+    Panel, PanelId, PopoverPlacement, PopoverRequest, PropertyGridLayout, PropertyGridRow,
+    TableColumn, TableLayout, TreeExpansion, TreeItem, TreeLayout, TreeModel, Ui,
     ViewportComposition, ViewportFit, ViewportSurface, frame_tabs, icon_button_semantics,
-    place_popover, solve_dock_layout, solve_dock_splitters,
+    place_popover, resolve_frame_drop_zone, solve_dock_layout, solve_dock_splitters,
 };
 
 /// Saves the current editor project.
@@ -100,6 +102,8 @@ const PANEL_VIEWPORT: PanelId = PanelId::from_raw(3);
 const PANEL_CONSOLE: PanelId = PanelId::from_raw(4);
 const PANEL_JOBS: PanelId = PanelId::from_raw(5);
 const PANEL_INSPECTOR: PanelId = PanelId::from_raw(6);
+const FRAME_DRAG_INSERT_START: u64 = 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EditorTool {
     Select,
@@ -279,6 +283,7 @@ pub struct EditorShowcase {
     timeline: f32,
     status: String,
     open_menu: Option<EditorMenuKind>,
+    next_drop_frame: u64,
 }
 
 impl Default for EditorShowcase {
@@ -312,6 +317,7 @@ impl Default for EditorShowcase {
             timeline: 0.41,
             status: "Editor ready".to_owned(),
             open_menu: None,
+            next_drop_frame: FRAME_DRAG_INSERT_START,
         }
     }
 }
@@ -967,9 +973,25 @@ impl EditorShowcase {
                 .with_label("Editor Dock"),
         );
         let frame_layouts = solve_dock_layout(&self.dock, bounds);
-        for layout in frame_layouts {
+        let mut tab_drags = Vec::new();
+        for layout in &frame_layouts {
+            let frame_rect = layout.rect.inset(2.0);
+            let Some(frame_snapshot) = self.dock.frame(layout.frame).cloned() else {
+                continue;
+            };
+            self.frame_tab_interactions(
+                ui,
+                layout.frame,
+                frame_rect,
+                26.0,
+                &frame_snapshot,
+                &mut tab_drags,
+            );
+        }
+        for layout in &frame_layouts {
             self.editor_frame(ui, layout.frame, layout.rect.inset(2.0));
         }
+        self.frame_drop_targets(ui, &frame_layouts, &tab_drags);
 
         for splitter in solve_dock_splitters(&self.dock, bounds, 4.0) {
             let response = ui.draggable(
@@ -995,18 +1017,30 @@ impl EditorShowcase {
         if frame_rect.width <= 1.0 || frame_rect.height <= 1.0 {
             return;
         }
-        rect(ui, frame_rect, rgb(28, 29, 32), Some(rgb(57, 59, 65)));
 
-        let Some(frame_snapshot) = self.dock.frame(frame_id).cloned() else {
-            return;
-        };
-        let frame_semantic_id = ui.id(("editor.frame.semantic", frame_id.raw()));
-        ui.push_semantic_node(
-            SemanticNode::new(frame_semantic_id, SemanticRole::Frame, frame_rect)
-                .with_label(format!("Frame {}", frame_id.raw())),
-        );
         let tab_height = 26.0;
-        self.frame_tab_interactions(ui, frame_id, frame_rect, tab_height, &frame_snapshot);
+        let active_frame = self.dock.active_frame() == Some(frame_id);
+        rect(
+            ui,
+            frame_rect,
+            if active_frame {
+                rgb(30, 33, 39)
+            } else {
+                rgb(28, 29, 32)
+            },
+            Some(if active_frame {
+                rgb(78, 128, 210)
+            } else {
+                rgb(57, 59, 65)
+            }),
+        );
+        let frame_semantic_id = ui.id(("editor.frame.semantic", frame_id.raw()));
+        let mut frame_semantics =
+            SemanticNode::new(frame_semantic_id, SemanticRole::Frame, frame_rect)
+                .with_label(format!("Frame {}", frame_id.raw()))
+                .focusable(true);
+        frame_semantics.state.focused = active_frame;
+        ui.push_semantic_node(frame_semantics);
         let Some(frame_snapshot) = self.dock.frame(frame_id).cloned() else {
             return;
         };
@@ -1072,18 +1106,102 @@ impl EditorShowcase {
         frame_rect: Rect,
         tab_height: f32,
         frame: &Frame,
+        tab_drags: &mut Vec<(WidgetId, DockTabDrag)>,
     ) {
         for (tab, tab_rect) in frame_tab_rects(frame, frame_rect, tab_height) {
-            let response = ui.pressable(
-                ("editor.frame-tab.prepass", frame_id.raw(), tab.panel.raw()),
+            let response = ui.draggable(
+                ("editor.frame-tab.drag", frame_id.raw(), tab.panel.raw()),
                 tab_rect,
                 false,
             );
+            if let Some(drag) = self.dock.begin_tab_drag(frame_id, tab.panel) {
+                tab_drags.push((response.id, drag));
+            }
             if response.clicked {
                 self.dock.select_panel(frame_id, tab.panel);
                 ui.request_repaint(RepaintRequest::NextFrame);
             }
+            if response.dragged && tab.draggable {
+                self.status = format!("Dragging {} tab", tab.title);
+                ui.request_repaint(RepaintRequest::NextFrame);
+            }
         }
+    }
+
+    fn frame_drop_targets(
+        &mut self,
+        ui: &mut Ui<'_>,
+        frame_layouts: &[FrameLayout],
+        tab_drags: &[(WidgetId, DockTabDrag)],
+    ) {
+        let Some(pointer) = ui.input().pointer.position else {
+            return;
+        };
+        for layout in frame_layouts {
+            let frame_rect = layout.rect.inset(2.0);
+            let drop = ui.drop_target(
+                ("editor.frame.drop-target", layout.frame.raw()),
+                frame_rect,
+                false,
+            );
+            let Some(source) = drop.source else {
+                continue;
+            };
+            let Some((_, drag)) = tab_drags.iter().find(|(drag_id, _)| *drag_id == source) else {
+                continue;
+            };
+            let Some(target) = self.dock_drop_target(layout.frame, frame_rect, pointer) else {
+                continue;
+            };
+
+            if drop.dropped {
+                if self.dock.drop_tab(*drag, target) {
+                    if matches!(target, DockDropTarget::Split { .. }) {
+                        self.next_drop_frame += 1;
+                    }
+                    self.status = dock_drop_status(target);
+                    ui.request_repaint(RepaintRequest::NextFrame);
+                }
+                return;
+            }
+
+            if drop.response.state.hovered {
+                draw_dock_drop_affordance(ui, frame_rect, target);
+                ui.request_repaint(RepaintRequest::NextFrame);
+            }
+        }
+    }
+
+    fn dock_drop_target(
+        &self,
+        frame: FrameId,
+        frame_rect: Rect,
+        pointer: Point,
+    ) -> Option<DockDropTarget> {
+        let zone = resolve_frame_drop_zone(frame_rect, pointer)?;
+        Some(match zone {
+            DockDropZone::Center => DockDropTarget::tab(frame),
+            DockDropZone::Left => DockDropTarget::split(
+                frame,
+                DockPlacement::Left,
+                FrameId::from_raw(self.next_drop_frame),
+            ),
+            DockDropZone::Right => DockDropTarget::split(
+                frame,
+                DockPlacement::Right,
+                FrameId::from_raw(self.next_drop_frame),
+            ),
+            DockDropZone::Top => DockDropTarget::split(
+                frame,
+                DockPlacement::Top,
+                FrameId::from_raw(self.next_drop_frame),
+            ),
+            DockDropZone::Bottom => DockDropTarget::split(
+                frame,
+                DockPlacement::Bottom,
+                FrameId::from_raw(self.next_drop_frame),
+            ),
+        })
     }
 
     fn scene_graph(&mut self, ui: &mut Ui<'_>, body: Rect) {
@@ -2012,6 +2130,74 @@ fn frame_tab_rects(frame: &Frame, frame_rect: Rect, tab_height: f32) -> Vec<(Fra
         .collect()
 }
 
+fn dock_drop_status(target: DockDropTarget) -> String {
+    match target {
+        DockDropTarget::Tab { frame } => {
+            format!("Dock tab merged into frame {}", frame.raw())
+        }
+        DockDropTarget::Split {
+            frame, placement, ..
+        } => {
+            let placement = match placement {
+                DockPlacement::Left => "left of",
+                DockPlacement::Right => "right of",
+                DockPlacement::Top => "above",
+                DockPlacement::Bottom => "below",
+            };
+            format!("Dock tab split {placement} frame {}", frame.raw())
+        }
+    }
+}
+
+fn draw_dock_drop_affordance(ui: &mut Ui<'_>, frame_rect: Rect, target: DockDropTarget) {
+    let preview = match target {
+        DockDropTarget::Tab { .. } => frame_rect.inset(24.0),
+        DockDropTarget::Split {
+            placement: DockPlacement::Left,
+            ..
+        } => Rect::new(
+            frame_rect.x + 6.0,
+            frame_rect.y + 6.0,
+            frame_rect.width * 0.35,
+            frame_rect.height - 12.0,
+        ),
+        DockDropTarget::Split {
+            placement: DockPlacement::Right,
+            ..
+        } => Rect::new(
+            frame_rect.max_x() - frame_rect.width * 0.35 - 6.0,
+            frame_rect.y + 6.0,
+            frame_rect.width * 0.35,
+            frame_rect.height - 12.0,
+        ),
+        DockDropTarget::Split {
+            placement: DockPlacement::Top,
+            ..
+        } => Rect::new(
+            frame_rect.x + 6.0,
+            frame_rect.y + 6.0,
+            frame_rect.width - 12.0,
+            frame_rect.height * 0.35,
+        ),
+        DockDropTarget::Split {
+            placement: DockPlacement::Bottom,
+            ..
+        } => Rect::new(
+            frame_rect.x + 6.0,
+            frame_rect.max_y() - frame_rect.height * 0.35 - 6.0,
+            frame_rect.width - 12.0,
+            frame_rect.height * 0.35,
+        ),
+    };
+    rect_fill(
+        ui,
+        preview,
+        rgba(78, 142, 245, 0.18),
+        Some(rgb(86, 151, 245)),
+        CornerRadius::all(3.0),
+    );
+}
+
 fn run_toolbar_buttons(
     viewport: Rect,
     chrome: EditorChromeMetrics,
@@ -2086,16 +2272,17 @@ fn run_toolbar_buttons(
 mod tests {
     use super::{
         EditorChromeMetrics, EditorMenuKind, EditorShowcase, EditorTool, FRAME_BOTTOM,
-        FRAME_VIEWPORT, PANEL_JOBS, TOOLBAR_Y, VIEWPORT_SIZE, frame_tab_rects, icon_atlas_image,
-        inspector_label_width, item_id, phosphor_icons, register_resources, rgb, rgba,
+        FRAME_INSPECTOR, FRAME_VIEWPORT, PANEL_JOBS, TOOLBAR_Y, VIEWPORT_SIZE, frame_tab_rects,
+        icon_atlas_image, inspector_label_width, item_id, phosphor_icons, register_resources, rgb,
+        rgba,
     };
     use kinetik_ui::core::{
         Brush, CursorShape, FrameContext, PhysicalSize, PlatformRequest, Point, PointerButtonState,
         PointerInput, Primitive, Rect, RepaintRequest, ScaleFactor, SemanticActionKind,
-        SemanticRole, Size, TimeInfo, UiInput, UiMemory, ViewportInfo, default_dark_theme,
+        SemanticRole, Size, TimeInfo, UiInput, UiMemory, Vec2, ViewportInfo, default_dark_theme,
     };
     use kinetik_ui::render::RenderResources;
-    use kinetik_ui::widgets::{Ui, ViewportSurface, solve_dock_layout};
+    use kinetik_ui::widgets::{Ui, ViewportSurface, solve_dock_layout, solve_dock_splitters};
 
     #[test]
     fn inspector_label_width_preserves_value_space_at_narrow_widths() {
@@ -2261,12 +2448,146 @@ mod tests {
         editor.render(&mut ui, 0);
         let output = ui.finish_output();
 
+        assert_eq!(editor.dock.active_frame(), Some(FRAME_BOTTOM));
+        assert_eq!(focused_frame_semantic_count(&output), 1);
+        assert!(output.semantics.nodes().iter().any(|node| {
+            node.role == SemanticRole::Frame
+                && node.label.as_deref() == Some("Frame 4")
+                && node.state.focused
+        }));
         assert!(output.primitives.iter().any(|primitive| {
             matches!(primitive, Primitive::Text(text) if text.text == "Bake global illumination")
         }));
         assert!(!output.primitives.iter().any(|primitive| {
             matches!(primitive, Primitive::Text(text) if text.text == "Message")
         }));
+    }
+
+    #[test]
+    fn splitter_drag_routes_through_dock_resize_path() {
+        let mut editor = EditorShowcase::new();
+        let mut memory = UiMemory::new();
+        let theme = default_dark_theme();
+        let bounds = editor_workspace_bounds();
+        let splitter = solve_dock_splitters(&editor.dock, bounds, 4.0)
+            .into_iter()
+            .next()
+            .expect("root splitter");
+        let before = splitter.ratio;
+        let press = splitter.rect.center();
+
+        let mut ui = Ui::begin_frame(
+            editor_test_context(pointer_input_at(press.x, press.y, true, true, false)),
+            &mut memory,
+            &theme,
+        );
+        editor.render(&mut ui, 0);
+        let _ = ui.finish_output();
+
+        let mut ui = Ui::begin_frame(
+            editor_test_context(pointer_input_at_with_delta(
+                press.x + 48.0,
+                press.y,
+                true,
+                false,
+                false,
+                Vec2::new(48.0, 0.0),
+            )),
+            &mut memory,
+            &theme,
+        );
+        editor.render(&mut ui, 0);
+        let output = ui.finish_output();
+        let after = solve_dock_splitters(&editor.dock, bounds, 4.0)
+            .into_iter()
+            .next()
+            .expect("root splitter")
+            .ratio;
+
+        assert!(after > before, "{after} should be greater than {before}");
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+
+    #[test]
+    fn tab_drag_drop_uses_dock_drag_and_target_without_panel_metadata_mutation() {
+        let mut editor = EditorShowcase::new();
+        let mut memory = UiMemory::new();
+        let theme = default_dark_theme();
+        let bottom = bottom_frame_rect(&editor);
+        let inspector = editor_frame_rect(&editor, FRAME_INSPECTOR);
+        let jobs = editor
+            .dock
+            .frame(FRAME_BOTTOM)
+            .and_then(|frame| {
+                frame_tab_rects(frame, bottom, 26.0)
+                    .into_iter()
+                    .find(|(tab, _rect)| tab.panel == PANEL_JOBS)
+                    .map(|(_tab, rect)| rect)
+            })
+            .expect("jobs tab");
+        let start = jobs.center();
+        let target = inspector.center();
+
+        let mut ui = Ui::begin_frame(
+            editor_test_context(pointer_input_at(start.x, start.y, true, true, false)),
+            &mut memory,
+            &theme,
+        );
+        editor.render(&mut ui, 0);
+        let _ = ui.finish_output();
+
+        let drag_delta = Vec2::new(target.x - start.x, target.y - start.y);
+        let mut ui = Ui::begin_frame(
+            editor_test_context(pointer_input_at_with_delta(
+                target.x, target.y, true, false, false, drag_delta,
+            )),
+            &mut memory,
+            &theme,
+        );
+        editor.render(&mut ui, 0);
+        let dragging_output = ui.finish_output();
+
+        assert_eq!(editor.status, "Dragging Jobs tab");
+        assert!(dragging_output.primitives.iter().any(|primitive| {
+            matches!(
+                primitive,
+                Primitive::Rect(rect)
+                    if matches!(&rect.fill, Some(Brush::Solid(color)) if *color == rgba(78, 142, 245, 0.18))
+                        && inspector.contains_point(rect.rect.center())
+            )
+        }));
+
+        let mut ui = Ui::begin_frame(
+            editor_test_context(pointer_input_at(target.x, target.y, false, false, true)),
+            &mut memory,
+            &theme,
+        );
+        editor.render(&mut ui, 0);
+        let output = ui.finish_output();
+        let inspector_frame = editor.dock.frame(FRAME_INSPECTOR).expect("inspector frame");
+        let jobs_panel = inspector_frame
+            .panels
+            .iter()
+            .find(|panel| panel.id == PANEL_JOBS)
+            .expect("moved jobs panel");
+
+        assert_eq!(jobs_panel.title, "Jobs");
+        assert_eq!(
+            inspector_frame.active_panel().map(|panel| panel.id),
+            Some(PANEL_JOBS)
+        );
+        assert_eq!(editor.dock.active_frame(), Some(FRAME_INSPECTOR));
+        assert!(
+            !editor
+                .dock
+                .frame(FRAME_BOTTOM)
+                .expect("bottom frame")
+                .panels
+                .iter()
+                .any(|panel| panel.id == PANEL_JOBS)
+        );
+        assert!(editor.status.contains("Dock tab merged into frame"));
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
     }
 
     #[test]
@@ -2768,20 +3089,23 @@ mod tests {
     }
 
     fn editor_frame_rect(editor: &EditorShowcase, frame: super::FrameId) -> Rect {
-        let viewport = Rect::new(0.0, 0.0, 1440.0, 900.0);
-        let theme = default_dark_theme();
-        let workspace_top = super::workspace_top(&theme);
-        let bounds = Rect::new(
-            4.0,
-            workspace_top,
-            viewport.width - 8.0,
-            viewport.height - workspace_top - 28.0,
-        );
-        solve_dock_layout(&editor.dock, bounds)
+        solve_dock_layout(&editor.dock, editor_workspace_bounds())
             .into_iter()
             .find(|layout| layout.frame == frame)
             .map(|layout| layout.rect.inset(2.0))
             .expect("editor frame")
+    }
+
+    fn editor_workspace_bounds() -> Rect {
+        let viewport = Rect::new(0.0, 0.0, 1440.0, 900.0);
+        let theme = default_dark_theme();
+        let workspace_top = super::workspace_top(&theme);
+        Rect::new(
+            4.0,
+            workspace_top,
+            viewport.width - 8.0,
+            viewport.height - workspace_top - 28.0,
+        )
     }
 
     fn frame_body_rect(frame_rect: Rect) -> Rect {
@@ -2815,10 +3139,31 @@ mod tests {
             .count()
     }
 
+    fn focused_frame_semantic_count(output: &kinetik_ui::core::FrameOutput) -> usize {
+        output
+            .semantics
+            .nodes()
+            .iter()
+            .filter(|node| node.role == SemanticRole::Frame && node.state.focused)
+            .count()
+    }
+
     fn pointer_input_at(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInput {
+        pointer_input_at_with_delta(x, y, down, pressed, released, Vec2::ZERO)
+    }
+
+    fn pointer_input_at_with_delta(
+        x: f32,
+        y: f32,
+        down: bool,
+        pressed: bool,
+        released: bool,
+        delta: Vec2,
+    ) -> UiInput {
         UiInput {
             pointer: PointerInput {
                 position: Some(Point::new(x, y)),
+                delta,
                 primary: PointerButtonState::new(down, pressed, released),
                 ..PointerInput::default()
             },
