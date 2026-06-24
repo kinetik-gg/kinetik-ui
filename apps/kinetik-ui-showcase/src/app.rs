@@ -692,7 +692,7 @@ impl ShowcaseApp {
         }
 
         let icon_button_size = ui.theme().controls.control_height;
-        ui.icon_button(
+        let icon = ui.icon_button_with_label(
             "components.icon",
             Rect::new(
                 slider_x,
@@ -701,8 +701,12 @@ impl ShowcaseApp {
                 icon_button_size,
             ),
             IconId::from_raw(1),
+            "Icon button",
             false,
         );
+        if icon.clicked {
+            "Icon button".clone_into(&mut self.status);
+        }
         ui.label(
             Rect::new(slider_x + 44.0, slider_y + 50.0, 90.0, 20.0),
             "Icon button",
@@ -2164,10 +2168,16 @@ mod tests {
         assert_eq!(count_semantic_role(&app, &SemanticRole::Slider), 1);
         assert_eq!(count_semantic_role(&app, &SemanticRole::SearchField), 1);
         assert!(count_semantic_role(&app, &SemanticRole::TextField) >= 3);
+        assert!(count_semantic_role(&app, &SemanticRole::Panel) >= 5);
         assert!(count_semantic_role(&app, &SemanticRole::ListItem) >= 4);
         assert!(count_semantic_role(&app, &SemanticRole::Tab) >= 3);
         assert!(semantic_node(&app, &SemanticRole::Button, "Run Action"));
         assert!(semantic_node(&app, &SemanticRole::Button, "Disabled"));
+        assert!(semantic_node(
+            &app,
+            &SemanticRole::IconButton,
+            "Icon button"
+        ));
 
         let slider = app
             .output()
@@ -2267,6 +2277,26 @@ mod tests {
                 primitive,
                 Primitive::Text(text)
                     if text.text == "checkbox=true toggle=true radio=1 selected_row=2"
+            )
+        }));
+    }
+
+    #[test]
+    fn component_status_reflects_checkbox_click_same_frame() {
+        let mut app = ShowcaseApp::new();
+        app.set_page(ShowcasePage::Components);
+
+        click(&mut app, Point::new(71.0, 204.0));
+
+        assert!(!app.checkbox);
+        assert!(app.primitives().iter().any(|primitive| {
+            matches!(primitive, Primitive::Text(text) if text.text == "Checkbox: false")
+        }));
+        assert!(app.primitives().iter().any(|primitive| {
+            matches!(
+                primitive,
+                Primitive::Text(text)
+                    if text.text == "checkbox=false toggle=false radio=1 selected_row=2"
             )
         }));
     }
