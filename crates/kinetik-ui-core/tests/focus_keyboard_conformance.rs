@@ -2,10 +2,10 @@
 
 use kinetik_ui_core::{
     ActionBinding, ActionContext, ActionDescriptor, ActionId, ActionPriority, ActionRouter,
-    ActionRoutingContext, FocusTraversal, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
-    MouseButton, PhysicalKey, PlatformRequest, Point, Rect, ScriptedInput, SemanticNode,
-    SemanticRole, SemanticTree, Shortcut, TextInputEvent, TextRange, Ui, UiTestHarness, Vec2,
-    WidgetId, focusable, pressable,
+    ActionRoutingContext, FocusTraversal, FrameWarning, Key, KeyEvent, KeyState, KeyboardInput,
+    Modifiers, MouseButton, PhysicalKey, PlatformRequest, Point, Rect, ScriptedInput, SemanticNode,
+    SemanticRole, SemanticTree, SemanticTreeError, Shortcut, TextInputEvent, TextRange, Ui,
+    UiTestHarness, Vec2, WidgetId, focusable, pressable,
 };
 
 fn ctrl() -> Modifiers {
@@ -129,6 +129,34 @@ fn focus_tree_with_disabled_parent_subtree() -> SemanticTree {
     tree.push(disabled_parent_node);
     tree.push(SemanticNode::new(disabled_child, SemanticRole::Button, Rect::ZERO).focusable(true));
     tree.push(SemanticNode::new(third, SemanticRole::Button, Rect::ZERO).focusable(true));
+    tree
+}
+
+fn text_owner_tree(owner: WidgetId, rect: Rect) -> SemanticTree {
+    let root = WidgetId::from_key("root");
+    let mut tree = SemanticTree::new();
+    tree.push(SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([owner]));
+    tree.push(SemanticNode::new(owner, SemanticRole::TextField, rect).focusable(true));
+    tree
+}
+
+fn text_owner_tree_with_disabled_text_field(
+    owner: WidgetId,
+    owner_rect: Rect,
+    disabled: WidgetId,
+    disabled_rect: Rect,
+) -> SemanticTree {
+    let root = WidgetId::from_key("root");
+    let mut disabled_node =
+        SemanticNode::new(disabled, SemanticRole::TextField, disabled_rect).focusable(true);
+    disabled_node.state.disabled = true;
+
+    let mut tree = SemanticTree::new();
+    tree.push(
+        SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([owner, disabled]),
+    );
+    tree.push(SemanticNode::new(owner, SemanticRole::TextField, owner_rect).focusable(true));
+    tree.push(disabled_node);
     tree
 }
 
@@ -439,25 +467,221 @@ fn focus_keyboard_runtime_ignores_non_tab_and_released_tab_events() {
 }
 
 #[test]
-fn focus_keyboard_runtime_text_input_owner_blocks_tab_and_shift_tab_traversal() {
+fn focus_keyboard_runtime_tab_from_text_owner_traverses_forward_and_stops_input() {
+    let (_, first, second, _) = ids();
+    let tree = focus_tree();
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(second);
+    harness.memory_mut().set_text_input_owner(second);
+    harness.key_press(Key::Tab);
+
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+
+    assert_eq!(harness.memory().focused(), Some(first));
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert_eq!(output.repaint, kinetik_ui_core::RepaintRequest::NextFrame);
+    assert!(
+        output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
+fn focus_keyboard_runtime_shift_tab_from_text_owner_traverses_backward_and_stops_input() {
+    let (_, _, second, third) = ids();
+    let tree = focus_tree();
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(second);
+    harness.memory_mut().set_text_input_owner(second);
+    harness.set_modifiers(Modifiers::new(true, false, false, false));
+    harness.key_press(Key::Tab);
+
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+
+    assert_eq!(harness.memory().focused(), Some(third));
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert_eq!(output.repaint, kinetik_ui_core::RepaintRequest::NextFrame);
+    assert!(
+        output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
+fn focus_keyboard_runtime_escape_clears_text_owner_and_stops_input() {
     let (_, _, second, _) = ids();
     let tree = focus_tree();
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(second);
+    harness.memory_mut().set_text_input_owner(second);
+    harness.key_press(Key::Escape);
 
-    for modifiers in [
-        Modifiers::default(),
-        Modifiers::new(true, false, false, false),
-    ] {
-        let mut harness = UiTestHarness::new();
-        harness.memory_mut().focus(second);
-        harness.memory_mut().set_text_input_owner(second);
-        harness.set_modifiers(modifiers);
-        harness.key_press(Key::Tab);
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
 
-        let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+    assert_eq!(harness.memory().focused(), None);
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert_eq!(output.repaint, kinetik_ui_core::RepaintRequest::NextFrame);
+    assert!(
+        output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
 
-        assert_eq!(harness.memory().focused(), Some(second));
-        assert_eq!(output.repaint, kinetik_ui_core::RepaintRequest::None);
-    }
+#[test]
+fn focus_keyboard_runtime_primary_press_outside_text_owner_clears_focus_and_stops_input() {
+    let owner = WidgetId::from_key("field");
+    let owner_rect = Rect::new(10.0, 10.0, 120.0, 24.0);
+    let tree = text_owner_tree(owner, owner_rect);
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(owner);
+    harness.memory_mut().set_text_input_owner(owner);
+    harness.set_pointer_position(Point::new(200.0, 100.0));
+    harness.pointer_press(MouseButton::Primary);
+
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+
+    assert_eq!(harness.memory().focused(), None);
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert!(
+        output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
+fn focus_keyboard_runtime_primary_press_inside_text_owner_preserves_focus_and_input() {
+    let owner = WidgetId::from_key("field");
+    let owner_rect = Rect::new(10.0, 10.0, 120.0, 24.0);
+    let tree = text_owner_tree(owner, owner_rect);
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(owner);
+    harness.memory_mut().set_text_input_owner(owner);
+    harness.set_pointer_position(Point::new(20.0, 20.0));
+    harness.pointer_press(MouseButton::Primary);
+
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+
+    assert_eq!(harness.memory().focused(), Some(owner));
+    assert_eq!(harness.memory().text_input_owner(), Some(owner));
+    assert!(
+        !output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
+fn focus_keyboard_runtime_primary_press_on_disabled_text_field_preserves_text_owner() {
+    let owner = WidgetId::from_key("owner");
+    let disabled = WidgetId::from_key("disabled");
+    let tree = text_owner_tree_with_disabled_text_field(
+        owner,
+        Rect::new(10.0, 10.0, 120.0, 24.0),
+        disabled,
+        Rect::new(10.0, 44.0, 120.0, 24.0),
+    );
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(owner);
+    harness.memory_mut().set_text_input_owner(owner);
+    harness.set_pointer_position(Point::new(20.0, 52.0));
+    harness.pointer_press(MouseButton::Primary);
+
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+
+    assert_eq!(harness.memory().focused(), Some(owner));
+    assert_eq!(harness.memory().text_input_owner(), Some(owner));
+    assert!(
+        !output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
+fn focus_keyboard_runtime_window_focus_loss_clears_text_owner_and_stops_input() {
+    let owner = WidgetId::from_key("field");
+    let tree = text_owner_tree(owner, Rect::new(10.0, 10.0, 120.0, 24.0));
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(owner);
+    harness.memory_mut().set_text_input_owner(owner);
+    harness.set_window_focused(false);
+
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+
+    assert_eq!(harness.memory().focused(), None);
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert!(
+        output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
+fn focus_keyboard_runtime_window_focus_loss_clears_absent_text_owner_and_stops_input() {
+    let owner = WidgetId::from_key("field");
+    let tree = focus_tree();
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(owner);
+    harness.memory_mut().set_text_input_owner(owner);
+    harness.set_window_focused(false);
+
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+
+    assert_eq!(harness.memory().focused(), None);
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert!(
+        output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
+fn focus_keyboard_window_focus_loss_clears_text_owner_with_invalid_semantic_tree() {
+    let owner = WidgetId::from_key("field");
+    let missing = WidgetId::from_key("missing-child");
+    let root = WidgetId::from_key("root");
+    let mut tree = SemanticTree::new();
+    tree.push(
+        SemanticNode::new(root, SemanticRole::Root, Rect::ZERO).with_children([owner, missing]),
+    );
+    tree.push(
+        SemanticNode::new(
+            owner,
+            SemanticRole::TextField,
+            Rect::new(10.0, 10.0, 120.0, 24.0),
+        )
+        .focusable(true),
+    );
+
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(owner);
+    harness.memory_mut().set_text_input_owner(owner);
+    harness.set_window_focused(false);
+
+    let ((), output) = harness.run_frame(|ui| emit_tree(ui, &tree));
+
+    assert_eq!(harness.memory().focused(), None);
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert!(
+        output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+    assert_eq!(
+        output.warnings,
+        vec![FrameWarning::InvalidSemanticTree {
+            error: SemanticTreeError::UnknownChild {
+                parent: root,
+                child: missing,
+            },
+        }]
+    );
 }
 
 #[test]
@@ -547,7 +771,10 @@ fn focus_keyboard_same_frame_text_input_handoff_observes_commit_for_new_owner() 
     assert_eq!(harness.memory().text_input_owner(), Some(new_field));
     assert_eq!(
         output.platform_requests,
-        vec![PlatformRequest::StartTextInput { rect: Some(rect) }]
+        vec![
+            PlatformRequest::StopTextInput,
+            PlatformRequest::StartTextInput { rect: Some(rect) },
+        ]
     );
 }
 
@@ -565,6 +792,21 @@ fn focus_keyboard_starting_text_input_allows_missing_logical_rect() {
         output.platform_requests,
         vec![PlatformRequest::StartTextInput { rect: None }]
     );
+}
+
+#[test]
+fn focus_keyboard_starting_current_text_owner_does_not_churn_platform_requests() {
+    let field = WidgetId::from_key("field");
+    let rect = Rect::new(12.0, 24.0, 160.0, 20.0);
+    let mut harness = UiTestHarness::new();
+    harness.memory_mut().focus(field);
+    harness.memory_mut().set_text_input_owner(field);
+
+    let (started, output) = harness.run_frame(|ui| ui.start_text_input(field, Some(rect)));
+
+    assert!(started);
+    assert_eq!(harness.memory().text_input_owner(), Some(field));
+    assert!(output.platform_requests.is_empty());
 }
 
 #[test]

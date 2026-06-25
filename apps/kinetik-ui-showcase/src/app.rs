@@ -2292,8 +2292,11 @@ mod tests {
 
         click(&mut app, Point::new(940.0, 160.0));
 
-        assert!(app.output().platform_requests.iter().any(|request| {
-            matches!(request, PlatformRequest::StartTextInput { rect: Some(rect) } if !rect.is_empty())
+        assert!(!app.output().platform_requests.iter().any(|request| {
+            matches!(
+                request,
+                PlatformRequest::StartTextInput { .. } | PlatformRequest::StopTextInput
+            )
         }));
     }
 
