@@ -283,7 +283,12 @@ impl UiMemory {
 
     /// Records the widget that should receive platform text input or IME events.
     pub fn set_text_input_owner(&mut self, id: WidgetId) {
-        self.pending_text_input_stop = None;
+        if self.text_input_owner == Some(id) {
+            return;
+        }
+        if self.pending_text_input_stop == Some(id) {
+            self.pending_text_input_stop = None;
+        }
         self.text_input_owner = Some(id);
     }
 
@@ -581,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn text_input_owner_handoff_consumes_pending_stop() {
+    fn text_input_owner_handoff_preserves_pending_stop_for_old_owner() {
         let old_field = WidgetId::from_key("old-field");
         let new_field = WidgetId::from_key("new-field");
         let mut memory = UiMemory::new();
@@ -594,7 +599,7 @@ mod tests {
         memory.set_text_input_owner(new_field);
 
         assert_eq!(memory.text_input_owner(), Some(new_field));
-        assert_eq!(memory.take_pending_text_input_stop(), None);
+        assert_eq!(memory.take_pending_text_input_stop(), Some(old_field));
     }
 
     #[test]

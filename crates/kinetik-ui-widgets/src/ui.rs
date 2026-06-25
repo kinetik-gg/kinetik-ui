@@ -2343,14 +2343,8 @@ mod tests {
         let input = pressed_at(4.0, 4.0);
         let mut ui = Ui::new(&input, &mut memory, &theme);
         ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
-        let _ = ui.finish_output();
-
-        let input = released_at(4.0, 4.0);
-        let mut ui = Ui::new(&input, &mut memory, &theme);
-        ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
-        let output = ui.finish_output();
-
-        assert!(output.platform_requests.iter().any(|request| {
+        let press_output = ui.finish_output();
+        assert!(press_output.platform_requests.iter().any(|request| {
             matches!(
                 request,
                 PlatformRequest::StartTextInput {
@@ -2358,6 +2352,16 @@ mod tests {
                 } if *rect == Rect::new(0.0, 0.0, 120.0, 24.0)
             )
         }));
+
+        let input = released_at(4.0, 4.0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.text_field("field", Rect::new(0.0, 0.0, 120.0, 24.0), &mut state, false);
+        let output = ui.finish_output();
+
+        assert!(!output.platform_requests.iter().any(|request| matches!(
+            request,
+            PlatformRequest::StartTextInput { .. } | PlatformRequest::StopTextInput
+        )));
     }
 
     #[test]

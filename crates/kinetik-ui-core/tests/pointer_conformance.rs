@@ -571,17 +571,15 @@ fn pointer_interaction_focus_loss_cancels_capture_without_synthesizing_drop() {
     });
 
     harness.set_window_focused(false);
-    let (drop, source) = harness
-        .run_frame(|ui| {
-            let source = source_id(ui);
-            let target = target_id(ui);
-            let (input, memory) = ui.input_and_memory_mut();
-            (
-                drop_target(target, target_rect(), input, memory, false),
-                draggable(source, source_rect(), input, memory, false),
-            )
-        })
-        .0;
+    let ((drop, source), output) = harness.run_frame(|ui| {
+        let source = source_id(ui);
+        let target = target_id(ui);
+        let (input, memory) = ui.input_and_memory_mut();
+        (
+            drop_target(target, target_rect(), input, memory, false),
+            draggable(source, source_rect(), input, memory, false),
+        )
+    });
 
     assert!(!drop.dropped);
     assert!(!drop.response.state.hovered);
@@ -591,8 +589,12 @@ fn pointer_interaction_focus_loss_cancels_capture_without_synthesizing_drop() {
     assert_eq!(harness.memory().pointer_capture(), None);
     assert_eq!(harness.memory().drag_source(), None);
     assert_eq!(harness.memory().released_drag_source(), None);
-    assert_eq!(harness.memory().focused(), Some(retained_focus));
-    assert_eq!(harness.memory().text_input_owner(), Some(retained_focus));
+    assert_eq!(harness.memory().focused(), None);
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert_eq!(
+        output.platform_requests,
+        vec![PlatformRequest::StopTextInput]
+    );
 }
 
 #[test]
@@ -618,30 +620,28 @@ fn pointer_interaction_focus_loss_clears_capture_without_participating_primitive
     });
 
     harness.set_window_focused(false);
-    let frame_start_memory = harness
-        .run_frame(|ui| {
-            (
-                ui.memory().pointer_capture(),
-                ui.memory().drag_source(),
-                ui.memory().released_drag_source(),
-                ui.memory().focused(),
-                ui.memory().text_input_owner(),
-                ui.memory().pointer_interaction_cancelled(),
-            )
-        })
-        .0;
+    let (frame_start_memory, output) = harness.run_frame(|ui| {
+        (
+            ui.memory().pointer_capture(),
+            ui.memory().drag_source(),
+            ui.memory().released_drag_source(),
+            ui.memory().pointer_interaction_cancelled(),
+        )
+    });
 
     assert_eq!(frame_start_memory.0, None);
     assert_eq!(frame_start_memory.1, None);
     assert_eq!(frame_start_memory.2, None);
-    assert_eq!(frame_start_memory.3, Some(retained_focus));
-    assert_eq!(frame_start_memory.4, Some(retained_focus));
-    assert!(frame_start_memory.5);
+    assert!(frame_start_memory.3);
     assert_eq!(harness.memory().pointer_capture(), None);
     assert_eq!(harness.memory().drag_source(), None);
     assert_eq!(harness.memory().released_drag_source(), None);
-    assert_eq!(harness.memory().focused(), Some(retained_focus));
-    assert_eq!(harness.memory().text_input_owner(), Some(retained_focus));
+    assert_eq!(harness.memory().focused(), None);
+    assert_eq!(harness.memory().text_input_owner(), None);
+    assert_eq!(
+        output.platform_requests,
+        vec![PlatformRequest::StopTextInput]
+    );
 }
 
 #[test]

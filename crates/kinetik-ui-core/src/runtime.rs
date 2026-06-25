@@ -9,8 +9,8 @@ use crate::memory::UiMemory;
 use crate::render::{ClipId, LayerId, Primitive};
 use crate::{
     AccessibilitySnapshot, ActionContext, ActionId, ActionInvocation, ActionQueue, ActionSource,
-    FocusTraversal, PhysicalSize, Rect, ScaleFactor, SemanticNode, SemanticTree, SemanticTreeError,
-    Size, WidgetId,
+    FocusTraversal, PhysicalSize, Point, Rect, ScaleFactor, SemanticNode, SemanticRole,
+    SemanticTree, SemanticTreeError, Size, WidgetId,
 };
 use crate::{IdStack, Transform};
 use crate::{LivenessTargetId, LivenessToken};
@@ -554,7 +554,16 @@ impl<'a> Ui<'a> {
             return false;
         }
 
+        let previous_owner = self.memory.text_input_owner();
+        if previous_owner == Some(owner) {
+            return true;
+        }
+        let stopped_owner = self.memory.take_pending_text_input_stop();
         self.memory.set_text_input_owner(owner);
+        if stopped_owner.is_some_and(|stopped| stopped != owner) {
+            self.output
+                .push_platform_request(PlatformRequest::StopTextInput);
+        }
         self.output
             .push_platform_request(PlatformRequest::StartTextInput { rect });
         true
@@ -589,6 +598,21 @@ impl<'a> Ui<'a> {
                 false
             }
         };
+        if semantic_tree_valid && apply_escape_text_blur(&self.context.input, self.memory) {
+            self.output.request_repaint(RepaintRequest::NextFrame);
+        }
+        if apply_window_focus_text_blur(&self.context.input, self.memory) {
+            self.output.request_repaint(RepaintRequest::NextFrame);
+        }
+        if semantic_tree_valid
+            && apply_pointer_text_owner_blur(
+                &self.context.input,
+                self.memory,
+                &self.output.semantics,
+            )
+        {
+            self.output.request_repaint(RepaintRequest::NextFrame);
+        }
         if semantic_tree_valid
             && apply_keyboard_focus_traversal(
                 &self.context.input,
@@ -614,15 +638,86 @@ fn pointer_release_all_cancelled(input: &UiInput) -> bool {
     input.pointer.release_all_cancelled()
 }
 
+fn apply_escape_text_blur(input: &UiInput, memory: &mut UiMemory) -> bool {
+    if memory.text_input_owner().is_none() {
+        return false;
+    }
+
+    let escape_pressed = input.keyboard.events.iter().any(|event| {
+        event.state == KeyState::Pressed && !event.repeat && matches!(event.key, Key::Escape)
+    });
+    if !escape_pressed {
+        return false;
+    }
+
+    memory.clear_focus();
+    true
+}
+
+fn apply_window_focus_text_blur(input: &UiInput, memory: &mut UiMemory) -> bool {
+    if memory.text_input_owner().is_none() {
+        return false;
+    }
+    if input.window_focused {
+        return false;
+    }
+
+    memory.clear_focus();
+    true
+}
+
+fn apply_pointer_text_owner_blur(
+    input: &UiInput,
+    memory: &mut UiMemory,
+    semantics: &SemanticTree,
+) -> bool {
+    let Some(owner) = memory.text_input_owner() else {
+        return false;
+    };
+    if !input.pointer.primary.pressed {
+        return false;
+    }
+    let Some(position) = input.pointer.position else {
+        return false;
+    };
+
+    let Some(bounds) = text_owner_bounds(owner, semantics) else {
+        return false;
+    };
+    if bounds.contains_point(position) {
+        return false;
+    }
+    if position_hits_disabled_text_entry(position, semantics) {
+        return false;
+    }
+
+    memory.clear_focus();
+    true
+}
+
+fn position_hits_disabled_text_entry(position: Point, semantics: &SemanticTree) -> bool {
+    semantics.nodes().iter().any(|node| {
+        matches!(
+            node.role,
+            SemanticRole::TextField | SemanticRole::SearchField
+        ) && node.state.disabled
+            && node.bounds.contains_point(position)
+    })
+}
+
+fn text_owner_bounds(owner: WidgetId, semantics: &SemanticTree) -> Option<Rect> {
+    semantics
+        .nodes()
+        .iter()
+        .find(|node| node.id == owner)
+        .map(|node| node.bounds)
+}
+
 fn apply_keyboard_focus_traversal(
     input: &UiInput,
     memory: &mut UiMemory,
     semantics: &SemanticTree,
 ) -> bool {
-    if memory.text_input_owner().is_some() {
-        return false;
-    }
-
     let directions: Vec<_> = input
         .keyboard
         .events
