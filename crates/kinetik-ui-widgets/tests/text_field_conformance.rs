@@ -187,6 +187,119 @@ fn ui_text_field_focus_handoff_stops_previous_owner_before_starting_new_owner() 
 }
 
 #[test]
+fn ui_text_field_rerendering_current_owner_does_not_restart_platform_input() {
+    let theme = default_dark_theme();
+    let field = root_child("field");
+    let mut memory = UiMemory::new();
+    memory.focus(field);
+    memory.set_text_input_owner(field);
+    let mut state = TextEditState::new("abc");
+
+    let input = UiInput::default();
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    ui.text_field("field", Rect::new(0.0, 0.0, 160.0, 24.0), &mut state, false);
+    let output = ui.finish_output();
+
+    assert_eq!(memory.focused(), Some(field));
+    assert_eq!(memory.text_input_owner(), Some(field));
+    assert!(!output.platform_requests.iter().any(|request| matches!(
+        request,
+        PlatformRequest::StartTextInput { .. } | PlatformRequest::StopTextInput
+    )));
+}
+
+#[test]
+fn ui_text_field_clicking_current_owner_does_not_restart_platform_input() {
+    let theme = default_dark_theme();
+    let field = root_child("field");
+    let mut memory = UiMemory::new();
+    memory.focus(field);
+    memory.set_text_input_owner(field);
+    let mut state = TextEditState::new("abc");
+
+    let input = pressed_at(8.0, 8.0);
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    ui.text_field("field", Rect::new(0.0, 0.0, 160.0, 24.0), &mut state, false);
+    let output = ui.finish_output();
+
+    assert_eq!(memory.focused(), Some(field));
+    assert_eq!(memory.text_input_owner(), Some(field));
+    assert!(!output.platform_requests.iter().any(|request| matches!(
+        request,
+        PlatformRequest::StartTextInput { .. } | PlatformRequest::StopTextInput
+    )));
+}
+
+#[test]
+fn ui_text_field_dead_space_click_blurs_and_stops_input() {
+    let theme = default_dark_theme();
+    let field = root_child("field");
+    let mut memory = UiMemory::new();
+    memory.focus(field);
+    memory.set_text_input_owner(field);
+    let mut state = TextEditState::new("abc");
+
+    let input = pressed_at(240.0, 120.0);
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    ui.text_field("field", Rect::new(0.0, 0.0, 160.0, 24.0), &mut state, false);
+    let output = ui.finish_output();
+
+    assert_eq!(memory.focused(), None);
+    assert_eq!(memory.text_input_owner(), None);
+    assert!(
+        output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
+fn ui_disabled_text_field_cannot_acquire_focus_or_text_ownership() {
+    let theme = default_dark_theme();
+    let active = root_child("active");
+    let disabled = root_child("disabled");
+    let mut memory = UiMemory::new();
+    memory.focus(active);
+    memory.set_text_input_owner(active);
+    let mut active_state = TextEditState::new("active");
+    let mut disabled_state = TextEditState::new("disabled");
+
+    let input = pressed_at(8.0, 40.0);
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    ui.text_field(
+        "active",
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut active_state,
+        false,
+    );
+    let disabled_output = ui.text_field(
+        "disabled",
+        Rect::new(0.0, 32.0, 160.0, 24.0),
+        &mut disabled_state,
+        true,
+    );
+    let output = ui.finish_output();
+
+    assert_eq!(
+        disabled_output.widget.response.expect("response").id,
+        disabled
+    );
+    assert_eq!(memory.focused(), Some(active));
+    assert_eq!(memory.text_input_owner(), Some(active));
+    assert!(!output.platform_requests.iter().any(|request| matches!(
+        request,
+        PlatformRequest::StartTextInput {
+            rect: Some(rect),
+        } if *rect == Rect::new(0.0, 32.0, 160.0, 24.0)
+    )));
+    assert!(
+        !output
+            .platform_requests
+            .contains(&PlatformRequest::StopTextInput)
+    );
+}
+
+#[test]
 fn text_field_clipboard_requests_are_targeted_and_targeted_text_is_applied() {
     let theme = default_dark_theme();
     let id = WidgetId::from_key("field");

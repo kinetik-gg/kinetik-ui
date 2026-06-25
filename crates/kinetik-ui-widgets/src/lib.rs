@@ -226,6 +226,10 @@ fn text_input_platform_requests(
     memory: &mut UiMemory,
 ) -> Vec<PlatformRequest> {
     if response.state.focused && !response.state.disabled {
+        let previous_owner = memory.text_input_owner();
+        if previous_owner == Some(id) {
+            return Vec::new();
+        }
         let stopped_owner = memory.take_pending_text_input_stop();
         memory.set_text_input_owner(id);
         let mut requests = Vec::new();
@@ -3353,9 +3357,13 @@ mod tests {
             false,
         );
 
-        assert!(first_output.widget.platform_requests.iter().any(|request| {
-            matches!(request, PlatformRequest::StartTextInput { rect: Some(rect) } if *rect == Rect::new(0.0, 0.0, 80.0, 24.0))
-        }));
+        assert!(
+            !first_output
+                .widget
+                .platform_requests
+                .iter()
+                .any(|request| matches!(request, PlatformRequest::StartTextInput { .. }))
+        );
         let stop_index = second_output
             .widget
             .platform_requests
@@ -3493,7 +3501,12 @@ mod tests {
         let mut ui = Ui::new(&input, &mut memory, &theme);
         ui.text_field("field", Rect::new(0.0, 0.0, 80.0, 24.0), &mut state, false);
         ui.focusable("other", Rect::new(100.0, 0.0, 80.0, 24.0), false);
-        let _ = ui.finish_output();
+        let press_output = ui.finish_output();
+        assert!(
+            press_output
+                .platform_requests
+                .contains(&PlatformRequest::StopTextInput)
+        );
 
         let mut input = input_at(104.0, 4.0);
         input.pointer.primary = PointerButtonState::new(false, false, true);
@@ -3505,7 +3518,7 @@ mod tests {
         assert_eq!(memory.focused(), Some(other));
         assert_eq!(memory.text_input_owner(), None);
         assert!(
-            output
+            !output
                 .platform_requests
                 .contains(&PlatformRequest::StopTextInput)
         );
