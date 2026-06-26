@@ -401,6 +401,164 @@ fn text_field_clipboard_requests_are_targeted_and_targeted_text_is_applied() {
 }
 
 #[test]
+fn focused_text_field_handles_backspace_delete_and_replacement() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("field");
+    let mut memory = UiMemory::new();
+    memory.focus(id);
+    memory.set_text_input_owner(id);
+
+    let mut backspace_state = TextEditState::new("aéz");
+    backspace_state.set_caret("aé".len());
+    let backspace_input = UiInput {
+        keyboard: key_input(Key::Backspace, Modifiers::default()),
+        ..UiInput::default()
+    };
+    let backspace = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut backspace_state,
+        &backspace_input,
+        &mut memory,
+        &theme,
+        false,
+    );
+    assert!(backspace.changed);
+    assert_eq!(backspace_state.text, "az");
+    assert_eq!(backspace_state.caret(), 1);
+
+    let mut delete_state = TextEditState::new("aéz");
+    delete_state.set_caret(1);
+    let delete_input = UiInput {
+        keyboard: key_input(Key::Delete, Modifiers::default()),
+        ..UiInput::default()
+    };
+    let delete = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut delete_state,
+        &delete_input,
+        &mut memory,
+        &theme,
+        false,
+    );
+    assert!(delete.changed);
+    assert_eq!(delete_state.text, "az");
+    assert_eq!(delete_state.caret(), 1);
+
+    let mut replace_state = TextEditState::new("abcd");
+    replace_state.set_selection(TextSelection::new(3, 1));
+    let replace_input = UiInput {
+        text_events: vec![TextInputEvent::Commit("XY".to_owned())],
+        ..UiInput::default()
+    };
+    let replace = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut replace_state,
+        &replace_input,
+        &mut memory,
+        &theme,
+        false,
+    );
+    assert!(replace.changed);
+    assert_eq!(replace_state.text, "aXYd");
+    assert_eq!(replace_state.caret(), 3);
+}
+
+#[test]
+fn unfocused_and_disabled_text_fields_ignore_deletion_and_replacement() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("field");
+    let input = UiInput {
+        text_events: vec![TextInputEvent::Commit("XY".to_owned())],
+        keyboard: KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: vec![
+                KeyEvent::new(
+                    Key::Backspace,
+                    KeyState::Pressed,
+                    Modifiers::default(),
+                    false,
+                ),
+                KeyEvent::new(Key::Delete, KeyState::Pressed, Modifiers::default(), false),
+            ],
+        },
+        ..UiInput::default()
+    };
+
+    let mut unfocused_memory = UiMemory::new();
+    let mut unfocused_state = TextEditState::new("abcd");
+    unfocused_state.set_selection(TextSelection::new(1, 3));
+    let unfocused = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut unfocused_state,
+        &input,
+        &mut unfocused_memory,
+        &theme,
+        false,
+    );
+    assert!(!unfocused.changed);
+    assert_eq!(unfocused_state.text, "abcd");
+    assert_eq!(unfocused_state.selection, TextSelection::new(1, 3));
+
+    let mut disabled_memory = UiMemory::new();
+    disabled_memory.focus(id);
+    disabled_memory.set_text_input_owner(id);
+    let mut disabled_state = TextEditState::new("abcd");
+    disabled_state.set_selection(TextSelection::new(1, 3));
+    let disabled = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut disabled_state,
+        &input,
+        &mut disabled_memory,
+        &theme,
+        true,
+    );
+    assert!(!disabled.changed);
+    assert_eq!(disabled_state.text, "abcd");
+    assert_eq!(disabled_state.selection, TextSelection::new(1, 3));
+}
+
+#[test]
+fn targeted_clipboard_text_replaces_existing_selection_with_undo() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("field");
+    let other = WidgetId::from_key("other");
+    let mut memory = UiMemory::new();
+    memory.focus(id);
+    memory.set_text_input_owner(id);
+    let mut state = TextEditState::new("abcd");
+    state.set_selection(TextSelection::new(3, 1));
+    let input = UiInput {
+        clipboard_text: vec![
+            kinetik_ui_core::ClipboardText::new(other, "wrong"),
+            kinetik_ui_core::ClipboardText::new(id, "é"),
+        ],
+        ..UiInput::default()
+    };
+
+    let output = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut state,
+        &input,
+        &mut memory,
+        &theme,
+        false,
+    );
+
+    assert!(output.changed);
+    assert_eq!(state.text, "aéd");
+    assert_eq!(state.caret(), "aé".len());
+    assert!(state.undo());
+    assert_eq!(state.text, "abcd");
+    assert_eq!(state.selection, TextSelection::new(3, 1));
+}
+
+#[test]
 fn single_line_drops_committed_newlines_while_multi_line_preserves_them() {
     let theme = default_dark_theme();
     let input = UiInput {
