@@ -381,15 +381,15 @@ fn vector_component_rects<const N: usize>(
     let count = N.max(1) as f32;
     let width = finite_non_negative(rect.width);
     let height = finite_non_negative(rect.height);
-    let component_gap = finite_non_negative(layout.component_gap);
-    let total_gap = (component_gap * (count - 1.0)).min(width);
+    let sanitized_component_gap = finite_non_negative(layout.component_gap);
+    let total_gap = (sanitized_component_gap * (count - 1.0)).min(width);
     let component_width = (width - total_gap).max(0.0) / count;
     let preferred_label_width = finite_non_negative(layout.label_width);
     let preferred_label_gap = finite_non_negative(layout.label_gap);
     let min_value_width = finite_non_negative(layout.min_value_width);
 
     std::array::from_fn(|index| {
-        let x = rect.x + index as f32 * (component_width + component_gap);
+        let x = rect.x + index as f32 * (component_width + sanitized_component_gap);
         let component_rect = Rect::new(x, rect.y, component_width, height);
         let label_fits =
             component_width >= preferred_label_width + preferred_label_gap + min_value_width;
@@ -647,7 +647,8 @@ mod tests {
     use super::{
         PropertyGridError, PropertyGridLayout, PropertyGridRow, PropertyGridRowState,
         PropertyGridRowStatus, PropertyGridStatusSeverity, VectorComponentLayout,
-        vector2_component_rects, vector3_component_rects, vector4_component_rects,
+        VectorComponentRect, vector2_component_rects, vector3_component_rects,
+        vector4_component_rects,
     };
     use crate::ItemId;
     use kinetik_ui_core::Rect;
@@ -657,6 +658,33 @@ mod tests {
             (actual - expected).abs() < f32::EPSILON,
             "expected {actual} to equal {expected}"
         );
+    }
+
+    fn assert_rect_finite(rect: Rect) {
+        assert!(rect.x.is_finite(), "rect x must be finite: {rect:?}");
+        assert!(rect.y.is_finite(), "rect y must be finite: {rect:?}");
+        assert!(
+            rect.width.is_finite(),
+            "rect width must be finite: {rect:?}"
+        );
+        assert!(
+            rect.height.is_finite(),
+            "rect height must be finite: {rect:?}"
+        );
+    }
+
+    fn assert_vector_components_finite_and_non_overlapping(components: &[VectorComponentRect]) {
+        for component in components {
+            assert_rect_finite(component.rect);
+            assert_rect_finite(component.label_rect);
+            assert_rect_finite(component.value_rect);
+            assert!(component.label_rect.max_x() <= component.value_rect.x);
+            assert!(component.value_rect.max_x() <= component.rect.max_x());
+        }
+
+        for pair in components.windows(2) {
+            assert!(pair[0].rect.max_x() <= pair[1].rect.x);
+        }
     }
 
     fn rows() -> Vec<PropertyGridRow> {
@@ -851,6 +879,7 @@ mod tests {
         let narrow = vector3_component_rects(Rect::new(0.0, 0.0, 42.0, 18.0), layout);
 
         assert_approx(narrow[0].rect.width, 14.0);
+        assert_vector_components_finite_and_non_overlapping(&narrow);
         for component in narrow {
             assert!(component.label_rect.width <= component.rect.width);
             assert!(component.value_rect.width >= 0.0);
@@ -866,5 +895,19 @@ mod tests {
                 component.rect.width == 0.0 && component.value_rect.width == 0.0
             })
         );
+    }
+
+    #[test]
+    fn vector_component_rects_sanitize_invalid_gaps_for_placement() {
+        let bounds = Rect::new(10.0, 20.0, 120.0, 24.0);
+        let invalid_gaps = [f32::NAN, f32::INFINITY, -8.0];
+
+        for component_gap in invalid_gaps {
+            let components = vector4_component_rects(
+                bounds,
+                VectorComponentLayout::new(component_gap, 10.0, 3.0, 24.0),
+            );
+            assert_vector_components_finite_and_non_overlapping(&components);
+        }
     }
 }
