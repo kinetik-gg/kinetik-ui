@@ -729,6 +729,12 @@ pub fn resolve_dock_join_request(
     })
 }
 
+fn join_request_matches_layout(frames: &[FrameLayout], request: DockJoinRequest) -> bool {
+    request.source_frame != request.target_frame
+        && frame_neighbor(frames, request.source_frame, request.direction)
+            == Some(request.target_frame)
+}
+
 fn locate_first_panel_type_instance(
     dock: &Dock,
     panel_instances: &[PanelInstanceSnapshot],
@@ -1109,24 +1115,38 @@ impl Dock {
         true
     }
 
-    /// Applies a resolved neighbor join request.
-    pub fn apply_join_request(&mut self, request: DockJoinRequest) -> bool {
-        if request.source_frame == request.target_frame {
+    /// Applies a resolved neighbor join request against the current dock layout.
+    pub fn apply_join_request(&mut self, bounds: Rect, request: DockJoinRequest) -> bool {
+        let layout = solve_dock_layout(self, bounds);
+        if !join_request_matches_layout(&layout, request) {
             return false;
         }
 
         self.merge_frames(request.source_frame, request.target_frame)
     }
 
-    /// Resolves and applies a neighbor join from solved frame neighbor topology.
+    /// Resolves and applies a neighbor join against the current dock layout.
     pub fn join_neighbor(
         &mut self,
-        neighbors: &[FrameNeighbors],
+        bounds: Rect,
         source_frame: FrameId,
         direction: DockNeighborDirection,
     ) -> bool {
-        resolve_dock_join_request(neighbors, source_frame, direction)
-            .is_some_and(|request| self.apply_join_request(request))
+        let layout = solve_dock_layout(self, bounds);
+        let Some(target_frame) = frame_neighbor(&layout, source_frame, direction) else {
+            return false;
+        };
+        let request = DockJoinRequest {
+            source_frame,
+            direction,
+            target_frame,
+        };
+
+        if !join_request_matches_layout(&layout, request) {
+            return false;
+        }
+
+        self.merge_frames(source_frame, target_frame)
     }
 
     /// Starts a tab drag when the frame owns the panel.
