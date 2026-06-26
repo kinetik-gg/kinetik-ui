@@ -435,6 +435,7 @@ fn path_field_preserves_text_input_and_emits_only_browse_or_open_intents() {
                     == Some(SemanticValue::Text("scripts/player.rs.bak".to_owned())))
     );
 
+    memory.begin_frame();
     let _ = path_field(
         id,
         rect,
@@ -445,6 +446,7 @@ fn path_field_preserves_text_input_and_emits_only_browse_or_open_intents() {
         &mut memory,
         &theme,
     );
+    memory.begin_frame();
     let browse = path_field(
         id,
         rect,
@@ -467,6 +469,7 @@ fn path_field_preserves_text_input_and_emits_only_browse_or_open_intents() {
                 .any(|action| action.kind == SemanticActionKind::Open)
     }));
 
+    memory.begin_frame();
     let _ = path_field(
         id,
         rect,
@@ -477,6 +480,7 @@ fn path_field_preserves_text_input_and_emits_only_browse_or_open_intents() {
         &mut memory,
         &theme,
     );
+    memory.begin_frame();
     let open = path_field(
         id,
         rect,
@@ -489,6 +493,130 @@ fn path_field_preserves_text_input_and_emits_only_browse_or_open_intents() {
     );
     assert!(open.open_requested);
     assert!(!open.browse_requested);
+}
+
+#[test]
+fn path_field_text_editing_open_intent_uses_routed_text_response() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("captured-path");
+    let text_id = id.child("text");
+    let other = WidgetId::from_key("other-capture");
+    let rect = Rect::new(0.0, 0.0, 240.0, 24.0);
+    let mut memory = UiMemory::new();
+    memory.focus(text_id);
+    memory.set_text_input_owner(text_id);
+    memory.activate(other);
+    memory.capture_pointer(other);
+    let mut state = TextEditState::new("assets/texture.png");
+    state.set_caret(state.text.len());
+    let mut input = double_released_at(8.0, 8.0);
+    input.text_events = vec![TextInputEvent::Commit(".bak".to_owned())];
+
+    let output = path_field(
+        id,
+        rect,
+        "Texture path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &input,
+        &mut memory,
+        &theme,
+    );
+
+    assert!(output.changed);
+    assert_eq!(state.text, "assets/texture.png.bak");
+    assert_eq!(
+        output
+            .field
+            .widget
+            .response
+            .as_ref()
+            .expect("text response")
+            .id,
+        text_id
+    );
+    assert!(!output.browse_requested);
+    assert!(!output.open_requested);
+}
+
+#[test]
+fn path_field_clipboard_routing_targets_composed_text_field_without_opening() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("clipboard-path");
+    let text_id = id.child("text");
+    let other = WidgetId::from_key("other-text");
+    let rect = Rect::new(0.0, 0.0, 240.0, 24.0);
+    let mut memory = UiMemory::new();
+    memory.focus(text_id);
+    memory.set_text_input_owner(text_id);
+    let mut state = TextEditState::new("abcd");
+    state.set_selection(TextSelection::new(1, 3));
+
+    let copy = path_field(
+        id,
+        rect,
+        "Path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &UiInput {
+            keyboard: KeyboardInput {
+                modifiers: ctrl(),
+                events: vec![shortcut_event("c")],
+            },
+            ..UiInput::default()
+        },
+        &mut memory,
+        &theme,
+    );
+    assert!(!copy.changed);
+    assert!(copy.widget.platform_requests.iter().any(|request| {
+        matches!(request, PlatformRequest::CopyToClipboard(text) if text == "bc")
+    }));
+    assert!(!copy.browse_requested);
+    assert!(!copy.open_requested);
+
+    let paste = path_field(
+        id,
+        rect,
+        "Path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &UiInput {
+            keyboard: KeyboardInput {
+                modifiers: ctrl(),
+                events: vec![shortcut_event("v")],
+            },
+            ..UiInput::default()
+        },
+        &mut memory,
+        &theme,
+    );
+    assert!(paste.widget.platform_requests.iter().any(|request| {
+        matches!(request, PlatformRequest::RequestClipboardText { target } if *target == text_id)
+    }));
+    assert!(!paste.browse_requested);
+    assert!(!paste.open_requested);
+
+    let mut clipboard_input = double_released_at(8.0, 8.0);
+    clipboard_input.clipboard_text = vec![
+        kinetik_ui_core::ClipboardText::new(other, "wrong"),
+        kinetik_ui_core::ClipboardText::new(text_id, "XY"),
+    ];
+    let applied = path_field(
+        id,
+        rect,
+        "Path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &clipboard_input,
+        &mut memory,
+        &theme,
+    );
+
+    assert!(applied.changed);
+    assert_eq!(state.text, "aXYd");
+    assert!(!applied.browse_requested);
+    assert!(!applied.open_requested);
 }
 
 #[test]

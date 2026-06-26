@@ -3674,18 +3674,14 @@ pub(crate) fn path_field_with_text_layouts_and_caret_visibility(
         browse_response = Some(response);
     }
 
-    let field_response = field.widget.response.as_ref();
-    let pointer_open_requested = input.pointer.primary.released
-        && input.pointer.click_count >= 2
-        && input
-            .pointer
-            .position
-            .is_some_and(|position| field_rect.contains_point(position));
     let open_requested = config.open
         && !interactions_disabled
         && !state.text.is_empty()
-        && (field_response.is_some_and(|response| response.double_clicked)
-            || pointer_open_requested);
+        && field
+            .widget
+            .response
+            .as_ref()
+            .is_some_and(|response| response.double_clicked);
 
     PathFieldOutput {
         widget,
