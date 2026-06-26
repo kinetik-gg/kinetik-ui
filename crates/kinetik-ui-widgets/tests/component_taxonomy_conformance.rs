@@ -17,7 +17,7 @@ use kinetik_ui_widgets::{
     SliderStep, TabStrip, Ui, VectorComponentLayout, VectorScrubInputConfig,
     classify_numeric_input_draft, component_metadata, components_by_category, numeric_input,
     numeric_scrub_input, property_grid_row_affordance_controls, property_grid_row_affordance_rects,
-    slider_with_step, vector4_component_rects,
+    property_grid_row_status_semantics, slider_with_step, vector4_component_rects,
 };
 
 fn entry(name: &str) -> &'static ComponentMetadata {
@@ -602,6 +602,60 @@ fn property_grid_partial_status_includes_affordance_request_contracts() {
         row.state.status.presentation(),
         PropertyGridStatusSeverity::Warning.presentation()
     );
+}
+
+#[test]
+fn property_grid_status_semantics_include_warning_error_and_info_metadata() {
+    assert_entry(
+        "PropertyGrid",
+        ComponentCategory::Inspector,
+        ComponentConformanceStatus::Partial,
+    );
+
+    let rows = [
+        PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(1), "Mode", 0),
+        PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(2), "Hint", 0)
+            .with_status(PropertyGridRowStatus::info("Inherited from parent")),
+        PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(3), "Exposure", 0)
+            .with_status(PropertyGridRowStatus::warning("Preview range exceeded")),
+        PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(4), "Mass", 0)
+            .with_status(PropertyGridRowStatus::error("Mass must be positive")),
+    ];
+    let plain_rows = [
+        PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(1), "Mode", 0),
+        PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(2), "Hint", 0),
+        PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(3), "Exposure", 0),
+        PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(4), "Mass", 0),
+    ];
+    let layout = PropertyGridLayout::new(20.0, 24.0, 90.0, 8.0, 12.0);
+    let bounds = Rect::new(10.0, 20.0, 260.0, 80.0);
+    let rects = layout.visible_row_rects(bounds, &rows, 0.0, 0);
+
+    assert_eq!(rects, layout.visible_row_rects(bounds, &plain_rows, 0.0, 0));
+    assert!(
+        property_grid_row_status_semantics(WidgetId::from_key("mode"), &rows[0], rects[0])
+            .is_none()
+    );
+
+    for (index, expected) in [
+        (1, "Info: Inherited from parent"),
+        (2, "Warning: Preview range exceeded"),
+        (3, "Error: Mass must be positive"),
+    ] {
+        let node = property_grid_row_status_semantics(
+            WidgetId::from_key(rows[index].label.as_str()),
+            &rows[index],
+            rects[index],
+        )
+        .expect("status semantics");
+
+        assert_eq!(node.role, SemanticRole::Label);
+        assert_eq!(node.description.as_deref(), Some(expected));
+        assert_eq!(
+            node.state.value,
+            Some(SemanticValue::Text(expected.to_owned()))
+        );
+    }
 }
 
 #[test]

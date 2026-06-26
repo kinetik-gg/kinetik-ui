@@ -6,7 +6,7 @@ use std::ops::Range;
 use kinetik_ui_core::{
     Brush, ComponentState, CornerRadius, CursorShape, PlatformRequest, Point, Primitive, Rect,
     RectPrimitive, Response, SemanticAction, SemanticActionKind, SemanticNode, SemanticRole,
-    TextPrimitive, TextRole, Theme, UiInput, UiMemory, WidgetId, focusable,
+    SemanticValue, TextPrimitive, TextRole, Theme, UiInput, UiMemory, WidgetId, focusable,
 };
 
 use crate::WidgetOutput;
@@ -153,6 +153,20 @@ impl PropertyGridRowStatus {
     #[must_use]
     pub const fn presentation(&self) -> PropertyGridStatusPresentation {
         self.severity.presentation()
+    }
+
+    /// Returns accessible status text including severity and message when present.
+    #[must_use]
+    pub fn semantic_text(&self) -> Option<String> {
+        let presentation = self.presentation();
+        if matches!(presentation.severity, PropertyGridStatusSeverity::None) {
+            return None;
+        }
+
+        Some(match self.message.as_deref() {
+            Some(message) if !message.is_empty() => format!("{}: {message}", presentation.label),
+            _ => presentation.label.to_owned(),
+        })
     }
 }
 
@@ -645,6 +659,22 @@ pub fn property_grid_row_affordance_controls(
     }
 }
 
+/// Builds deterministic semantic metadata for a property-grid row status.
+#[must_use]
+pub fn property_grid_row_status_semantics(
+    id: WidgetId,
+    row: &PropertyGridRow,
+    row_rect: PropertyGridRowRect,
+) -> Option<SemanticNode> {
+    let status_text = row.state.status.semantic_text()?;
+    let mut node = SemanticNode::new(id.child("status"), SemanticRole::Label, row_rect.rect)
+        .with_label(format!("{} status", row.label));
+    node.description = Some(status_text.clone());
+    node.state.value = Some(SemanticValue::Text(status_text));
+    node.state.disabled = row.state.disabled;
+    Some(node)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn affordance_button(
     widget: &mut WidgetOutput,
@@ -1106,12 +1136,13 @@ mod tests {
         PropertyGridRowAffordances, PropertyGridRowState, PropertyGridRowStatus,
         PropertyGridStatusSeverity, VectorComponentLayout, VectorComponentRect,
         property_grid_row_affordance_controls, property_grid_row_affordance_rects,
-        vector2_component_rects, vector3_component_rects, vector4_component_rects,
+        property_grid_row_status_semantics, vector2_component_rects, vector3_component_rects,
+        vector4_component_rects,
     };
     use crate::ItemId;
     use kinetik_ui_core::{
-        Point, PointerButtonState, PointerInput, Rect, SemanticActionKind, SemanticRole, UiInput,
-        UiMemory, WidgetId, default_dark_theme,
+        Point, PointerButtonState, PointerInput, Rect, SemanticActionKind, SemanticRole,
+        SemanticValue, UiInput, UiMemory, WidgetId, default_dark_theme,
     };
 
     fn assert_approx(actual: f32, expected: f32) {
@@ -1341,6 +1372,55 @@ mod tests {
             PropertyGridRowStatus::error("Invalid").presentation(),
             PropertyGridStatusSeverity::Error.presentation()
         );
+    }
+
+    #[test]
+    fn property_grid_status_semantics_include_severity_and_message_without_layout_changes() {
+        let rows = [
+            PropertyGridRow::property(ItemId::from_raw(1), "Mode", 0),
+            PropertyGridRow::property(ItemId::from_raw(2), "Guide", 0)
+                .with_status(PropertyGridRowStatus::info("Inherited from parent")),
+            PropertyGridRow::property(ItemId::from_raw(3), "Exposure", 0)
+                .with_status(PropertyGridRowStatus::warning("Preview range exceeded")),
+            PropertyGridRow::property(ItemId::from_raw(4), "Mass", 0)
+                .with_status(PropertyGridRowStatus::error("Mass must be positive")),
+        ];
+        let layout = PropertyGridLayout::new(20.0, 24.0, 90.0, 8.0, 12.0);
+        let bounds = Rect::new(0.0, 0.0, 240.0, 80.0);
+        let rects = layout.visible_row_rects(bounds, &rows, 0.0, 0);
+        let plain_rows = [
+            PropertyGridRow::property(ItemId::from_raw(1), "Mode", 0),
+            PropertyGridRow::property(ItemId::from_raw(2), "Guide", 0),
+            PropertyGridRow::property(ItemId::from_raw(3), "Exposure", 0),
+            PropertyGridRow::property(ItemId::from_raw(4), "Mass", 0),
+        ];
+
+        assert_eq!(rects, layout.visible_row_rects(bounds, &plain_rows, 0.0, 0));
+        assert!(
+            property_grid_row_status_semantics(WidgetId::from_key("mode"), &rows[0], rects[0])
+                .is_none()
+        );
+
+        for (index, expected) in [
+            (1, "Info: Inherited from parent"),
+            (2, "Warning: Preview range exceeded"),
+            (3, "Error: Mass must be positive"),
+        ] {
+            let node = property_grid_row_status_semantics(
+                WidgetId::from_key(rows[index].label.as_str()),
+                &rows[index],
+                rects[index],
+            )
+            .expect("status semantics");
+            let expected_label = format!("{} status", rows[index].label);
+            assert_eq!(node.role, SemanticRole::Label);
+            assert_eq!(node.label.as_deref(), Some(expected_label.as_str()));
+            assert_eq!(node.description.as_deref(), Some(expected));
+            assert_eq!(
+                node.state.value,
+                Some(SemanticValue::Text(expected.to_owned()))
+            );
+        }
     }
 
     #[test]
