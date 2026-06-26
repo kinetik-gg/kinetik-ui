@@ -3698,6 +3698,11 @@ fn plan_workspace_snapshot_repair(
                     actions.push(action);
                 }
                 WorkspaceSnapshotDiagnosticCode::UnknownPanelType => {
+                    if diagnostic.panel_instance.is_some_and(|panel_instance| {
+                        stale_panel_instances.contains(&panel_instance)
+                    }) {
+                        continue;
+                    }
                     let mut action =
                         WorkspaceRepairAction::new(WorkspaceRepairActionCode::KeepUnknownPanelType);
                     action.panel_instance = diagnostic.panel_instance;

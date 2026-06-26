@@ -1228,6 +1228,72 @@ fn repair_plan_keeps_unknown_panel_type_visible_without_descriptor() {
 }
 
 #[test]
+fn repair_plan_drops_stale_unknown_panel_instances_without_keep_action() {
+    let descriptors = workspace_panel_descriptors();
+    let mut snapshot = nested_dock().workspace_snapshot(workspace_panel_instances());
+    snapshot.panel_instances.push(PanelInstanceSnapshot::new(
+        PanelInstanceId::from_raw(99),
+        PanelTypeId::from_raw(999),
+        "Stale Unknown",
+    ));
+    let original_snapshot = snapshot.clone();
+
+    assert_eq!(
+        snapshot
+            .validate(&descriptors)
+            .expect_err("unknown stale panel type"),
+        WorkspaceRestoreError::UnknownPanelType {
+            panel_instance: PanelInstanceId::from_raw(99),
+            panel_type: PanelTypeId::from_raw(999),
+        }
+    );
+
+    let plan = snapshot.repair_plan(&descriptors);
+
+    assert!(plan.is_repairable());
+    assert_eq!(plan.hard_error, None);
+    assert_eq!(snapshot, original_snapshot);
+    let diagnostic_codes = plan
+        .diagnostics
+        .workspace
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostic_codes,
+        vec![
+            WorkspaceSnapshotDiagnosticCode::UnknownPanelType,
+            WorkspaceSnapshotDiagnosticCode::StalePanelInstance,
+        ]
+    );
+    assert_eq!(plan.actions.len(), 1);
+    assert_eq!(
+        plan.actions[0].code,
+        WorkspaceRepairActionCode::DropStalePanelInstance
+    );
+    assert_eq!(
+        plan.actions[0].stable_code(),
+        "workspace_repair.drop_stale_panel_instance"
+    );
+    assert_eq!(
+        plan.actions[0].panel_instance,
+        Some(PanelInstanceId::from_raw(99))
+    );
+    assert_eq!(plan.actions[0].panel_type, Some(PanelTypeId::from_raw(999)));
+
+    let repaired = plan.into_repaired_snapshot().expect("repaired snapshot");
+    assert!(
+        !repaired
+            .panel_instances
+            .iter()
+            .any(|instance| instance.id == PanelInstanceId::from_raw(99))
+    );
+    repaired
+        .validate(&descriptors)
+        .expect("stale unknown metadata dropped");
+}
+
+#[test]
 fn repair_plan_rejects_duplicate_panel_instance_ids_as_hard_error() {
     let descriptors = workspace_panel_descriptors();
     let mut snapshot = nested_dock().workspace_snapshot(workspace_panel_instances());
