@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use kinetik_ui_core::{
     ActionBinding, ActionContext, ActionDescriptor, ActionPriority, ActionRouter,
-    ActionRoutingContext, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, PhysicalSize,
-    PlatformRequest, Point, PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest,
-    ScaleFactor, SemanticRole, SemanticValue, Shortcut, Size, TextInputEvent, TimeInfo, UiInput,
-    UiMemory, ViewportInfo, WidgetId, default_dark_theme,
+    ActionRoutingContext, ComponentState, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
+    PhysicalSize, PlatformRequest, Point, PointerButtonState, PointerInput, Primitive, Rect,
+    RepaintRequest, ScaleFactor, SemanticRole, SemanticValue, Shortcut, Size, TextInputEvent,
+    TimeInfo, UiInput, UiMemory, ViewportInfo, WidgetId, default_dark_theme,
 };
 use kinetik_ui_text::{TextEditState, TextLayoutStore, TextSelection};
 use kinetik_ui_widgets::{
@@ -20,6 +20,10 @@ fn root_child(key: &str) -> WidgetId {
 
 fn ctrl() -> Modifiers {
     Modifiers::new(false, true, false, false)
+}
+
+fn shift() -> Modifiers {
+    Modifiers::new(true, false, false, false)
 }
 
 fn shortcut(character: &str) -> Shortcut {
@@ -93,6 +97,31 @@ fn text_value(output: &kinetik_ui_core::FrameOutput, role: &SemanticRole) -> Opt
             Some(SemanticValue::Text(text)) => Some(text.clone()),
             _ => None,
         })
+}
+
+fn has_selection_highlight(
+    output: &kinetik_ui_core::FrameOutput,
+    theme: &kinetik_ui_core::Theme,
+) -> bool {
+    let selection = theme
+        .text_field(ComponentState {
+            hovered: false,
+            pressed: false,
+            focused: true,
+            disabled: false,
+            selected: false,
+        })
+        .selection;
+
+    output.primitives.iter().any(|primitive| {
+        matches!(
+            primitive,
+            Primitive::Rect(rect)
+                if rect.fill.as_ref() == Some(&selection)
+                    && rect.rect.width > 1.0
+                    && rect.rect.height > 1.0
+        )
+    })
 }
 
 #[test]
@@ -566,6 +595,168 @@ fn ui_text_field_uses_layout_store_for_text_and_caret_blink_repaint() {
         output.repaint,
         RepaintRequest::After(Duration::from_millis(500))
     );
+}
+
+#[test]
+fn focused_text_field_extends_selection_with_shift_movement_without_changing_text() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("field");
+    let mut memory = UiMemory::new();
+    memory.focus(id);
+    memory.set_text_input_owner(id);
+    let mut state = TextEditState::new("abcd");
+    let input = UiInput {
+        keyboard: key_input(Key::ArrowLeft, shift()),
+        ..UiInput::default()
+    };
+
+    let output = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut state,
+        &input,
+        &mut memory,
+        &theme,
+        false,
+    );
+
+    assert!(!output.changed);
+    assert_eq!(state.text, "abcd");
+    assert_eq!(state.selection, TextSelection::new(4, 3));
+}
+
+#[test]
+fn unfocused_and_disabled_text_fields_ignore_shift_movement() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("field");
+    let input = UiInput {
+        keyboard: key_input(Key::ArrowLeft, shift()),
+        ..UiInput::default()
+    };
+
+    let mut unfocused_memory = UiMemory::new();
+    let mut unfocused_state = TextEditState::new("abcd");
+    let unfocused = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut unfocused_state,
+        &input,
+        &mut unfocused_memory,
+        &theme,
+        false,
+    );
+    assert!(!unfocused.changed);
+    assert_eq!(unfocused_state.selection, TextSelection::new(4, 4));
+
+    let mut disabled_memory = UiMemory::new();
+    disabled_memory.focus(id);
+    disabled_memory.set_text_input_owner(id);
+    let mut disabled_state = TextEditState::new("abcd");
+    let disabled = text_field(
+        id,
+        Rect::new(0.0, 0.0, 160.0, 24.0),
+        &mut disabled_state,
+        &input,
+        &mut disabled_memory,
+        &theme,
+        true,
+    );
+    assert!(!disabled.changed);
+    assert_eq!(disabled_state.selection, TextSelection::new(4, 4));
+}
+
+#[test]
+fn ui_text_field_selection_only_movement_requests_repaint_and_highlight() {
+    let theme = default_dark_theme();
+    let field = root_child("field");
+    let mut memory = UiMemory::new();
+    memory.focus(field);
+    memory.set_text_input_owner(field);
+    let mut state = TextEditState::new("abcdef");
+    let input = UiInput {
+        keyboard: key_input(Key::ArrowLeft, shift()),
+        ..UiInput::default()
+    };
+
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    let output = ui.text_field("field", Rect::new(0.0, 0.0, 180.0, 24.0), &mut state, false);
+    let frame = ui.finish_output();
+
+    assert!(!output.changed);
+    assert_eq!(state.text, "abcdef");
+    assert_eq!(state.selection, TextSelection::new(6, 5));
+    assert_eq!(frame.repaint, RepaintRequest::NextFrame);
+    assert!(has_selection_highlight(&frame, &theme));
+}
+
+#[test]
+fn search_and_numeric_fields_extend_selection_through_widget_flow() {
+    let theme = default_dark_theme();
+    let search = root_child("search");
+    let number = root_child("number");
+    let input = UiInput {
+        keyboard: key_input(Key::ArrowLeft, shift()),
+        ..UiInput::default()
+    };
+
+    let mut search_memory = UiMemory::new();
+    search_memory.focus(search);
+    search_memory.set_text_input_owner(search);
+    let mut search_state = TextEditState::new("media");
+    let mut ui = Ui::new(&input, &mut search_memory, &theme);
+    let search_output = ui.search_field(
+        "search",
+        Rect::new(0.0, 0.0, 180.0, 24.0),
+        &mut search_state,
+        false,
+    );
+    let _ = ui.finish_output();
+    assert!(!search_output.field.changed);
+    assert_eq!(search_state.selection, TextSelection::new(5, 4));
+
+    let mut numeric_memory = UiMemory::new();
+    numeric_memory.focus(number);
+    numeric_memory.set_text_input_owner(number);
+    let mut numeric_state = TextEditState::new("42.5");
+    let mut ui = Ui::new(&input, &mut numeric_memory, &theme);
+    let numeric_output = ui.numeric_input(
+        "number",
+        Rect::new(0.0, 0.0, 180.0, 24.0),
+        &mut numeric_state,
+        false,
+    );
+    let _ = ui.finish_output();
+    assert!(!numeric_output.field.changed);
+    assert_eq!(numeric_state.selection, TextSelection::new(4, 3));
+}
+
+#[test]
+fn multi_line_text_field_extends_linear_selection_without_vertical_navigation() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("multi");
+    let mut memory = UiMemory::new();
+    memory.focus(id);
+    memory.set_text_input_owner(id);
+    let mut state = TextEditState::new("one\ntwo");
+    state.set_caret(4);
+    let input = UiInput {
+        keyboard: key_input(Key::End, shift()),
+        ..UiInput::default()
+    };
+
+    let output = multi_line_text_field(
+        id,
+        Rect::new(0.0, 0.0, 180.0, 80.0),
+        &mut state,
+        &input,
+        &mut memory,
+        &theme,
+        false,
+    );
+
+    assert!(!output.changed);
+    assert_eq!(state.text, "one\ntwo");
+    assert_eq!(state.selection, TextSelection::new(4, 7));
 }
 
 #[test]
