@@ -19,21 +19,22 @@ use kinetik_ui::render::{
 };
 use kinetik_ui::text::TextEditState;
 use kinetik_ui::widgets::{
-    ColorFieldConfig, Dock, DockChromeStyle, DockDropTarget, DockDropZone, DockInteractionPolicy,
-    DockNode, DockPlacement, DockSplitterContextActionKind, DockTabDrag, Frame, FrameId,
-    FrameLayout, FrameTab, GridColumns, GridLayout, Guide, ItemId, ListLayout, Menu, MenuBar,
-    MenuBarMenu, MenuBarMenuId, MenuBarOverlayRequest, MenuItem, MenuOverlay, ModalAction,
-    ModalActionRole, ModalDialog, ModalDialogOverlay, NumericScrubInputConfig, OverlayDismissal,
-    OverlayId, OverlayKind, OverlayStack, PanZoom, Panel, PanelId, PanelInstanceId,
-    PanelInstancePolicy, PanelInstanceSnapshot, PanelOpenActionMetadata, PanelOpenDecision,
-    PanelRegistry, PanelTypeCategory, PanelTypeDescriptor, PanelTypeId, PanelWorkspaceContext,
-    PopoverPlacement, PropertyGridLayout, PropertyGridRow, StatusBar, StatusItem, StatusItemId,
-    StatusItemKind, StatusProgress, TabStrip, TableColumn, TableLayout, Toolbar, ToolbarGroup,
-    ToolbarGroupId, ToolbarItem, ToolbarItemPresentation, TreeExpansion, TreeItem, TreeLayout,
-    TreeModel, Ui, VectorScrubInputConfig, ViewportComposition, ViewportFit, ViewportSurface,
-    WorkspaceSnapshot, classify_numeric_input_draft, frame_tabs, icon_button_semantics,
-    resolve_dock_splitter_context_actions_with_policy, resolve_frame_drop_zone_with_policy,
-    solve_dock_layout, solve_dock_splitters_with_style,
+    AssetSlotAsset, AssetSlotConfig, Dock, DockChromeStyle, DockDropTarget, DockDropZone,
+    DockInteractionPolicy, DockNode, DockPlacement, DockSplitterContextActionKind, DockTabDrag,
+    DropdownItem, DropdownItemId, DropdownModel, Frame, FrameId, FrameLayout, FrameTab,
+    GridColumns, GridLayout, Guide, ItemId, ListLayout, Menu, MenuBar, MenuBarMenu, MenuBarMenuId,
+    MenuBarOverlayRequest, MenuItem, MenuOverlay, ModalAction, ModalActionRole, ModalDialog,
+    ModalDialogOverlay, NumericScrubInputConfig, OverlayDismissal, OverlayId, OverlayKind,
+    OverlayStack, PanZoom, Panel, PanelId, PanelInstanceId, PanelInstancePolicy,
+    PanelInstanceSnapshot, PanelOpenActionMetadata, PanelOpenDecision, PanelRegistry,
+    PanelTypeCategory, PanelTypeDescriptor, PanelTypeId, PanelWorkspaceContext, PathFieldConfig,
+    PopoverPlacement, PropertyGridLayout, PropertyGridRow, SelectFieldConfig, StatusBar,
+    StatusItem, StatusItemId, StatusItemKind, StatusProgress, TabStrip, TableColumn, TableLayout,
+    Toolbar, ToolbarGroup, ToolbarGroupId, ToolbarItem, ToolbarItemPresentation, TreeExpansion,
+    TreeItem, TreeLayout, TreeModel, Ui, VectorScrubInputConfig, ViewportComposition, ViewportFit,
+    ViewportSurface, WorkspaceSnapshot, classify_numeric_input_draft, frame_tabs,
+    icon_button_semantics, resolve_dock_splitter_context_actions_with_policy,
+    resolve_frame_drop_zone_with_policy, solve_dock_layout, solve_dock_splitters_with_style,
 };
 
 /// Saves the current editor project.
@@ -449,7 +450,8 @@ pub struct EditorShowcase {
     position_states: [TextEditState; 3],
     scale: TextEditState,
     mass: TextEditState,
-    material_color: Color,
+    collider_kind: DropdownItemId,
+    script_path: TextEditState,
     exposure: f32,
     roughness: f32,
     timeline: f32,
@@ -487,7 +489,8 @@ impl Default for EditorShowcase {
             ],
             scale: TextEditState::new("1.0"),
             mass: TextEditState::new("84.0"),
-            material_color: rgb(64, 118, 214),
+            collider_kind: DropdownItemId::from_raw(2),
+            script_path: TextEditState::new("scripts/hero_ctrl.rs"),
             exposure: 0.58,
             roughness: 0.36,
             timeline: 0.41,
@@ -2334,15 +2337,20 @@ impl EditorShowcase {
                 );
             }
             9 => {
-                let color = ui.color_field(
-                    "editor.inspector.material-color",
+                let asset = self.material_asset();
+                let slot = ui.asset_slot_field(
+                    "editor.inspector.material",
                     rect_value,
-                    "Material color",
-                    self.material_color,
-                    ColorFieldConfig::default(),
+                    "Material",
+                    Some(&asset),
+                    AssetSlotConfig::new("Drop material").accepts_drop(true),
                 );
-                if color.open_requested {
-                    "Material color picker requested".clone_into(&mut self.status);
+                if slot.drop_received {
+                    "Material drop requested".clone_into(&mut self.status);
+                } else if slot.open_requested {
+                    self.status = format!("Open material asset: {}", asset.label);
+                } else if slot.pick_requested {
+                    "Material asset picker requested".clone_into(&mut self.status);
                 }
             }
             11 => {
@@ -2364,6 +2372,33 @@ impl EditorShowcase {
                         .with_min(0.0),
                 );
             }
+            14 => {
+                let model = self.collider_model();
+                let select = ui.select_field(
+                    "editor.inspector.collider",
+                    rect_value,
+                    "Collider",
+                    &model,
+                    SelectFieldConfig::new("Choose collider"),
+                );
+                if select.open_requested {
+                    "Collider choices requested".clone_into(&mut self.status);
+                }
+            }
+            15 => {
+                let path = ui.path_field(
+                    "editor.inspector.script",
+                    rect_value,
+                    "Script path",
+                    &mut self.script_path,
+                    PathFieldConfig::default().open(true),
+                );
+                if path.browse_requested {
+                    "Script path browse requested".clone_into(&mut self.status);
+                } else if path.open_requested {
+                    self.status = format!("Open script path: {}", self.script_path.text);
+                }
+            }
             _ => {
                 text(
                     ui,
@@ -2375,6 +2410,22 @@ impl EditorShowcase {
                 );
             }
         }
+    }
+
+    fn material_asset(&self) -> AssetSlotAsset {
+        let asset = &ASSETS[self.selected_asset.min(ASSETS.len().saturating_sub(1))];
+        AssetSlotAsset::new(format!("asset://{}", asset.name), asset.name).with_kind(asset.kind)
+    }
+
+    fn collider_model(&self) -> DropdownModel {
+        let mut model = DropdownModel::from_items([
+            DropdownItem::new(DropdownItemId::from_raw(1), "Box"),
+            DropdownItem::new(DropdownItemId::from_raw(2), "Capsule"),
+            DropdownItem::new(DropdownItemId::from_raw(3), "Sphere"),
+            DropdownItem::new(DropdownItemId::from_raw(4), "Mesh").with_enabled(false),
+        ]);
+        let _ = model.set_selected_id(self.collider_kind);
+        model
     }
 
     fn console_panel(ui: &mut Ui<'_>, body: Rect) {

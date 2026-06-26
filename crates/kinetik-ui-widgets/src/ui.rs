@@ -15,12 +15,14 @@ use kinetik_ui_text::{
 };
 
 use crate::{
-    ColorFieldConfig, ColorFieldOutput, CommandPaletteOverlay, DropdownCloseResult, DropdownItemId,
-    DropdownOverlay, IconId, IconLibrary, MenuOverlay, MultiLineTextFieldOutput,
-    NumericInputOutput, NumericScrubInputConfig, NumericScrubInputOutput, OverlayStack, PanelFrame,
-    SearchFieldOutput, SliderStep, TextFieldOutput, VectorScrubInputConfig, VectorScrubInputOutput,
-    WidgetOutput, button as button_widget, checkbox as checkbox_widget,
-    checkbox_with_label as checkbox_with_label_widget,
+    AssetSlotAsset, AssetSlotConfig, AssetSlotOutput, ColorFieldConfig, ColorFieldOutput,
+    CommandPaletteOverlay, DropdownCloseResult, DropdownItemId, DropdownModel, DropdownOverlay,
+    IconId, IconLibrary, MenuOverlay, MultiLineTextFieldOutput, NumericInputOutput,
+    NumericScrubInputConfig, NumericScrubInputOutput, OverlayStack, PanelFrame, PathFieldConfig,
+    PathFieldOutput, SearchFieldOutput, SelectFieldConfig, SelectFieldOutput, SliderStep,
+    TextFieldOutput, VectorScrubInputConfig, VectorScrubInputOutput, WidgetOutput,
+    asset_slot_field as asset_slot_field_widget, button as button_widget,
+    checkbox as checkbox_widget, checkbox_with_label as checkbox_with_label_widget,
     checkbox_with_label_target as checkbox_with_label_target_widget,
     color_field as color_field_widget, icon_button as fallback_icon_button_widget,
     icon_button_with_label as fallback_icon_button_with_label_widget,
@@ -33,11 +35,12 @@ use crate::{
     multi_line_text_field_with_text_layouts_and_caret_visibility as multi_line_text_field_widget,
     numeric_input_with_text_layouts_and_caret_visibility as numeric_input_widget,
     numeric_scrub_input_with_text_layouts_and_caret_visibility as numeric_scrub_input_widget,
-    panel as panel_widget, panel_semantics, radio_button as radio_button_widget,
-    radio_button_with_label as radio_button_with_label_widget,
+    panel as panel_widget, panel_semantics,
+    path_field_with_text_layouts_and_caret_visibility as path_field_widget,
+    radio_button as radio_button_widget, radio_button_with_label as radio_button_with_label_widget,
     radio_button_with_label_target as radio_button_with_label_target_widget,
     search_field_with_text_layouts_and_caret_visibility as search_field_widget,
-    separator as separator_widget, slider as slider_widget,
+    select_field as select_field_widget, separator as separator_widget, slider as slider_widget,
     slider_with_label as slider_with_label_widget,
     slider_with_label_and_step as slider_with_label_and_step_widget,
     slider_with_step as slider_with_step_widget, tab_button as tab_button_widget,
@@ -1564,6 +1567,73 @@ impl<'a> Ui<'a> {
         let (input, memory) = self.runtime.input_and_memory_mut();
         let output = color_field_widget(id, rect, label, color, config, input, memory, theme);
         self.push_widget_output(&output.widget);
+        output
+    }
+
+    /// Emits an inspector select/enum field backed by a dropdown model.
+    pub fn select_field(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl Into<String>,
+        model: &DropdownModel,
+        config: SelectFieldConfig,
+    ) -> SelectFieldOutput {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = select_field_widget(id, rect, label, model, config, input, memory, theme);
+        self.push_widget_output(&output.widget);
+        output
+    }
+
+    /// Emits an inspector asset slot field.
+    pub fn asset_slot_field(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl Into<String>,
+        asset: Option<&AssetSlotAsset>,
+        config: AssetSlotConfig,
+    ) -> AssetSlotOutput {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = asset_slot_field_widget(id, rect, label, asset, config, input, memory, theme);
+        self.push_widget_output(&output.widget);
+        output
+    }
+
+    /// Emits an inspector file/path text field.
+    pub fn path_field(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl Into<String>,
+        state: &mut TextEditState,
+        config: PathFieldConfig,
+    ) -> PathFieldOutput {
+        let id = self.id(key);
+        let theme = self.theme;
+        let before = TextVisualState::from_state(state);
+        let caret_visible = text_caret_visible(self.time());
+        let text_layouts = self.text_layouts.as_deref_mut();
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = path_field_widget(
+            id,
+            rect,
+            label,
+            state,
+            config,
+            input,
+            memory,
+            theme,
+            text_layouts,
+            caret_visible,
+        );
+        self.push_widget_output(&output.widget);
+        self.request_text_caret_blink_repaint(&output.field.widget);
+        self.request_repaint_if_text_visual_changed(&before, state);
         output
     }
 

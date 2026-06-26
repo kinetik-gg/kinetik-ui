@@ -234,7 +234,15 @@ fn stage2_control_taxonomy_reports_honest_statuses() {
 
 #[test]
 fn stage7_vector_and_color_fields_report_implemented_inspector_statuses() {
-    for name in ["Vector2Field", "Vector3Field", "Vector4Field", "ColorField"] {
+    for name in [
+        "Vector2Field",
+        "Vector3Field",
+        "Vector4Field",
+        "ColorField",
+        "SelectField",
+        "AssetSlotField",
+        "PathField",
+    ] {
         assert_entry(
             name,
             ComponentCategory::Inspector,
