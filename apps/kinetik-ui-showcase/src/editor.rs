@@ -1731,6 +1731,12 @@ impl EditorShowcase {
             (body.width - 16.0).max(1.0),
             (body.height - 66.0).max(1.0),
         );
+        let viewport_semantic_id = ui.id("editor.viewport.surface.semantic");
+        ui.push_semantic_node(
+            SemanticNode::new(viewport_semantic_id, SemanticRole::Viewport, surface_bounds)
+                .with_label("Viewport Surface")
+                .focusable(true),
+        );
         let drag = ui.draggable("editor.viewport.surface", surface_bounds, false);
         if drag.dragged {
             self.viewport_pan_zoom.pan_by(drag.drag_delta);
@@ -3627,6 +3633,7 @@ mod tests {
         assert_eq!(count_semantic_role(&output, &SemanticRole::Dock), 1);
         assert!(count_semantic_role(&output, &SemanticRole::Frame) >= 5);
         assert!(count_semantic_role(&output, &SemanticRole::Panel) >= 5);
+        assert!(count_semantic_role(&output, &SemanticRole::Viewport) >= 1);
         assert!(count_semantic_role(&output, &SemanticRole::Tab) >= 6);
         assert!(count_semantic_role(&output, &SemanticRole::IconButton) >= 12);
         assert!(count_semantic_role(&output, &SemanticRole::Slider) >= 1);
