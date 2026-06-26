@@ -15,10 +15,11 @@ use kinetik_ui_text::{
 };
 
 use crate::{
-    CommandPaletteOverlay, IconId, IconLibrary, MenuOverlay, MultiLineTextFieldOutput,
-    NumericInputOutput, PanelFrame, SearchFieldOutput, TextFieldOutput, WidgetOutput,
-    button as button_widget, checkbox as checkbox_widget,
-    checkbox_with_label as checkbox_with_label_widget, icon_button as fallback_icon_button_widget,
+    CommandPaletteOverlay, DropdownCloseResult, DropdownItemId, DropdownOverlay, IconId,
+    IconLibrary, MenuOverlay, MultiLineTextFieldOutput, NumericInputOutput, OverlayStack,
+    PanelFrame, SearchFieldOutput, TextFieldOutput, WidgetOutput, button as button_widget,
+    checkbox as checkbox_widget, checkbox_with_label as checkbox_with_label_widget,
+    icon_button as fallback_icon_button_widget,
     icon_button_with_label as fallback_icon_button_with_label_widget,
     icon_button_with_library as icon_button_with_library_widget, image as image_widget,
     image_icon_button as image_icon_button_widget,
@@ -274,6 +275,20 @@ impl<'a> Ui<'a> {
         };
         self.push_action(invocation);
         true
+    }
+
+    /// Selects a dropdown-overlay item, closes its overlay, and requests a follow-up repaint.
+    ///
+    /// Returns `None` when the item is disabled, unknown, or the dropdown is not open.
+    pub fn select_dropdown_overlay_item(
+        &mut self,
+        overlay: &mut DropdownOverlay,
+        item_id: DropdownItemId,
+        stack: &mut OverlayStack,
+    ) -> Option<DropdownCloseResult> {
+        let result = overlay.select_and_close(item_id, stack)?;
+        self.request_repaint(RepaintRequest::NextFrame);
+        Some(result)
     }
 
     /// Returns the accumulated frame output so far.

@@ -5,6 +5,8 @@ use kinetik_ui_core::{
     Rect, SemanticAction, SemanticActionKind, SemanticNode, SemanticRole, Size, WidgetId,
 };
 
+use crate::collections::{VirtualWindowRequest, virtual_window};
+
 /// Stable overlay identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OverlayId(u64);
@@ -640,6 +642,233 @@ impl DropdownModel {
             .position(|item| item.enabled)
             .map(|offset| current + 1 + offset)
             .or(Some(current))
+    }
+}
+
+/// Reason a dropdown overlay closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropdownCloseReason {
+    /// The dropdown was closed by pointer activation outside the overlay stack.
+    OutsideClick,
+    /// The dropdown was closed by Escape.
+    Escape,
+    /// The dropdown was closed because an enabled item was selected.
+    Selection(DropdownItemId),
+    /// The dropdown was closed directly by application-owned state.
+    Programmatic,
+}
+
+/// Result of closing a dropdown overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DropdownCloseResult {
+    /// Closed overlay identity.
+    pub overlay_id: OverlayId,
+    /// Reason the dropdown closed.
+    pub reason: DropdownCloseReason,
+    /// Widget that should receive focus after the dropdown closes.
+    pub focus_return: WidgetId,
+    /// Selected item when the close was caused by item selection.
+    pub selected_id: Option<DropdownItemId>,
+}
+
+impl DropdownCloseResult {
+    /// Creates a dropdown close result.
+    #[must_use]
+    pub const fn new(
+        overlay_id: OverlayId,
+        reason: DropdownCloseReason,
+        focus_return: WidgetId,
+    ) -> Self {
+        let selected_id = match reason {
+            DropdownCloseReason::Selection(id) => Some(id),
+            DropdownCloseReason::OutsideClick
+            | DropdownCloseReason::Escape
+            | DropdownCloseReason::Programmatic => None,
+        };
+        Self {
+            overlay_id,
+            reason,
+            focus_return,
+            selected_id,
+        }
+    }
+}
+
+/// Data-driven dropdown overlay lifecycle descriptor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropdownOverlay {
+    /// Overlay stack entry for placement, z-order, focus, and dismissal.
+    pub entry: OverlayEntry,
+    /// Widget that opened the dropdown and should regain focus when it closes.
+    pub trigger_id: WidgetId,
+    /// Data-only item model displayed by the dropdown.
+    pub model: DropdownModel,
+}
+
+impl DropdownOverlay {
+    /// Creates a dropdown overlay from an existing stack entry and item model.
+    #[must_use]
+    pub const fn new(entry: OverlayEntry, trigger_id: WidgetId, model: DropdownModel) -> Self {
+        Self {
+            entry,
+            trigger_id,
+            model,
+        }
+    }
+
+    /// Creates a placed dropdown overlay from an anchor rectangle.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn anchored(
+        id: OverlayId,
+        trigger_id: WidgetId,
+        model: DropdownModel,
+        anchor: Rect,
+        size: Size,
+        placement: PopoverPlacement,
+        offset: f32,
+        fit_viewport: bool,
+        viewport: Rect,
+        dismissal: OverlayDismissal,
+    ) -> Self {
+        Self::new(
+            placed_entry(
+                id,
+                OverlayKind::Dropdown,
+                PopoverRequest {
+                    anchor,
+                    size,
+                    placement,
+                    offset,
+                    fit_viewport,
+                },
+                viewport,
+            )
+            .dismiss_on(dismissal),
+            trigger_id,
+            model,
+        )
+    }
+
+    /// Opens this dropdown at the top of an overlay stack.
+    pub fn open_in(&self, stack: &mut OverlayStack) {
+        stack.open(self.entry.clone());
+    }
+
+    /// Opens this dropdown as a child of an existing overlay.
+    pub fn open_child_in(&self, stack: &mut OverlayStack, parent: OverlayId) -> bool {
+        stack.open_child(parent, self.entry.clone())
+    }
+
+    /// Closes this dropdown if it is open and returns its focus target.
+    pub fn close_in(
+        &self,
+        stack: &mut OverlayStack,
+        reason: DropdownCloseReason,
+    ) -> Option<DropdownCloseResult> {
+        stack
+            .close(self.entry.id)
+            .map(|_| DropdownCloseResult::new(self.entry.id, reason, self.trigger_id))
+    }
+
+    /// Applies existing overlay-stack dismissal rules and closes this dropdown if requested.
+    pub fn dismiss_in(
+        &self,
+        stack: &mut OverlayStack,
+        outside_activation: Option<Point>,
+        escape_pressed: bool,
+    ) -> Option<DropdownCloseResult> {
+        if outside_activation.is_some_and(|point| {
+            stack
+                .outside_click_close_requests(point)
+                .contains(&self.entry.id)
+        }) {
+            return self.close_in(stack, DropdownCloseReason::OutsideClick);
+        }
+
+        if escape_pressed && stack.escape_close_request() == Some(self.entry.id) {
+            return self.close_in(stack, DropdownCloseReason::Escape);
+        }
+
+        None
+    }
+
+    /// Selects an enabled item, closes the dropdown, and returns the selection close result.
+    pub fn select_and_close(
+        &mut self,
+        item_id: DropdownItemId,
+        stack: &mut OverlayStack,
+    ) -> Option<DropdownCloseResult> {
+        self.model.enabled_item_by_id(item_id)?;
+        let result = self.close_in(stack, DropdownCloseReason::Selection(item_id))?;
+        let selected = self.model.set_selected_id(item_id);
+        debug_assert!(selected);
+        Some(result)
+    }
+
+    /// Selects the highlighted item, closes the dropdown, and returns the selection close result.
+    pub fn select_highlighted_and_close(
+        &mut self,
+        stack: &mut OverlayStack,
+    ) -> Option<DropdownCloseResult> {
+        let selected = self.model.highlighted_id()?;
+        self.model.enabled_item_by_id(selected)?;
+        let result = self.close_in(stack, DropdownCloseReason::Selection(selected))?;
+        let selected = self.model.set_selected_id(selected);
+        debug_assert!(selected);
+        Some(result)
+    }
+}
+
+/// Deterministic visible row range for a dropdown's scrollable menu body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DropdownVisibleRange {
+    /// First visible item index.
+    pub start: usize,
+    /// Exclusive visible item index.
+    pub end: usize,
+    /// Finite scroll offset clamped to the content bounds.
+    pub scroll_offset: f32,
+}
+
+impl DropdownVisibleRange {
+    /// Creates an empty visible range.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            start: 0,
+            end: 0,
+            scroll_offset: 0.0,
+        }
+    }
+
+    /// Returns the visible range as a standard exclusive range.
+    #[must_use]
+    pub fn range(self) -> std::ops::Range<usize> {
+        self.start..self.end
+    }
+}
+
+/// Calculates the visible dropdown item range for a scrollable menu body.
+#[must_use]
+pub fn dropdown_visible_range(
+    item_count: usize,
+    row_height: f32,
+    viewport_height: f32,
+    scroll_offset: f32,
+) -> DropdownVisibleRange {
+    let window = virtual_window(VirtualWindowRequest {
+        item_count,
+        scroll_offset,
+        viewport_extent: viewport_height,
+        item_extent: row_height,
+        overscan: 0,
+    });
+
+    DropdownVisibleRange {
+        start: window.visible_range.start,
+        end: window.visible_range.end,
+        scroll_offset: window.clamped_scroll_offset,
     }
 }
 
