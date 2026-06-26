@@ -293,6 +293,129 @@ pub struct PropertyGridRowRect {
     pub value_rect: Rect,
 }
 
+/// Layout tuning for compact vector property fields.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VectorComponentLayout {
+    /// Gap between vector component groups.
+    pub component_gap: f32,
+    /// Width reserved for compact component labels such as X/Y/Z/W.
+    pub label_width: f32,
+    /// Gap between a compact component label and its value field.
+    pub label_gap: f32,
+    /// Preferred minimum value-field width before labels are compressed.
+    pub min_value_width: f32,
+}
+
+impl VectorComponentLayout {
+    /// Creates a vector component layout.
+    #[must_use]
+    pub const fn new(
+        component_gap: f32,
+        label_width: f32,
+        label_gap: f32,
+        min_value_width: f32,
+    ) -> Self {
+        Self {
+            component_gap,
+            label_width,
+            label_gap,
+            min_value_width,
+        }
+    }
+}
+
+impl Default for VectorComponentLayout {
+    fn default() -> Self {
+        Self::new(6.0, 10.0, 3.0, 24.0)
+    }
+}
+
+/// Rectangles assigned to one vector component.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VectorComponentRect {
+    /// Component index.
+    pub index: usize,
+    /// Compact component label.
+    pub label: &'static str,
+    /// Full component group rectangle.
+    pub rect: Rect,
+    /// Compact label rectangle.
+    pub label_rect: Rect,
+    /// Numeric value field rectangle.
+    pub value_rect: Rect,
+}
+
+/// Computes deterministic Vec2 component rectangles.
+#[must_use]
+pub fn vector2_component_rects(
+    rect: Rect,
+    layout: VectorComponentLayout,
+) -> [VectorComponentRect; 2] {
+    vector_component_rects(rect, ["X", "Y"], layout)
+}
+
+/// Computes deterministic Vec3 component rectangles.
+#[must_use]
+pub fn vector3_component_rects(
+    rect: Rect,
+    layout: VectorComponentLayout,
+) -> [VectorComponentRect; 3] {
+    vector_component_rects(rect, ["X", "Y", "Z"], layout)
+}
+
+/// Computes deterministic Vec4 component rectangles.
+#[must_use]
+pub fn vector4_component_rects(
+    rect: Rect,
+    layout: VectorComponentLayout,
+) -> [VectorComponentRect; 4] {
+    vector_component_rects(rect, ["X", "Y", "Z", "W"], layout)
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn vector_component_rects<const N: usize>(
+    rect: Rect,
+    labels: [&'static str; N],
+    layout: VectorComponentLayout,
+) -> [VectorComponentRect; N] {
+    let count = N.max(1) as f32;
+    let width = finite_non_negative(rect.width);
+    let height = finite_non_negative(rect.height);
+    let sanitized_component_gap = finite_non_negative(layout.component_gap);
+    let total_gap = (sanitized_component_gap * (count - 1.0)).min(width);
+    let component_width = (width - total_gap).max(0.0) / count;
+    let preferred_label_width = finite_non_negative(layout.label_width);
+    let preferred_label_gap = finite_non_negative(layout.label_gap);
+    let min_value_width = finite_non_negative(layout.min_value_width);
+
+    std::array::from_fn(|index| {
+        let x = rect.x + index as f32 * (component_width + sanitized_component_gap);
+        let component_rect = Rect::new(x, rect.y, component_width, height);
+        let label_fits =
+            component_width >= preferred_label_width + preferred_label_gap + min_value_width;
+        let label_width = if label_fits {
+            preferred_label_width.min(component_width)
+        } else {
+            (component_width * 0.35).min(preferred_label_width).max(0.0)
+        };
+        let label_gap = if component_width > label_width {
+            preferred_label_gap.min(component_width - label_width)
+        } else {
+            0.0
+        };
+        let value_x = x + label_width + label_gap;
+        let value_width = (component_rect.max_x() - value_x).max(0.0);
+
+        VectorComponentRect {
+            index,
+            label: labels[index],
+            rect: component_rect,
+            label_rect: Rect::new(x, rect.y, label_width, height),
+            value_rect: Rect::new(value_x, rect.y, value_width, height),
+        }
+    })
+}
+
 /// Inspector-style property-grid layout.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PropertyGridLayout {
@@ -523,7 +646,9 @@ impl PropertyGridLayout {
 mod tests {
     use super::{
         PropertyGridError, PropertyGridLayout, PropertyGridRow, PropertyGridRowState,
-        PropertyGridRowStatus, PropertyGridStatusSeverity,
+        PropertyGridRowStatus, PropertyGridStatusSeverity, VectorComponentLayout,
+        VectorComponentRect, vector2_component_rects, vector3_component_rects,
+        vector4_component_rects,
     };
     use crate::ItemId;
     use kinetik_ui_core::Rect;
@@ -533,6 +658,33 @@ mod tests {
             (actual - expected).abs() < f32::EPSILON,
             "expected {actual} to equal {expected}"
         );
+    }
+
+    fn assert_rect_finite(rect: Rect) {
+        assert!(rect.x.is_finite(), "rect x must be finite: {rect:?}");
+        assert!(rect.y.is_finite(), "rect y must be finite: {rect:?}");
+        assert!(
+            rect.width.is_finite(),
+            "rect width must be finite: {rect:?}"
+        );
+        assert!(
+            rect.height.is_finite(),
+            "rect height must be finite: {rect:?}"
+        );
+    }
+
+    fn assert_vector_components_finite_and_non_overlapping(components: &[VectorComponentRect]) {
+        for component in components {
+            assert_rect_finite(component.rect);
+            assert_rect_finite(component.label_rect);
+            assert_rect_finite(component.value_rect);
+            assert!(component.label_rect.max_x() <= component.value_rect.x);
+            assert!(component.value_rect.max_x() <= component.rect.max_x());
+        }
+
+        for pair in components.windows(2) {
+            assert!(pair[0].rect.max_x() <= pair[1].rect.x);
+        }
     }
 
     fn rows() -> Vec<PropertyGridRow> {
@@ -692,5 +844,70 @@ mod tests {
         assert_eq!(layout.visible_range(&rows, 0.0, 44.0, 0), 0..0);
         let rects = layout.visible_row_rects(Rect::new(10.0, 20.0, 100.0, 44.0), &rows, 0.0, 0);
         assert!(rects.is_empty());
+    }
+
+    #[test]
+    fn vector_component_rects_split_vec2_vec3_and_vec4_without_overlap() {
+        let layout = VectorComponentLayout::new(6.0, 10.0, 3.0, 24.0);
+        let bounds = Rect::new(10.0, 20.0, 300.0, 24.0);
+
+        let vec2 = vector2_component_rects(bounds, layout);
+        assert_eq!(vec2.len(), 2);
+        assert_eq!(vec2[0].label, "X");
+        assert_eq!(vec2[1].label, "Y");
+        assert_approx(vec2[0].rect.width, 147.0);
+        assert_approx(vec2[1].rect.x, 163.0);
+
+        let vec3 = vector3_component_rects(bounds, layout);
+        assert_eq!(vec3.len(), 3);
+        assert_eq!(vec3[2].label, "Z");
+        assert!(vec3[0].rect.max_x() <= vec3[1].rect.x);
+        assert!(vec3[1].rect.max_x() <= vec3[2].rect.x);
+
+        let vec4 = vector4_component_rects(bounds, layout);
+        assert_eq!(vec4.len(), 4);
+        assert_eq!(vec4[3].label, "W");
+        for component in vec4 {
+            assert!(component.label_rect.max_x() <= component.value_rect.x);
+            assert!(component.value_rect.max_x() <= component.rect.max_x());
+        }
+    }
+
+    #[test]
+    fn vector_component_rects_clamp_narrow_and_invalid_widths() {
+        let layout = VectorComponentLayout::new(f32::NAN, 12.0, f32::INFINITY, 40.0);
+        let narrow = vector3_component_rects(Rect::new(0.0, 0.0, 42.0, 18.0), layout);
+
+        assert_approx(narrow[0].rect.width, 14.0);
+        assert_vector_components_finite_and_non_overlapping(&narrow);
+        for component in narrow {
+            assert!(component.label_rect.width <= component.rect.width);
+            assert!(component.value_rect.width >= 0.0);
+            assert!(component.value_rect.max_x() <= component.rect.max_x());
+        }
+
+        let invalid = vector4_component_rects(
+            Rect::new(0.0, 0.0, f32::NAN, 18.0),
+            VectorComponentLayout::default(),
+        );
+        assert!(
+            invalid.iter().all(|component| {
+                component.rect.width == 0.0 && component.value_rect.width == 0.0
+            })
+        );
+    }
+
+    #[test]
+    fn vector_component_rects_sanitize_invalid_gaps_for_placement() {
+        let bounds = Rect::new(10.0, 20.0, 120.0, 24.0);
+        let invalid_gaps = [f32::NAN, f32::INFINITY, -8.0];
+
+        for component_gap in invalid_gaps {
+            let components = vector4_component_rects(
+                bounds,
+                VectorComponentLayout::new(component_gap, 10.0, 3.0, 24.0),
+            );
+            assert_vector_components_finite_and_non_overlapping(&components);
+        }
     }
 }
