@@ -1113,8 +1113,8 @@ pub fn solve_dock_layout(area: &Dock, bounds: Rect) -> Vec<FrameLayout> {
 
 /// Resolves cardinal frame neighbors from solved dock layout rectangles.
 ///
-/// Ties are deterministic: greatest perpendicular edge overlap wins, then
-/// nearest edge distance, then the lowest raw [`FrameId`].
+/// Ties are deterministic: nearest edge distance wins, then greatest
+/// perpendicular edge overlap, then the lowest raw [`FrameId`].
 #[must_use]
 pub fn solve_dock_neighbors(area: &Dock, bounds: Rect) -> Vec<FrameNeighbors> {
     let frames = solve_dock_layout(area, bounds);
@@ -1462,12 +1462,12 @@ fn neighbor_candidate_is_better(
         return true;
     };
     let (candidate_frame, candidate_score) = candidate;
-    match candidate_score.overlap.total_cmp(&best_score.overlap) {
-        Ordering::Greater => true,
-        Ordering::Less => false,
-        Ordering::Equal => match candidate_score.distance.total_cmp(&best_score.distance) {
-            Ordering::Less => true,
-            Ordering::Greater => false,
+    match candidate_score.distance.total_cmp(&best_score.distance) {
+        Ordering::Less => true,
+        Ordering::Greater => false,
+        Ordering::Equal => match candidate_score.overlap.total_cmp(&best_score.overlap) {
+            Ordering::Greater => true,
+            Ordering::Less => false,
             Ordering::Equal => candidate_frame.raw() < best_frame.raw(),
         },
     }

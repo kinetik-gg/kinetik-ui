@@ -769,6 +769,41 @@ fn dock_neighbor_t_junction_ties_use_lowest_frame_id() {
 }
 
 #[test]
+fn dock_neighbor_prefers_nearer_split_column_over_far_full_height_frame() {
+    let dock = Dock::new(DockNode::Split {
+        axis: Axis::Horizontal,
+        ratio: 0.25,
+        min_first: 0.0,
+        min_second: 0.0,
+        first: Box::new(DockNode::Frame(frame(1, vec![panel(1, "Left")]))),
+        second: Box::new(DockNode::Split {
+            axis: Axis::Horizontal,
+            ratio: 0.5,
+            min_first: 0.0,
+            min_second: 0.0,
+            first: Box::new(DockNode::Split {
+                axis: Axis::Vertical,
+                ratio: 0.5,
+                min_first: 0.0,
+                min_second: 0.0,
+                first: Box::new(DockNode::Frame(frame(3, vec![panel(3, "Near Top")]))),
+                second: Box::new(DockNode::Frame(frame(2, vec![panel(2, "Near Bottom")]))),
+            }),
+            second: Box::new(DockNode::Frame(frame(4, vec![panel(4, "Far Full")]))),
+        }),
+    });
+
+    assert_eq!(
+        frame_neighbor(
+            &solve_dock_layout(&dock, Rect::new(0.0, 0.0, 1000.0, 500.0)),
+            FrameId::from_raw(1),
+            DockNeighborDirection::Right,
+        ),
+        Some(FrameId::from_raw(2))
+    );
+}
+
+#[test]
 fn repeated_layout_solves_produce_stable_dock_neighbors() {
     let dock = nested_dock();
     let bounds = Rect::new(0.0, 0.0, 1000.0, 500.0);

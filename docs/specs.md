@@ -571,8 +571,8 @@ serialized by `Dock::snapshot`.
 Dock topology queries should stay pure and windowless. Frame neighbor lookup is
 derived from solved `FrameLayout` rectangles and supports left, right, up, and
 down directions without mutating focus, shortcuts, actions, or dock state.
-T-junctions and overlapping candidates use deterministic tie-breaking: greatest
-perpendicular edge overlap, then nearest edge distance, then lowest raw
+T-junctions and overlapping candidates use deterministic tie-breaking: nearest
+edge distance, then greatest perpendicular edge overlap, then lowest raw
 `FrameId`.
 
 ### 12.2 Frame
