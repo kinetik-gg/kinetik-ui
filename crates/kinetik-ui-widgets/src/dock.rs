@@ -583,6 +583,94 @@ impl DockSwapRequest {
     }
 }
 
+/// Operation represented by splitter context action metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DockSplitterContextActionKind {
+    /// Join one side of the splitter into the opposite side.
+    Join,
+    /// Swap the two resolved frame leaves adjacent to the splitter.
+    Swap,
+}
+
+/// Logical side of a splitter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DockSplitterSide {
+    /// First split child: left for horizontal splits, top for vertical splits.
+    First,
+    /// Second split child: right for horizontal splits, bottom for vertical splits.
+    Second,
+}
+
+/// Target context shared by splitter context actions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockSplitterActionContext {
+    /// Split path addressed by the context menu source.
+    pub path: DockSplitPath,
+    /// Split axis addressed by the context menu source.
+    pub axis: Axis,
+    /// Resolved frame leaf on the first side of the splitter.
+    pub first_frame: Option<FrameId>,
+    /// Resolved frame leaf on the second side of the splitter.
+    pub second_frame: Option<FrameId>,
+}
+
+/// Pure app-dispatch metadata for a splitter context action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockSplitterContextAction {
+    /// Operation kind the application may present.
+    pub kind: DockSplitterContextActionKind,
+    /// Splitter target context.
+    pub context: DockSplitterActionContext,
+    /// Side that supplies the source frame for the operation.
+    pub source_side: DockSplitterSide,
+    /// Side that supplies the target frame for the operation.
+    pub target_side: DockSplitterSide,
+    /// Resolved source frame when available.
+    pub source_frame: Option<FrameId>,
+    /// Resolved target frame when available.
+    pub target_frame: Option<FrameId>,
+    /// Direction from the source side toward the target side.
+    pub direction: DockNeighborDirection,
+    /// Whether the action can be safely dispatched against the current layout.
+    pub enabled: bool,
+}
+
+impl DockSplitterContextAction {
+    /// Returns a validated join request when this enabled action is a join.
+    #[must_use]
+    pub fn join_request(&self) -> Option<DockJoinRequest> {
+        if !self.enabled || !matches!(self.kind, DockSplitterContextActionKind::Join) {
+            return None;
+        }
+
+        let source_frame = self.source_frame?;
+        let target_frame = self.target_frame?;
+
+        Some(DockJoinRequest {
+            source_frame,
+            direction: self.direction,
+            target_frame,
+        })
+    }
+
+    /// Returns a validated swap request when this enabled action is a swap.
+    #[must_use]
+    pub fn swap_request(&self) -> Option<DockSwapRequest> {
+        if !self.enabled || !matches!(self.kind, DockSplitterContextActionKind::Swap) {
+            return None;
+        }
+
+        let source_frame = self.source_frame?;
+        let target_frame = self.target_frame?;
+
+        Some(DockSwapRequest {
+            source_frame,
+            direction: self.direction,
+            target_frame,
+        })
+    }
+}
+
 /// Finds an open panel instance in deterministic dock tree order.
 #[must_use]
 pub fn locate_panel_instance(
@@ -787,6 +875,176 @@ pub fn resolve_dock_swap_request(
         direction,
         target_frame,
     })
+}
+
+/// Resolves pure context action metadata for a dock splitter.
+///
+/// The returned actions are stable and do not mutate dock state, enqueue
+/// application actions, or execute commands. Invalid paths, stale splitters,
+/// invalid geometry, or missing adjacent frames produce disabled actions with
+/// the unresolved frame context preserved as `None`.
+#[must_use]
+pub fn resolve_dock_splitter_context_actions(
+    dock: &Dock,
+    frames: &[FrameLayout],
+    splitter: &DockSplitter,
+) -> Vec<DockSplitterContextAction> {
+    let context = resolve_dock_splitter_action_context(dock, frames, splitter);
+    let (first_to_second, second_to_first) = splitter_context_directions(splitter.axis);
+
+    vec![
+        dock_splitter_context_action(
+            dock,
+            frames,
+            DockSplitterContextActionKind::Join,
+            context.clone(),
+            DockSplitterSide::First,
+            DockSplitterSide::Second,
+            first_to_second,
+        ),
+        dock_splitter_context_action(
+            dock,
+            frames,
+            DockSplitterContextActionKind::Join,
+            context.clone(),
+            DockSplitterSide::Second,
+            DockSplitterSide::First,
+            second_to_first,
+        ),
+        dock_splitter_context_action(
+            dock,
+            frames,
+            DockSplitterContextActionKind::Swap,
+            context.clone(),
+            DockSplitterSide::First,
+            DockSplitterSide::Second,
+            first_to_second,
+        ),
+        dock_splitter_context_action(
+            dock,
+            frames,
+            DockSplitterContextActionKind::Swap,
+            context,
+            DockSplitterSide::Second,
+            DockSplitterSide::First,
+            second_to_first,
+        ),
+    ]
+}
+
+fn resolve_dock_splitter_action_context(
+    dock: &Dock,
+    frames: &[FrameLayout],
+    splitter: &DockSplitter,
+) -> DockSplitterActionContext {
+    let Some((axis, first, second)) = split_children_at_path(&dock.root, splitter.path.elements())
+    else {
+        return DockSplitterActionContext {
+            path: splitter.path.clone(),
+            axis: splitter.axis,
+            first_frame: None,
+            second_frame: None,
+        };
+    };
+
+    if axis != splitter.axis {
+        return DockSplitterActionContext {
+            path: splitter.path.clone(),
+            axis: splitter.axis,
+            first_frame: None,
+            second_frame: None,
+        };
+    }
+
+    let first_frames = collect_frame_ids(first);
+    let second_frames = collect_frame_ids(second);
+
+    DockSplitterActionContext {
+        path: splitter.path.clone(),
+        axis: splitter.axis,
+        first_frame: splitter_adjacent_frame(
+            frames,
+            &first_frames,
+            splitter,
+            DockSplitterSide::First,
+        ),
+        second_frame: splitter_adjacent_frame(
+            frames,
+            &second_frames,
+            splitter,
+            DockSplitterSide::Second,
+        ),
+    }
+}
+
+fn dock_splitter_context_action(
+    dock: &Dock,
+    frames: &[FrameLayout],
+    kind: DockSplitterContextActionKind,
+    context: DockSplitterActionContext,
+    source_side: DockSplitterSide,
+    target_side: DockSplitterSide,
+    direction: DockNeighborDirection,
+) -> DockSplitterContextAction {
+    let source_frame = splitter_context_frame(&context, source_side);
+    let target_frame = splitter_context_frame(&context, target_side);
+    let enabled = source_frame
+        .zip(target_frame)
+        .is_some_and(|(source_frame, target_frame)| {
+            if source_frame == target_frame
+                || !dock.frame(source_frame).is_some_and(frame_is_valid)
+                || !dock.frame(target_frame).is_some_and(frame_is_valid)
+            {
+                return false;
+            }
+
+            match kind {
+                DockSplitterContextActionKind::Join => join_request_matches_layout(
+                    frames,
+                    DockJoinRequest {
+                        source_frame,
+                        direction,
+                        target_frame,
+                    },
+                ),
+                DockSplitterContextActionKind::Swap => swap_request_matches_layout(
+                    frames,
+                    DockSwapRequest {
+                        source_frame,
+                        direction,
+                        target_frame,
+                    },
+                ),
+            }
+        });
+
+    DockSplitterContextAction {
+        kind,
+        context,
+        source_side,
+        target_side,
+        source_frame,
+        target_frame,
+        direction,
+        enabled,
+    }
+}
+
+fn splitter_context_frame(
+    context: &DockSplitterActionContext,
+    side: DockSplitterSide,
+) -> Option<FrameId> {
+    match side {
+        DockSplitterSide::First => context.first_frame,
+        DockSplitterSide::Second => context.second_frame,
+    }
+}
+
+fn splitter_context_directions(axis: Axis) -> (DockNeighborDirection, DockNeighborDirection) {
+    match axis {
+        Axis::Horizontal => (DockNeighborDirection::Right, DockNeighborDirection::Left),
+        Axis::Vertical => (DockNeighborDirection::Down, DockNeighborDirection::Up),
+    }
 }
 
 fn join_request_matches_layout(frames: &[FrameLayout], request: DockJoinRequest) -> bool {
@@ -1445,6 +1703,46 @@ fn collect_frames<'a>(node: &'a DockNode, frames: &mut Vec<&'a Frame>) {
     }
 }
 
+fn collect_frame_ids(node: &DockNode) -> Vec<FrameId> {
+    let mut frames = Vec::new();
+    collect_frame_ids_inner(node, &mut frames);
+    frames
+}
+
+fn collect_frame_ids_inner(node: &DockNode, frames: &mut Vec<FrameId>) {
+    match node {
+        DockNode::Frame(frame) => frames.push(frame.id),
+        DockNode::Split { first, second, .. } => {
+            collect_frame_ids_inner(first, frames);
+            collect_frame_ids_inner(second, frames);
+        }
+    }
+}
+
+fn split_children_at_path<'a>(
+    node: &'a DockNode,
+    path: &[DockPathElement],
+) -> Option<(Axis, &'a DockNode, &'a DockNode)> {
+    match (node, path) {
+        (
+            DockNode::Split {
+                axis,
+                first,
+                second,
+                ..
+            },
+            [],
+        ) => Some((*axis, first, second)),
+        (DockNode::Split { first, .. }, [DockPathElement::First, rest @ ..]) => {
+            split_children_at_path(first, rest)
+        }
+        (DockNode::Split { second, .. }, [DockPathElement::Second, rest @ ..]) => {
+            split_children_at_path(second, rest)
+        }
+        _ => None,
+    }
+}
+
 fn find_frame_mut(node: &mut DockNode, id: FrameId) -> Option<&mut Frame> {
     match node {
         DockNode::Frame(frame) if frame.id == id => Some(frame),
@@ -2008,6 +2306,109 @@ fn resolve_frame_split_affordance(
     }
 
     None
+}
+
+fn splitter_adjacent_frame(
+    frames: &[FrameLayout],
+    candidates: &[FrameId],
+    splitter: &DockSplitter,
+    side: DockSplitterSide,
+) -> Option<FrameId> {
+    if !valid_neighbor_rect(splitter.rect) {
+        return None;
+    }
+
+    let mut best = None;
+    for candidate in candidates {
+        let Some(layout) = frames.iter().find(|layout| layout.frame == *candidate) else {
+            continue;
+        };
+        if !valid_neighbor_rect(layout.rect) {
+            continue;
+        }
+        let Some(score) = splitter_adjacent_score(layout.rect, splitter, side) else {
+            continue;
+        };
+        if splitter_adjacent_is_better(best, (*candidate, score)) {
+            best = Some((*candidate, score));
+        }
+    }
+
+    best.map(|(frame, _)| frame)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SplitterAdjacentScore {
+    overlap: f32,
+    distance: f32,
+}
+
+fn splitter_adjacent_score(
+    rect: Rect,
+    splitter: &DockSplitter,
+    side: DockSplitterSide,
+) -> Option<SplitterAdjacentScore> {
+    let center_x = splitter.rect.x + splitter.rect.width * 0.5;
+    let center_y = splitter.rect.y + splitter.rect.height * 0.5;
+    let (overlap, distance) = match (splitter.axis, side) {
+        (Axis::Horizontal, DockSplitterSide::First) => (
+            range_overlap(
+                rect.min_y(),
+                rect.max_y(),
+                splitter.rect.min_y(),
+                splitter.rect.max_y(),
+            ),
+            (center_x - rect.max_x()).abs(),
+        ),
+        (Axis::Horizontal, DockSplitterSide::Second) => (
+            range_overlap(
+                rect.min_y(),
+                rect.max_y(),
+                splitter.rect.min_y(),
+                splitter.rect.max_y(),
+            ),
+            (rect.min_x() - center_x).abs(),
+        ),
+        (Axis::Vertical, DockSplitterSide::First) => (
+            range_overlap(
+                rect.min_x(),
+                rect.max_x(),
+                splitter.rect.min_x(),
+                splitter.rect.max_x(),
+            ),
+            (center_y - rect.max_y()).abs(),
+        ),
+        (Axis::Vertical, DockSplitterSide::Second) => (
+            range_overlap(
+                rect.min_x(),
+                rect.max_x(),
+                splitter.rect.min_x(),
+                splitter.rect.max_x(),
+            ),
+            (rect.min_y() - center_y).abs(),
+        ),
+    };
+
+    (overlap > 0.0 && distance.is_finite()).then_some(SplitterAdjacentScore { overlap, distance })
+}
+
+fn splitter_adjacent_is_better(
+    best: Option<(FrameId, SplitterAdjacentScore)>,
+    candidate: (FrameId, SplitterAdjacentScore),
+) -> bool {
+    let Some((best_frame, best_score)) = best else {
+        return true;
+    };
+    let (candidate_frame, candidate_score) = candidate;
+    match candidate_score.distance.total_cmp(&best_score.distance) {
+        Ordering::Less => true,
+        Ordering::Greater => false,
+        Ordering::Equal => match candidate_score.overlap.total_cmp(&best_score.overlap) {
+            Ordering::Greater => true,
+            Ordering::Less => false,
+            Ordering::Equal => candidate_frame.raw() < best_frame.raw(),
+        },
+    }
 }
 
 fn valid_drop_rect(rect: Rect) -> bool {

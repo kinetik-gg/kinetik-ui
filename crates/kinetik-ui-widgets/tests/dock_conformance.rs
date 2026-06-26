@@ -4,13 +4,14 @@ use kinetik_ui_core::{ActionId, Axis, IconId, Point, Rect, Size, Vec2};
 use kinetik_ui_widgets::{
     Dock, DockDropTarget, DockNeighborDirection, DockNode, DockPathElement, DockPlacement,
     DockRestoreError, DockSnapshot, DockSnapshotDiagnosticCode, DockSnapshotNode,
-    DockSnapshotSplitValue, DockSplitInsertion, DockSplitPath, Frame, FrameId, FrameLayout,
-    FrameNeighbors, FrameSplitAffordanceRequest, Panel, PanelClosePolicy, PanelDockHint,
-    PanelDuplicatePolicy, PanelFloatPolicy, PanelId, PanelInstanceId, PanelInstanceLocation,
-    PanelInstancePolicy, PanelInstanceSnapshot, PanelOpenDecision, PanelPolicyMetadata,
-    PanelTypeCategory, PanelTypeDescriptor, PanelTypeId, PanelWorkspaceContext,
-    SnapshotDiagnosticSeverity, WorkspaceRestoreError, WorkspaceSnapshotDiagnosticCode,
-    frame_neighbor, frame_tabs, resolve_dock_drop_target, resolve_dock_join_request,
+    DockSnapshotSplitValue, DockSplitInsertion, DockSplitPath, DockSplitterContextAction,
+    DockSplitterContextActionKind, DockSplitterSide, Frame, FrameId, FrameLayout, FrameNeighbors,
+    FrameSplitAffordanceRequest, Panel, PanelClosePolicy, PanelDockHint, PanelDuplicatePolicy,
+    PanelFloatPolicy, PanelId, PanelInstanceId, PanelInstanceLocation, PanelInstancePolicy,
+    PanelInstanceSnapshot, PanelOpenDecision, PanelPolicyMetadata, PanelTypeCategory,
+    PanelTypeDescriptor, PanelTypeId, PanelWorkspaceContext, SnapshotDiagnosticSeverity,
+    WorkspaceRestoreError, WorkspaceSnapshotDiagnosticCode, frame_neighbor, frame_tabs,
+    resolve_dock_drop_target, resolve_dock_join_request, resolve_dock_splitter_context_actions,
     resolve_dock_swap_request, resolve_frame_split_affordance_request, resolve_panel_affordances,
     resolve_panel_close_request, resolve_panel_duplicate_request, resolve_panel_float_request,
     resolve_panel_open_decision, solve_dock_layout, solve_dock_neighbors, solve_dock_splitters,
@@ -71,6 +72,17 @@ fn neighbors_for(neighbors: &[FrameNeighbors], frame: u64) -> FrameNeighbors {
 
 fn panel_ids(frame: &Frame) -> Vec<PanelId> {
     frame.panels.iter().map(|panel| panel.id).collect()
+}
+
+fn splitter_context_action(
+    actions: &[DockSplitterContextAction],
+    kind: DockSplitterContextActionKind,
+    source_side: DockSplitterSide,
+) -> &DockSplitterContextAction {
+    actions
+        .iter()
+        .find(|action| action.kind == kind && action.source_side == source_side)
+        .expect("splitter context action")
 }
 
 fn workspace_panel_descriptors() -> Vec<PanelTypeDescriptor> {
@@ -908,6 +920,184 @@ fn invalid_geometry_is_sanitized_for_layout_splitters_and_drag_ratios() {
         DockNode::Split { ratio, .. } => assert_close(ratio, 0.5),
         DockNode::Frame(_) => panic!("root split should remain intact"),
     }
+}
+
+#[test]
+fn splitter_context_actions_identify_adjacent_frames_and_requests() {
+    let dock = nested_dock();
+    let before = dock.snapshot();
+    let bounds = Rect::new(0.0, 0.0, 1000.0, 500.0);
+    let layout = solve_dock_layout(&dock, bounds);
+    let splitters = solve_dock_splitters(&dock, bounds, 8.0);
+
+    let actions = resolve_dock_splitter_context_actions(&dock, &layout, &splitters[0]);
+
+    assert_eq!(actions.len(), 4);
+    assert_eq!(actions[0].context.path, DockSplitPath::root());
+    assert_eq!(actions[0].context.axis, Axis::Horizontal);
+    assert_eq!(actions[0].context.first_frame, Some(FrameId::from_raw(1)));
+    assert_eq!(actions[0].context.second_frame, Some(FrameId::from_raw(2)));
+
+    let join_right = splitter_context_action(
+        &actions,
+        DockSplitterContextActionKind::Join,
+        DockSplitterSide::First,
+    );
+    assert!(join_right.enabled);
+    assert_eq!(join_right.target_side, DockSplitterSide::Second);
+    assert_eq!(join_right.source_frame, Some(FrameId::from_raw(1)));
+    assert_eq!(join_right.target_frame, Some(FrameId::from_raw(2)));
+    assert_eq!(join_right.direction, DockNeighborDirection::Right);
+    let join_request = join_right.join_request().expect("join request");
+    assert_eq!(join_request.source_frame(), FrameId::from_raw(1));
+    assert_eq!(join_request.target_frame(), FrameId::from_raw(2));
+    assert_eq!(join_request.direction(), DockNeighborDirection::Right);
+    assert_eq!(join_right.swap_request(), None);
+
+    let swap_left = splitter_context_action(
+        &actions,
+        DockSplitterContextActionKind::Swap,
+        DockSplitterSide::Second,
+    );
+    assert!(swap_left.enabled);
+    assert_eq!(swap_left.target_side, DockSplitterSide::First);
+    assert_eq!(swap_left.source_frame, Some(FrameId::from_raw(2)));
+    assert_eq!(swap_left.target_frame, Some(FrameId::from_raw(1)));
+    assert_eq!(swap_left.direction, DockNeighborDirection::Left);
+    let swap_request = swap_left.swap_request().expect("swap request");
+    assert_eq!(swap_request.source_frame(), FrameId::from_raw(2));
+    assert_eq!(swap_request.target_frame(), FrameId::from_raw(1));
+    assert_eq!(swap_request.direction(), DockNeighborDirection::Left);
+    assert_eq!(swap_left.join_request(), None);
+
+    assert_eq!(dock.snapshot(), before);
+}
+
+#[test]
+fn splitter_context_actions_have_stable_operation_kinds_and_directions() {
+    let dock = nested_dock();
+    let bounds = Rect::new(0.0, 0.0, 1000.0, 500.0);
+    let layout = solve_dock_layout(&dock, bounds);
+    let splitters = solve_dock_splitters(&dock, bounds, 8.0);
+
+    let actions = resolve_dock_splitter_context_actions(&dock, &layout, &splitters[1]);
+    let summary: Vec<_> = actions
+        .iter()
+        .map(|action| {
+            (
+                action.kind,
+                action.source_side,
+                action.direction,
+                action.enabled,
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        summary,
+        vec![
+            (
+                DockSplitterContextActionKind::Join,
+                DockSplitterSide::First,
+                DockNeighborDirection::Down,
+                true,
+            ),
+            (
+                DockSplitterContextActionKind::Join,
+                DockSplitterSide::Second,
+                DockNeighborDirection::Up,
+                true,
+            ),
+            (
+                DockSplitterContextActionKind::Swap,
+                DockSplitterSide::First,
+                DockNeighborDirection::Down,
+                true,
+            ),
+            (
+                DockSplitterContextActionKind::Swap,
+                DockSplitterSide::Second,
+                DockNeighborDirection::Up,
+                true,
+            ),
+        ]
+    );
+    assert!(actions.iter().all(|action| {
+        action.context.path == DockSplitPath::new([DockPathElement::Second])
+            && action.context.axis == Axis::Vertical
+            && action.context.first_frame == Some(FrameId::from_raw(2))
+            && action.context.second_frame == Some(FrameId::from_raw(3))
+    }));
+}
+
+#[test]
+fn splitter_context_actions_disable_invalid_or_missing_adjacent_frames() {
+    let dock = Dock::new(DockNode::Frame(frame(1, vec![panel(1, "A")])));
+    let before = dock.snapshot();
+    let layout = solve_dock_layout(&dock, Rect::new(0.0, 0.0, 100.0, 100.0));
+    let stale_splitter = kinetik_ui_widgets::DockSplitter {
+        path: DockSplitPath::root(),
+        axis: Axis::Horizontal,
+        rect: Rect::new(48.0, 0.0, 4.0, 100.0),
+        ratio: 0.5,
+        min_first: 0.0,
+        min_second: 0.0,
+    };
+
+    let actions = resolve_dock_splitter_context_actions(&dock, &layout, &stale_splitter);
+
+    assert_eq!(actions.len(), 4);
+    assert!(actions.iter().all(|action| {
+        !action.enabled
+            && action.source_frame.is_none()
+            && action.target_frame.is_none()
+            && action.join_request().is_none()
+            && action.swap_request().is_none()
+    }));
+    assert_eq!(dock.snapshot(), before);
+
+    let split_dock = nested_dock();
+    let splitters = solve_dock_splitters(&split_dock, Rect::new(0.0, 0.0, 1000.0, 500.0), 8.0);
+    let invalid_layout = [
+        FrameLayout {
+            frame: FrameId::from_raw(1),
+            rect: Rect::new(0.0, 0.0, f32::NAN, 500.0),
+        },
+        FrameLayout {
+            frame: FrameId::from_raw(2),
+            rect: Rect::new(300.0, 0.0, 700.0, f32::INFINITY),
+        },
+    ];
+
+    let invalid_actions =
+        resolve_dock_splitter_context_actions(&split_dock, &invalid_layout, &splitters[0]);
+
+    assert!(invalid_actions.iter().all(|action| !action.enabled));
+    assert!(
+        invalid_actions
+            .iter()
+            .all(|action| action.source_frame.is_none() || action.target_frame.is_none())
+    );
+}
+
+#[test]
+fn splitter_context_actions_are_pure_and_stable_across_solves() {
+    let dock = nested_dock();
+    let before = dock.snapshot();
+    let bounds = Rect::new(0.0, 0.0, 1000.0, 500.0);
+
+    let first_layout = solve_dock_layout(&dock, bounds);
+    let first_splitters = solve_dock_splitters(&dock, bounds, 8.0);
+    let first_actions =
+        resolve_dock_splitter_context_actions(&dock, &first_layout, &first_splitters[0]);
+
+    let second_layout = solve_dock_layout(&dock, bounds);
+    let second_splitters = solve_dock_splitters(&dock, bounds, 8.0);
+    let second_actions =
+        resolve_dock_splitter_context_actions(&dock, &second_layout, &second_splitters[0]);
+
+    assert_eq!(first_actions, second_actions);
+    assert_eq!(dock.snapshot(), before);
 }
 
 #[test]
