@@ -19,6 +19,7 @@ use crate::{
     IconLibrary, MenuOverlay, MultiLineTextFieldOutput, NumericInputOutput, OverlayStack,
     PanelFrame, SearchFieldOutput, TextFieldOutput, WidgetOutput, button as button_widget,
     checkbox as checkbox_widget, checkbox_with_label as checkbox_with_label_widget,
+    checkbox_with_label_target as checkbox_with_label_target_widget,
     icon_button as fallback_icon_button_widget,
     icon_button_with_label as fallback_icon_button_with_label_widget,
     icon_button_with_library as icon_button_with_library_widget, image as image_widget,
@@ -31,11 +32,13 @@ use crate::{
     numeric_input_with_text_layouts_and_caret_visibility as numeric_input_widget,
     panel as panel_widget, panel_semantics, radio_button as radio_button_widget,
     radio_button_with_label as radio_button_with_label_widget,
+    radio_button_with_label_target as radio_button_with_label_target_widget,
     search_field_with_text_layouts_and_caret_visibility as search_field_widget,
     separator as separator_widget, slider as slider_widget,
     slider_with_label as slider_with_label_widget, tab_button as tab_button_widget,
     text_field_with_text_layouts_and_caret_visibility as text_field_widget,
     toggle as toggle_widget, toggle_with_label as toggle_with_label_widget,
+    toggle_with_label_target as toggle_with_label_target_widget,
 };
 
 const TEXT_CARET_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -783,7 +786,7 @@ impl<'a> Ui<'a> {
         disabled: bool,
     ) -> Response {
         let mut response = self.checkbox(key, rect, *checked, disabled);
-        if response.clicked {
+        if response_activated(&response) {
             *checked = !*checked;
             response.state.selected = *checked;
             self.request_repaint(RepaintRequest::NextFrame);
@@ -818,7 +821,46 @@ impl<'a> Ui<'a> {
         disabled: bool,
     ) -> Response {
         let mut response = self.checkbox_with_label(key, rect, label, *checked, disabled);
-        if response.clicked {
+        if response_activated(&response) {
+            *checked = !*checked;
+            response.state.selected = *checked;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
+    /// Emits a labeled checkbox with a separate label activation rectangle.
+    pub fn checkbox_with_label_target(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label_rect: Rect,
+        label: impl Into<String>,
+        checked: bool,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = checkbox_with_label_target_widget(
+            id, rect, label_rect, label, checked, input, memory, theme, disabled,
+        );
+        self.push_interactive(output)
+    }
+
+    /// Emits a labeled checkbox with a label activation rectangle and toggles the value.
+    pub fn checkbox_value_with_label_target(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label_rect: Rect,
+        label: impl Into<String>,
+        checked: &mut bool,
+        disabled: bool,
+    ) -> Response {
+        let mut response =
+            self.checkbox_with_label_target(key, rect, label_rect, label, *checked, disabled);
+        if response_activated(&response) {
             *checked = !*checked;
             response.state.selected = *checked;
             self.request_repaint(RepaintRequest::NextFrame);
@@ -851,7 +893,7 @@ impl<'a> Ui<'a> {
         disabled: bool,
     ) -> Response {
         let mut response = self.radio_button(key, rect, *selected == value, disabled);
-        if response.clicked {
+        if response_activated(&response) {
             *selected = value;
             response.state.selected = true;
             self.request_repaint(RepaintRequest::NextFrame);
@@ -889,7 +931,54 @@ impl<'a> Ui<'a> {
     ) -> Response {
         let mut response =
             self.radio_button_with_label(key, rect, label, *selected == value, disabled);
-        if response.clicked {
+        if response_activated(&response) {
+            *selected = value;
+            response.state.selected = true;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
+    /// Emits a labeled radio button with a separate label activation rectangle.
+    pub fn radio_button_with_label_target(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label_rect: Rect,
+        label: impl Into<String>,
+        selected: bool,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = radio_button_with_label_target_widget(
+            id, rect, label_rect, label, selected, input, memory, theme, disabled,
+        );
+        self.push_interactive(output)
+    }
+
+    /// Emits a labeled radio button with a label activation rectangle and assigns the value.
+    #[allow(clippy::too_many_arguments)]
+    pub fn radio_button_value_with_label_target<T: Copy + Eq>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label_rect: Rect,
+        label: impl Into<String>,
+        selected: &mut T,
+        value: T,
+        disabled: bool,
+    ) -> Response {
+        let mut response = self.radio_button_with_label_target(
+            key,
+            rect,
+            label_rect,
+            label,
+            *selected == value,
+            disabled,
+        );
+        if response_activated(&response) {
             *selected = value;
             response.state.selected = true;
             self.request_repaint(RepaintRequest::NextFrame);
@@ -915,7 +1004,7 @@ impl<'a> Ui<'a> {
         disabled: bool,
     ) -> Response {
         let mut response = self.toggle(key, rect, *on, disabled);
-        if response.clicked {
+        if response_activated(&response) {
             *on = !*on;
             response.state.selected = *on;
             self.request_repaint(RepaintRequest::NextFrame);
@@ -949,7 +1038,46 @@ impl<'a> Ui<'a> {
         disabled: bool,
     ) -> Response {
         let mut response = self.toggle_with_label(key, rect, label, *on, disabled);
-        if response.clicked {
+        if response_activated(&response) {
+            *on = !*on;
+            response.state.selected = *on;
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+        response
+    }
+
+    /// Emits a labeled toggle with a separate label activation rectangle.
+    pub fn toggle_with_label_target(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label_rect: Rect,
+        label: impl Into<String>,
+        on: bool,
+        disabled: bool,
+    ) -> Response {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = toggle_with_label_target_widget(
+            id, rect, label_rect, label, on, input, memory, theme, disabled,
+        );
+        self.push_interactive(output)
+    }
+
+    /// Emits a labeled toggle with a label activation rectangle and toggles the value.
+    pub fn toggle_value_with_label_target(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label_rect: Rect,
+        label: impl Into<String>,
+        on: &mut bool,
+        disabled: bool,
+    ) -> Response {
+        let mut response =
+            self.toggle_with_label_target(key, rect, label_rect, label, *on, disabled);
+        if response_activated(&response) {
             *on = !*on;
             response.state.selected = *on;
             self.request_repaint(RepaintRequest::NextFrame);
@@ -1259,6 +1387,10 @@ fn response_requests_followup_repaint(response: Response, input: &UiInput) -> bo
         || response.keyboard_activated
         || response.context_requested
         || (response.state.pressed && input.pointer.primary.pressed)
+}
+
+fn response_activated(response: &Response) -> bool {
+    response.clicked || response.keyboard_activated
 }
 
 fn text_caret_visible(time: TimeInfo) -> bool {

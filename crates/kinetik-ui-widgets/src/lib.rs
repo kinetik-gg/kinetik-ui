@@ -789,6 +789,12 @@ pub fn label(rect: Rect, text: impl Into<String>, theme: &Theme) -> WidgetOutput
     )
 }
 
+/// Returns the deterministic activation target for a choice control and its label.
+#[must_use]
+pub fn choice_label_target_rect(control_rect: Rect, label_rect: Rect) -> Rect {
+    control_rect.union(label_rect)
+}
+
 /// Emits a push button.
 pub fn button(
     id: WidgetId,
@@ -1364,7 +1370,34 @@ pub fn checkbox_with_label(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
-    let mut response = selectable(id, rect, input, memory, checked, disabled);
+    checkbox_with_label_target(
+        id,
+        rect,
+        Rect::ZERO,
+        label,
+        checked,
+        input,
+        memory,
+        theme,
+        disabled,
+    )
+}
+
+/// Emits a checkbox with a deterministic label activation target.
+#[allow(clippy::too_many_arguments)]
+pub fn checkbox_with_label_target(
+    id: WidgetId,
+    rect: Rect,
+    label_rect: Rect,
+    label: impl Into<String>,
+    checked: bool,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    let target_rect = choice_label_target_rect(rect, label_rect);
+    let mut response = selectable(id, target_rect, input, memory, checked, disabled);
     suppress_disabled_interaction_reporting(&mut response);
     let selected = clicked_toggle_state(checked, response.clicked);
     response.state.selected = selected;
@@ -1388,7 +1421,7 @@ pub fn checkbox_with_label(
             })],
         )
         .with_semantic(with_response_state(
-            checkbox_semantics(id, rect, label, selected, disabled),
+            checkbox_semantics(id, target_rect, label, selected, disabled),
             &response,
         )),
         &response,
@@ -1430,7 +1463,35 @@ pub fn radio_button_with_label(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
-    let mut output = checkbox_with_label(id, rect, label, selected, input, memory, theme, disabled);
+    radio_button_with_label_target(
+        id,
+        rect,
+        Rect::ZERO,
+        label,
+        selected,
+        input,
+        memory,
+        theme,
+        disabled,
+    )
+}
+
+/// Emits a radio button with a deterministic label activation target.
+#[allow(clippy::too_many_arguments)]
+pub fn radio_button_with_label_target(
+    id: WidgetId,
+    rect: Rect,
+    label_rect: Rect,
+    label: impl Into<String>,
+    selected: bool,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    let mut output = checkbox_with_label_target(
+        id, rect, label_rect, label, selected, input, memory, theme, disabled,
+    );
     let display_selected = clicked_select_state(
         selected,
         output
@@ -1493,7 +1554,34 @@ pub fn toggle_with_label(
     theme: &Theme,
     disabled: bool,
 ) -> WidgetOutput {
-    let mut response = selectable(id, rect, input, memory, on, disabled);
+    toggle_with_label_target(
+        id,
+        rect,
+        Rect::ZERO,
+        label,
+        on,
+        input,
+        memory,
+        theme,
+        disabled,
+    )
+}
+
+/// Emits a toggle control with a deterministic label activation target.
+#[allow(clippy::too_many_arguments)]
+pub fn toggle_with_label_target(
+    id: WidgetId,
+    rect: Rect,
+    label_rect: Rect,
+    label: impl Into<String>,
+    on: bool,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    let target_rect = choice_label_target_rect(rect, label_rect);
+    let mut response = selectable(id, target_rect, input, memory, on, disabled);
     suppress_disabled_interaction_reporting(&mut response);
     let selected = clicked_toggle_state(on, response.clicked);
     response.state.selected = selected;
@@ -1534,7 +1622,7 @@ pub fn toggle_with_label(
             ],
         )
         .with_semantic(with_response_state(
-            toggle_semantics(id, rect, label, selected, disabled),
+            toggle_semantics(id, target_rect, label, selected, disabled),
             &response,
         )),
         &response,
