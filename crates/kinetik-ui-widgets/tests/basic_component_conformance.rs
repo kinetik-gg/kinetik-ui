@@ -1,9 +1,10 @@
 //! Windowless conformance tests for the Stage 9 basic component set.
 
 use kinetik_ui_core::{
-    CursorShape, IconId, PlatformRequest, Point, PointerButtonState, PointerInput, Primitive, Rect,
-    RepaintRequest, Response, SemanticActionKind, SemanticNode, SemanticRole, SemanticValue, Theme,
-    UiInput, UiMemory, WidgetId, default_dark_theme,
+    CursorShape, IconId, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, PlatformRequest, Point,
+    PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, Response,
+    SemanticActionKind, SemanticNode, SemanticRole, SemanticValue, Theme, UiInput, UiMemory,
+    WidgetId, default_dark_theme,
 };
 use kinetik_ui_widgets::{
     Ui, WidgetOutput, button, checkbox_with_label, icon_button_with_label, label, panel,
@@ -27,6 +28,21 @@ fn pressed_at(x: f32, y: f32) -> UiInput {
 
 fn released_at(x: f32, y: f32) -> UiInput {
     pointer_input(x, y, false, false, true)
+}
+
+fn pressed_key(key: Key) -> UiInput {
+    UiInput {
+        keyboard: KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: vec![KeyEvent::new(
+                key,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            )],
+        },
+        ..UiInput::default()
+    }
 }
 
 fn stage9_rect() -> Rect {
@@ -911,4 +927,228 @@ fn stage9_value_helpers_reflect_same_frame_changes_and_request_repaint() {
                 && matches!(node.state.value, Some(SemanticValue::Number { current, .. }) if (current - 0.6).abs() < f32::EPSILON)
         })
     );
+}
+
+#[test]
+fn stage2_choice_value_helpers_activate_from_keyboard() {
+    let theme = default_dark_theme();
+    let rect = stage9_rect();
+
+    for key in [Key::Space, Key::Enter] {
+        let mut checkbox_value = false;
+        let mut memory = UiMemory::new();
+        memory.focus(WidgetId::from_key("root").child("checkbox"));
+        let input = pressed_key(key.clone());
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let response = ui.checkbox_value("checkbox", rect, &mut checkbox_value, false);
+        let output = ui.finish_output();
+        assert!(response.keyboard_activated);
+        assert!(response.state.selected);
+        assert!(checkbox_value);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut radio_value = 0_u8;
+        let mut memory = UiMemory::new();
+        memory.focus(WidgetId::from_key("root").child("radio"));
+        let input = pressed_key(key.clone());
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let response = ui.radio_button_value("radio", rect, &mut radio_value, 2, false);
+        let output = ui.finish_output();
+        assert!(response.keyboard_activated);
+        assert!(response.state.selected);
+        assert_eq!(radio_value, 2);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+
+        let mut toggle_value = false;
+        let mut memory = UiMemory::new();
+        memory.focus(WidgetId::from_key("root").child("toggle"));
+        let input = pressed_key(key);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        let response = ui.toggle_value("toggle", rect, &mut toggle_value, false);
+        let output = ui.finish_output();
+        assert!(response.keyboard_activated);
+        assert!(response.state.selected);
+        assert!(toggle_value);
+        assert_eq!(output.repaint, RepaintRequest::NextFrame);
+    }
+}
+
+#[test]
+fn stage2_disabled_choice_value_helpers_ignore_keyboard_activation() {
+    let theme = default_dark_theme();
+    let rect = stage9_rect();
+    let input = pressed_key(Key::Space);
+
+    let mut checkbox_value = false;
+    let mut memory = UiMemory::new();
+    memory.focus(WidgetId::from_key("root").child("checkbox"));
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    let response = ui.checkbox_value("checkbox", rect, &mut checkbox_value, true);
+    assert!(response.state.disabled);
+    assert!(!response.keyboard_activated);
+    assert!(!response.clicked);
+    assert!(!response.state.focused);
+    assert!(!checkbox_value);
+
+    let mut radio_value = 0_u8;
+    let mut memory = UiMemory::new();
+    memory.focus(WidgetId::from_key("root").child("radio"));
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    let response = ui.radio_button_value("radio", rect, &mut radio_value, 2, true);
+    assert!(response.state.disabled);
+    assert!(!response.keyboard_activated);
+    assert!(!response.clicked);
+    assert!(!response.state.focused);
+    assert_eq!(radio_value, 0);
+
+    let mut toggle_value = false;
+    let mut memory = UiMemory::new();
+    memory.focus(WidgetId::from_key("root").child("toggle"));
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    let response = ui.toggle_value("toggle", rect, &mut toggle_value, true);
+    assert!(response.state.disabled);
+    assert!(!response.keyboard_activated);
+    assert!(!response.clicked);
+    assert!(!response.state.focused);
+    assert!(!toggle_value);
+}
+
+#[test]
+fn stage2_choice_label_targets_activate_paired_controls_deterministically() {
+    let theme = default_dark_theme();
+    let control_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let label_rect = Rect::new(28.0, 0.0, 92.0, 20.0);
+    let press = pressed_at(40.0, 8.0);
+    let release = released_at(40.0, 8.0);
+
+    let mut checkbox_value = false;
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::new(&press, &mut memory, &theme);
+    ui.checkbox_value_with_label_target(
+        "checkbox",
+        control_rect,
+        label_rect,
+        "Enable snapping",
+        &mut checkbox_value,
+        false,
+    );
+    let mut ui = Ui::new(&release, &mut memory, &theme);
+    let response = ui.checkbox_value_with_label_target(
+        "checkbox",
+        control_rect,
+        label_rect,
+        "Enable snapping",
+        &mut checkbox_value,
+        false,
+    );
+    assert!(response.clicked);
+    assert!(response.state.selected);
+    assert!(checkbox_value);
+
+    let mut radio_value = 0_u8;
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::new(&press, &mut memory, &theme);
+    ui.radio_button_value_with_label_target(
+        "radio",
+        control_rect,
+        label_rect,
+        "Blend mode",
+        &mut radio_value,
+        2,
+        false,
+    );
+    let mut ui = Ui::new(&release, &mut memory, &theme);
+    let response = ui.radio_button_value_with_label_target(
+        "radio",
+        control_rect,
+        label_rect,
+        "Blend mode",
+        &mut radio_value,
+        2,
+        false,
+    );
+    assert!(response.clicked);
+    assert!(response.state.selected);
+    assert_eq!(radio_value, 2);
+
+    let mut toggle_value = false;
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::new(&press, &mut memory, &theme);
+    ui.toggle_value_with_label_target(
+        "toggle",
+        control_rect,
+        label_rect,
+        "Loop playback",
+        &mut toggle_value,
+        false,
+    );
+    let mut ui = Ui::new(&release, &mut memory, &theme);
+    let response = ui.toggle_value_with_label_target(
+        "toggle",
+        control_rect,
+        label_rect,
+        "Loop playback",
+        &mut toggle_value,
+        false,
+    );
+    assert!(response.clicked);
+    assert!(response.state.selected);
+    assert!(toggle_value);
+}
+
+#[test]
+fn stage2_disabled_choice_label_targets_do_not_activate() {
+    let theme = default_dark_theme();
+    let control_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let label_rect = Rect::new(28.0, 0.0, 92.0, 20.0);
+    let press = pressed_at(40.0, 8.0);
+
+    let mut checkbox_value = false;
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::new(&press, &mut memory, &theme);
+    let response = ui.checkbox_value_with_label_target(
+        "checkbox",
+        control_rect,
+        label_rect,
+        "Enable snapping",
+        &mut checkbox_value,
+        true,
+    );
+    assert!(response.state.disabled);
+    assert!(!response.state.pressed);
+    assert!(!response.clicked);
+    assert!(!checkbox_value);
+
+    let mut radio_value = 0_u8;
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::new(&press, &mut memory, &theme);
+    let response = ui.radio_button_value_with_label_target(
+        "radio",
+        control_rect,
+        label_rect,
+        "Blend mode",
+        &mut radio_value,
+        2,
+        true,
+    );
+    assert!(response.state.disabled);
+    assert!(!response.state.pressed);
+    assert!(!response.clicked);
+    assert_eq!(radio_value, 0);
+
+    let mut toggle_value = false;
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::new(&press, &mut memory, &theme);
+    let response = ui.toggle_value_with_label_target(
+        "toggle",
+        control_rect,
+        label_rect,
+        "Loop playback",
+        &mut toggle_value,
+        true,
+    );
+    assert!(response.state.disabled);
+    assert!(!response.state.pressed);
+    assert!(!response.clicked);
+    assert!(!toggle_value);
 }
