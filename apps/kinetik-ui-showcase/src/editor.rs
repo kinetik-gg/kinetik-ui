@@ -19,19 +19,19 @@ use kinetik_ui::render::{
 };
 use kinetik_ui::text::TextEditState;
 use kinetik_ui::widgets::{
-    Dock, DockChromeStyle, DockDropTarget, DockDropZone, DockInteractionPolicy, DockNode,
-    DockPlacement, DockSplitterContextActionKind, DockTabDrag, Frame, FrameId, FrameLayout,
-    FrameTab, GridColumns, GridLayout, Guide, ItemId, ListLayout, Menu, MenuBar, MenuBarMenu,
-    MenuBarMenuId, MenuBarOverlayRequest, MenuItem, MenuOverlay, ModalAction, ModalActionRole,
-    ModalDialog, ModalDialogOverlay, NumericScrubInputConfig, OverlayDismissal, OverlayId,
-    OverlayKind, OverlayStack, PanZoom, Panel, PanelId, PanelInstanceId, PanelInstancePolicy,
-    PanelInstanceSnapshot, PanelOpenActionMetadata, PanelOpenDecision, PanelRegistry,
-    PanelTypeCategory, PanelTypeDescriptor, PanelTypeId, PanelWorkspaceContext, PopoverPlacement,
-    PropertyGridLayout, PropertyGridRow, StatusBar, StatusItem, StatusItemId, StatusItemKind,
-    StatusProgress, TabStrip, TableColumn, TableLayout, Toolbar, ToolbarGroup, ToolbarGroupId,
-    ToolbarItem, ToolbarItemPresentation, TreeExpansion, TreeItem, TreeLayout, TreeModel, Ui,
-    ViewportComposition, ViewportFit, ViewportSurface, WorkspaceSnapshot,
-    classify_numeric_input_draft, frame_tabs, icon_button_semantics,
+    ColorFieldConfig, Dock, DockChromeStyle, DockDropTarget, DockDropZone, DockInteractionPolicy,
+    DockNode, DockPlacement, DockSplitterContextActionKind, DockTabDrag, Frame, FrameId,
+    FrameLayout, FrameTab, GridColumns, GridLayout, Guide, ItemId, ListLayout, Menu, MenuBar,
+    MenuBarMenu, MenuBarMenuId, MenuBarOverlayRequest, MenuItem, MenuOverlay, ModalAction,
+    ModalActionRole, ModalDialog, ModalDialogOverlay, NumericScrubInputConfig, OverlayDismissal,
+    OverlayId, OverlayKind, OverlayStack, PanZoom, Panel, PanelId, PanelInstanceId,
+    PanelInstancePolicy, PanelInstanceSnapshot, PanelOpenActionMetadata, PanelOpenDecision,
+    PanelRegistry, PanelTypeCategory, PanelTypeDescriptor, PanelTypeId, PanelWorkspaceContext,
+    PopoverPlacement, PropertyGridLayout, PropertyGridRow, StatusBar, StatusItem, StatusItemId,
+    StatusItemKind, StatusProgress, TabStrip, TableColumn, TableLayout, Toolbar, ToolbarGroup,
+    ToolbarGroupId, ToolbarItem, ToolbarItemPresentation, TreeExpansion, TreeItem, TreeLayout,
+    TreeModel, Ui, VectorScrubInputConfig, ViewportComposition, ViewportFit, ViewportSurface,
+    WorkspaceSnapshot, classify_numeric_input_draft, frame_tabs, icon_button_semantics,
     resolve_dock_splitter_context_actions_with_policy, resolve_frame_drop_zone_with_policy,
     solve_dock_layout, solve_dock_splitters_with_style,
 };
@@ -445,11 +445,11 @@ pub struct EditorShowcase {
     snap_enabled: bool,
     viewport_pan_zoom: PanZoom,
     asset_filter: TextEditState,
-    pos_x: TextEditState,
-    pos_y: TextEditState,
-    pos_z: TextEditState,
+    position: [f32; 3],
+    position_states: [TextEditState; 3],
     scale: TextEditState,
     mass: TextEditState,
+    material_color: Color,
     exposure: f32,
     roughness: f32,
     timeline: f32,
@@ -479,11 +479,15 @@ impl Default for EditorShowcase {
                 pan: Vec2::ZERO,
             },
             asset_filter: TextEditState::new("terrain"),
-            pos_x: TextEditState::new("12.0"),
-            pos_y: TextEditState::new("1.5"),
-            pos_z: TextEditState::new("-6.0"),
+            position: [12.0, 1.5, -6.0],
+            position_states: [
+                TextEditState::new("12.0"),
+                TextEditState::new("1.5"),
+                TextEditState::new("-6.0"),
+            ],
             scale: TextEditState::new("1.0"),
             mass: TextEditState::new("84.0"),
+            material_color: rgb(64, 118, 214),
             exposure: 0.58,
             roughness: 0.36,
             timeline: 0.41,
@@ -2289,30 +2293,15 @@ impl EditorShowcase {
     fn inspector_value(&mut self, ui: &mut Ui<'_>, id: ItemId, rect_value: Rect) {
         match id.raw() {
             2 => {
-                inspector_numeric_scrub(
-                    ui,
-                    "editor.inspector.pos-x",
+                ui.vector3_scrub_input(
+                    "editor.inspector.position",
                     rect_value,
-                    &mut self.pos_x,
-                    NumericScrubInputConfig::new(0.1).with_fine_step(0.01),
-                );
-            }
-            3 => {
-                inspector_numeric_scrub(
-                    ui,
-                    "editor.inspector.pos-y",
-                    rect_value,
-                    &mut self.pos_y,
-                    NumericScrubInputConfig::new(0.1).with_fine_step(0.01),
-                );
-            }
-            4 => {
-                inspector_numeric_scrub(
-                    ui,
-                    "editor.inspector.pos-z",
-                    rect_value,
-                    &mut self.pos_z,
-                    NumericScrubInputConfig::new(0.1).with_fine_step(0.01),
+                    "Position",
+                    &mut self.position,
+                    &mut self.position_states,
+                    VectorScrubInputConfig::new(
+                        NumericScrubInputConfig::new(0.1).with_fine_step(0.01),
+                    ),
                 );
             }
             5 => {
@@ -2343,6 +2332,18 @@ impl EditorShowcase {
                     0.0..=1.0,
                     false,
                 );
+            }
+            9 => {
+                let color = ui.color_field(
+                    "editor.inspector.material-color",
+                    rect_value,
+                    "Material color",
+                    self.material_color,
+                    ColorFieldConfig::default(),
+                );
+                if color.open_requested {
+                    "Material color picker requested".clone_into(&mut self.status);
+                }
             }
             11 => {
                 ui.toggle_value(
@@ -2970,9 +2971,7 @@ fn scene_model() -> TreeModel {
 fn inspector_rows() -> Vec<PropertyGridRow> {
     vec![
         PropertyGridRow::section(item_id(1), "Transform"),
-        PropertyGridRow::property(item_id(2), "Position X", 0),
-        PropertyGridRow::property(item_id(3), "Position Y", 0),
-        PropertyGridRow::property(item_id(4), "Position Z", 0),
+        PropertyGridRow::property(item_id(2), "Position", 0),
         PropertyGridRow::property(item_id(5), "Uniform Scale", 0),
         PropertyGridRow::section(item_id(6), "Rendering"),
         PropertyGridRow::property(item_id(7), "Exposure", 0),
@@ -3601,7 +3600,7 @@ mod tests {
         let theme = default_dark_theme();
 
         let mut ui = Ui::begin_frame(
-            editor_test_context(pointer_input_at(1290.0, 410.0, true, true, false)),
+            editor_test_context(pointer_input_at(1290.0, 362.0, true, true, false)),
             &mut memory,
             &theme,
         );
@@ -3609,7 +3608,7 @@ mod tests {
         let _ = ui.finish_output();
 
         let mut ui = Ui::begin_frame(
-            editor_test_context(pointer_input_at(1290.0, 410.0, false, false, true)),
+            editor_test_context(pointer_input_at(1290.0, 362.0, false, false, true)),
             &mut memory,
             &theme,
         );

@@ -3,7 +3,7 @@
 use std::{hash::Hash, time::Duration};
 
 use kinetik_ui_core::{
-    ActionContext, ActionDescriptor, ActionId, ActionInvocation, ActionSource, ClipId,
+    ActionContext, ActionDescriptor, ActionId, ActionInvocation, ActionSource, ClipId, Color,
     ComponentState, DropTargetResponse, FrameContext, FrameOutput, ImageId, Insets, PhysicalSize,
     PlatformRequest, Primitive, Rect, RepaintRequest, Response, ScaleFactor, ScrollResponse,
     SemanticNode, Size, TextPrimitive, Theme, TimeInfo, Transform, Ui as CoreUi, UiInput, UiMemory,
@@ -15,13 +15,14 @@ use kinetik_ui_text::{
 };
 
 use crate::{
-    CommandPaletteOverlay, DropdownCloseResult, DropdownItemId, DropdownOverlay, IconId,
-    IconLibrary, MenuOverlay, MultiLineTextFieldOutput, NumericInputOutput,
-    NumericScrubInputConfig, NumericScrubInputOutput, OverlayStack, PanelFrame, SearchFieldOutput,
-    SliderStep, TextFieldOutput, WidgetOutput, button as button_widget,
-    checkbox as checkbox_widget, checkbox_with_label as checkbox_with_label_widget,
+    ColorFieldConfig, ColorFieldOutput, CommandPaletteOverlay, DropdownCloseResult, DropdownItemId,
+    DropdownOverlay, IconId, IconLibrary, MenuOverlay, MultiLineTextFieldOutput,
+    NumericInputOutput, NumericScrubInputConfig, NumericScrubInputOutput, OverlayStack, PanelFrame,
+    SearchFieldOutput, SliderStep, TextFieldOutput, VectorScrubInputConfig, VectorScrubInputOutput,
+    WidgetOutput, button as button_widget, checkbox as checkbox_widget,
+    checkbox_with_label as checkbox_with_label_widget,
     checkbox_with_label_target as checkbox_with_label_target_widget,
-    icon_button as fallback_icon_button_widget,
+    color_field as color_field_widget, icon_button as fallback_icon_button_widget,
     icon_button_with_label as fallback_icon_button_with_label_widget,
     icon_button_with_library as icon_button_with_library_widget, image as image_widget,
     image_icon_button as image_icon_button_widget,
@@ -43,6 +44,8 @@ use crate::{
     text_field_with_text_layouts_and_caret_visibility as text_field_widget,
     toggle as toggle_widget, toggle_with_label as toggle_with_label_widget,
     toggle_with_label_target as toggle_with_label_target_widget,
+    vector_scrub_input_with_text_layouts_and_caret_visibility as vector_scrub_input_widget,
+    vector2_component_rects, vector3_component_rects, vector4_component_rects,
 };
 
 const TEXT_CARET_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -1481,6 +1484,89 @@ impl<'a> Ui<'a> {
         output
     }
 
+    /// Emits a Vec2 numeric scrub field.
+    pub fn vector2_scrub_input(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl AsRef<str>,
+        values: &mut [f32; 2],
+        states: &mut [TextEditState; 2],
+        config: VectorScrubInputConfig,
+    ) -> VectorScrubInputOutput<2> {
+        let component_rects = vector2_component_rects(rect, config.layout);
+        self.vector_scrub_input(
+            key,
+            rect,
+            label.as_ref(),
+            values,
+            states,
+            config,
+            component_rects,
+        )
+    }
+
+    /// Emits a Vec3 numeric scrub field.
+    pub fn vector3_scrub_input(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl AsRef<str>,
+        values: &mut [f32; 3],
+        states: &mut [TextEditState; 3],
+        config: VectorScrubInputConfig,
+    ) -> VectorScrubInputOutput<3> {
+        let component_rects = vector3_component_rects(rect, config.layout);
+        self.vector_scrub_input(
+            key,
+            rect,
+            label.as_ref(),
+            values,
+            states,
+            config,
+            component_rects,
+        )
+    }
+
+    /// Emits a Vec4 numeric scrub field.
+    pub fn vector4_scrub_input(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl AsRef<str>,
+        values: &mut [f32; 4],
+        states: &mut [TextEditState; 4],
+        config: VectorScrubInputConfig,
+    ) -> VectorScrubInputOutput<4> {
+        let component_rects = vector4_component_rects(rect, config.layout);
+        self.vector_scrub_input(
+            key,
+            rect,
+            label.as_ref(),
+            values,
+            states,
+            config,
+            component_rects,
+        )
+    }
+
+    /// Emits a backend-independent color swatch/picker entry field.
+    pub fn color_field(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: impl Into<String>,
+        color: Color,
+        config: ColorFieldConfig,
+    ) -> ColorFieldOutput {
+        let id = self.id(key);
+        let theme = self.theme;
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = color_field_widget(id, rect, label, color, config, input, memory, theme);
+        self.push_widget_output(&output.widget);
+        output
+    }
+
     /// Emits a search field.
     pub fn search_field(
         &mut self,
@@ -1509,6 +1595,63 @@ impl<'a> Ui<'a> {
         self.push_widget_output(&output.field.widget);
         self.request_text_caret_blink_repaint(&output.field.widget);
         self.request_repaint_if_text_visual_changed(&before, state);
+        output
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn vector_scrub_input<const N: usize>(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        label: &str,
+        values: &mut [f32; N],
+        states: &mut [TextEditState; N],
+        config: VectorScrubInputConfig,
+        component_rects: [crate::VectorComponentRect; N],
+    ) -> VectorScrubInputOutput<N> {
+        let id = self.id(key);
+        let theme = self.theme;
+        let before_text = states
+            .iter()
+            .map(TextVisualState::from_state)
+            .collect::<Vec<_>>();
+        let before_values = *values;
+        let caret_visible = text_caret_visible(self.time());
+        let text_layouts = self.text_layouts.as_deref_mut();
+        let (input, memory) = self.runtime.input_and_memory_mut();
+        let output = vector_scrub_input_widget(
+            id,
+            rect,
+            label,
+            values,
+            states,
+            config,
+            input,
+            memory,
+            theme,
+            text_layouts,
+            caret_visible,
+            component_rects,
+        );
+        self.push_widget_output(&output.widget);
+        for component in &output.components {
+            self.request_text_caret_blink_repaint(&component.input.field.widget);
+        }
+        if before_text
+            .iter()
+            .zip(states.iter())
+            .any(|(before, state)| *before != TextVisualState::from_state(state))
+            || before_values
+                .iter()
+                .zip(values.iter())
+                .any(|(before, after)| slider_value_changed(*before, *after))
+            || output
+                .components
+                .iter()
+                .any(|component| component.scrub_response.dragged)
+        {
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
         output
     }
 

@@ -3,19 +3,20 @@
 use std::collections::BTreeSet;
 
 use kinetik_ui_core::{
-    Key, KeyEvent, KeyState, KeyboardInput, Modifiers, Point, PointerButtonState, PointerInput,
-    Rect, SemanticActionKind, SemanticRole, SemanticValue, Size, UiInput, UiMemory, Vec2, WidgetId,
-    default_dark_theme,
+    Color, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, Point, PointerButtonState,
+    PointerInput, Rect, SemanticActionKind, SemanticRole, SemanticValue, Size, UiInput, UiMemory,
+    Vec2, WidgetId, default_dark_theme,
 };
 use kinetik_ui_text::TextEditState;
 use kinetik_ui_widgets::{
-    COMPONENT_METADATA, ComponentCategory, ComponentConformanceStatus, ComponentMetadata,
-    DropdownCloseReason, DropdownItem, DropdownItemId, DropdownModel, DropdownOverlay,
-    NumericScrubInputConfig, OverlayId, OverlayStack, PanelId, PopoverPlacement,
+    COMPONENT_METADATA, ColorFieldConfig, ComponentCategory, ComponentConformanceStatus,
+    ComponentMetadata, DropdownCloseReason, DropdownItem, DropdownItemId, DropdownModel,
+    DropdownOverlay, NumericScrubInputConfig, OverlayId, OverlayStack, PanelId, PopoverPlacement,
     PropertyGridLayout, PropertyGridRow, PropertyGridRowState, PropertyGridRowStatus,
-    PropertyGridStatusSeverity, RadioGroupChoice, SliderStep, TabStrip, Ui,
-    classify_numeric_input_draft, component_metadata, components_by_category, numeric_input,
-    numeric_scrub_input, slider_with_step,
+    PropertyGridStatusSeverity, RadioGroupChoice, SliderStep, TabStrip, Ui, VectorComponentLayout,
+    VectorScrubInputConfig, classify_numeric_input_draft, component_metadata,
+    components_by_category, numeric_input, numeric_scrub_input, slider_with_step,
+    vector4_component_rects,
 };
 
 fn entry(name: &str) -> &'static ComponentMetadata {
@@ -228,6 +229,17 @@ fn stage2_control_taxonomy_reports_honest_statuses() {
         ),
     ] {
         assert_entry(name, category, status);
+    }
+}
+
+#[test]
+fn stage7_vector_and_color_fields_report_implemented_inspector_statuses() {
+    for name in ["Vector2Field", "Vector3Field", "Vector4Field", "ColorField"] {
+        assert_entry(
+            name,
+            ComponentCategory::Inspector,
+            ComponentConformanceStatus::Implemented,
+        );
     }
 }
 
@@ -526,6 +538,65 @@ fn stage2_property_grid_partial_status_is_backed_by_layout_and_row_state_metadat
         PropertyGridStatusSeverity::Warning
     );
     assert!(!rows[2].is_editable());
+}
+
+#[test]
+fn stage7_vector_and_color_statuses_are_backed_by_public_contracts() {
+    let rect = Rect::new(0.0, 0.0, 220.0, 24.0);
+    let layout = VectorComponentLayout::new(4.0, 10.0, 2.0, 20.0);
+    let components = vector4_component_rects(rect, layout);
+    assert_eq!(components[0].label, "X");
+    assert_eq!(components[3].label, "W");
+    assert!(
+        components
+            .windows(2)
+            .all(|pair| pair[0].rect.max_x() <= pair[1].rect.x)
+    );
+
+    let theme = default_dark_theme();
+    let mut vector_values = [0.0, 1.0, 2.0];
+    let mut vector_states = [
+        TextEditState::new("0"),
+        TextEditState::new("1"),
+        TextEditState::new("2"),
+    ];
+    let mut memory = UiMemory::new();
+    let input = UiInput::default();
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    let vector = ui.vector3_scrub_input(
+        "position",
+        rect,
+        "Position",
+        &mut vector_values,
+        &mut vector_states,
+        VectorScrubInputConfig::new(NumericScrubInputConfig::new(0.1)),
+    );
+    let frame = ui.finish_output();
+    assert_eq!(vector.components.len(), 3);
+    assert!(frame.semantics.nodes().iter().any(|node| {
+        node.role == SemanticRole::TextField && node.label.as_deref() == Some("Position Z")
+    }));
+
+    let mut memory = UiMemory::new();
+    let input = UiInput::default();
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    let color = ui.color_field(
+        "material-color",
+        rect,
+        "Material color",
+        Color::rgba(0.2, 0.4, 0.6, 1.0),
+        ColorFieldConfig::default(),
+    );
+    let frame = ui.finish_output();
+    assert!(!color.open_requested);
+    assert!(frame.semantics.nodes().iter().any(|node| {
+        node.role == SemanticRole::Button
+            && node.label.as_deref() == Some("Material color")
+            && node
+                .actions
+                .iter()
+                .any(|action| action.kind == SemanticActionKind::Open)
+    }));
 }
 
 #[test]
