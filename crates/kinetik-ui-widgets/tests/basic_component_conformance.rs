@@ -1,16 +1,16 @@
 //! Windowless conformance tests for the Stage 9 basic component set.
 
 use kinetik_ui_core::{
-    CursorShape, IconId, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, PlatformRequest, Point,
-    PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, Response,
-    SemanticActionKind, SemanticNode, SemanticRole, SemanticValue, Theme, UiInput, UiMemory, Vec2,
-    WidgetId, default_dark_theme,
+    Brush, Color, CursorShape, IconId, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
+    PlatformRequest, Point, PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest,
+    Response, SemanticActionKind, SemanticNode, SemanticRole, SemanticValue, Theme, UiInput,
+    UiMemory, Vec2, WidgetId, default_dark_theme,
 };
 use kinetik_ui_text::TextEditState;
 use kinetik_ui_widgets::{
-    NumericScrubInputConfig, RadioGroupChoice, SliderStep, Ui, WidgetOutput, button,
-    checkbox_with_label, icon_button_with_label, label, panel, radio_button_with_label,
-    slider_with_label, toggle_with_label,
+    ColorFieldConfig, NumericScrubInputConfig, RadioGroupChoice, SliderStep, Ui, WidgetOutput,
+    button, checkbox_with_label, color_field, icon_button_with_label, label, panel,
+    radio_button_with_label, slider_with_label, toggle_with_label,
 };
 
 fn pointer_input(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInput {
@@ -474,6 +474,122 @@ fn stage9_basic_components_emit_stable_primitive_categories() {
             .iter()
             .take(panel.primitives.len().saturating_sub(1))
             .all(|primitive| matches!(primitive, Primitive::Shadow(_)))
+    );
+}
+
+#[test]
+fn color_field_emits_swatch_semantics_and_open_intent() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("albedo");
+    let rect = Rect::new(0.0, 0.0, 180.0, 24.0);
+    let color = Color::rgba(0.25, 0.5, 0.75, 1.0);
+    let mut memory = UiMemory::new();
+
+    let _ = color_field(
+        id,
+        rect,
+        "Albedo",
+        color,
+        ColorFieldConfig::default(),
+        &pressed_at(8.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+    let output = color_field(
+        id,
+        rect,
+        "Albedo",
+        color,
+        ColorFieldConfig::default(),
+        &released_at(8.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+
+    assert!(output.response.clicked);
+    assert!(output.open_requested);
+    assert_eq!(output.color, color);
+    assert!(matches!(
+        output.widget.primitives.as_slice(),
+        [Primitive::Rect(_), Primitive::Rect(_), Primitive::Text(_)]
+    ));
+    assert!(output.widget.primitives.iter().any(|primitive| {
+        matches!(
+            primitive,
+            Primitive::Rect(rect)
+                if rect.fill == Some(Brush::Solid(color))
+                    && rect.rect.width > 0.0
+                    && rect.rect.height > 0.0
+        )
+    }));
+
+    let node = &output.widget.semantics[0];
+    assert_eq!(node.role, SemanticRole::Button);
+    assert_eq!(node.label.as_deref(), Some("Albedo"));
+    assert!(node.focusable);
+    assert!(!node.state.disabled);
+    assert!(
+        node.actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::Open)
+    );
+    assert_eq!(
+        node.state.value,
+        Some(SemanticValue::Text(
+            "rgba(0.250, 0.500, 0.750, 1.000)".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn disabled_and_read_only_color_fields_do_not_request_open() {
+    let theme = default_dark_theme();
+    let rect = Rect::new(0.0, 0.0, 180.0, 24.0);
+    let color = Color::rgba(1.2, f32::NAN, 0.25, 1.5);
+
+    let disabled = color_field(
+        WidgetId::from_key("disabled-color"),
+        rect,
+        "Disabled color",
+        color,
+        ColorFieldConfig::default().disabled(true),
+        &pressed_at(8.0, 8.0),
+        &mut UiMemory::new(),
+        &theme,
+    );
+    assert!(!disabled.open_requested);
+    assert_eq!(disabled.color, Color::rgba(1.0, 0.0, 0.25, 1.0));
+    assert!(disabled.response.state.disabled);
+    assert!(!disabled.response.state.pressed);
+    assert!(disabled.widget.semantics[0].state.disabled);
+    assert!(!disabled.widget.semantics[0].focusable);
+    assert!(
+        !disabled.widget.semantics[0]
+            .actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::Open)
+    );
+    assert!(disabled.widget.platform_requests.is_empty());
+
+    let read_only = color_field(
+        WidgetId::from_key("read-only-color"),
+        rect,
+        "Read-only color",
+        Color::rgba(0.1, 0.2, 0.3, 1.0),
+        ColorFieldConfig::default().read_only(true),
+        &pressed_at(8.0, 8.0),
+        &mut UiMemory::new(),
+        &theme,
+    );
+    assert!(read_only.read_only);
+    assert!(!read_only.open_requested);
+    assert!(read_only.response.state.disabled);
+    assert!(read_only.widget.semantics[0].state.disabled);
+    assert!(
+        !read_only.widget.semantics[0]
+            .actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::Open)
     );
 }
 

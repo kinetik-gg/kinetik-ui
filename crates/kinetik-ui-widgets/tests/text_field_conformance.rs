@@ -12,9 +12,10 @@ use kinetik_ui_core::{
 };
 use kinetik_ui_text::{TextEditState, TextLayoutStore, TextSelection};
 use kinetik_ui_widgets::{
-    NumericInputDraft, NumericScrubInputConfig, Ui, classify_numeric_input_draft,
-    multi_line_text_field, numeric_input, numeric_scrub_input, restore_text_draft, text_field,
-    text_field_with_text_layouts,
+    NumericInputDraft, NumericScrubInputConfig, Ui, VectorComponentLayout, VectorScrubInputConfig,
+    classify_numeric_input_draft, multi_line_text_field, numeric_input, numeric_scrub_input,
+    restore_text_draft, text_field, text_field_with_text_layouts, vector2_scrub_input,
+    vector3_component_rects, vector3_scrub_input, vector4_scrub_input,
 };
 
 fn root_child(key: &str) -> WidgetId {
@@ -250,6 +251,16 @@ fn render_text_wrapper(case: TextWrapperCase, disabled: bool) -> kinetik_ui_core
 
 fn has_semantic_action(node: &kinetik_ui_core::SemanticNode, kind: &SemanticActionKind) -> bool {
     node.actions.iter().any(|action| action.kind == *kind)
+}
+
+fn assert_f32_slice_eq(actual: &[f32], expected: &[f32]) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (*actual - *expected).abs() < f32::EPSILON,
+            "expected {actual} to equal {expected}"
+        );
+    }
 }
 
 #[test]
@@ -1694,6 +1705,125 @@ fn disabled_and_read_only_numeric_scrub_inputs_do_not_mutate_or_take_ownership()
     assert_eq!(read_only_memory.text_input_owner(), None);
     assert!(read_only.input.field.widget.semantics[0].state.disabled);
     assert!(!read_only.input.field.widget.semantics[0].focusable);
+}
+
+#[test]
+fn vector3_scrub_input_updates_components_independently() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("position");
+    let rect = Rect::new(0.0, 0.0, 240.0, 24.0);
+    let component_rects = vector3_component_rects(rect, VectorComponentLayout::default());
+    let y_center = component_rects[1].value_rect.center();
+    let config =
+        VectorScrubInputConfig::new(NumericScrubInputConfig::new(0.5).with_range(-10.0, 10.0));
+    let mut values = [1.0, 2.0, 3.0];
+    let mut states = [
+        TextEditState::new("1"),
+        TextEditState::new("2"),
+        TextEditState::new("3"),
+    ];
+    let mut memory = UiMemory::new();
+
+    let _ = vector3_scrub_input(
+        id,
+        rect,
+        "Position",
+        &mut values,
+        &mut states,
+        config,
+        &pressed_at(y_center.x, y_center.y),
+        &mut memory,
+        &theme,
+    );
+    let output = vector3_scrub_input(
+        id,
+        rect,
+        "Position",
+        &mut values,
+        &mut states,
+        config,
+        &scrub_drag_at(y_center.x + 8.0, y_center.y, 4.0, Modifiers::default()),
+        &mut memory,
+        &theme,
+    );
+
+    assert!(output.scrubbed);
+    assert!(output.value_changed);
+    assert_eq!(output.components.len(), 3);
+    assert_f32_slice_eq(&values, &[1.0, 4.0, 3.0]);
+    assert_eq!(states[0].text, "1");
+    assert_eq!(states[1].text, "4");
+    assert_eq!(states[2].text, "3");
+    assert_eq!(
+        output
+            .widget
+            .semantics
+            .iter()
+            .filter_map(|node| node.label.as_deref())
+            .collect::<Vec<_>>(),
+        vec!["Position X", "Position Y", "Position Z"]
+    );
+    assert_eq!(
+        output.widget.semantics[1].state.value,
+        Some(SemanticValue::Number {
+            current: 4.0,
+            min: -10.0,
+            max: 10.0,
+        })
+    );
+}
+
+#[test]
+fn disabled_and_read_only_vector_scrub_inputs_propagate_to_all_components() {
+    let theme = default_dark_theme();
+    let rect = Rect::new(0.0, 0.0, 240.0, 24.0);
+
+    let mut disabled_values = [1.0, 2.0];
+    let mut disabled_states = [TextEditState::new("1"), TextEditState::new("2")];
+    let disabled = vector2_scrub_input(
+        WidgetId::from_key("disabled-vector"),
+        rect,
+        "Offset",
+        &mut disabled_values,
+        &mut disabled_states,
+        VectorScrubInputConfig::new(NumericScrubInputConfig::new(1.0)).disabled(true),
+        &scrub_drag_at(8.0, 4.0, 8.0, Modifiers::default()),
+        &mut UiMemory::new(),
+        &theme,
+    );
+    assert!(!disabled.scrubbed);
+    assert_f32_slice_eq(&disabled_values, &[1.0, 2.0]);
+    assert!(
+        disabled.widget.semantics.iter().all(|node| {
+            node.state.disabled && !node.focusable && node.label.as_deref().is_some()
+        })
+    );
+
+    let mut read_only_values = [1.0, 2.0, 3.0, 4.0];
+    let mut read_only_states = [
+        TextEditState::new("1"),
+        TextEditState::new("2"),
+        TextEditState::new("3"),
+        TextEditState::new("4"),
+    ];
+    let read_only = vector4_scrub_input(
+        WidgetId::from_key("read-only-vector"),
+        rect,
+        "Color",
+        &mut read_only_values,
+        &mut read_only_states,
+        VectorScrubInputConfig::new(NumericScrubInputConfig::new(1.0)).read_only(true),
+        &pressed_at(8.0, 4.0),
+        &mut UiMemory::new(),
+        &theme,
+    );
+    assert!(!read_only.scrubbed);
+    assert_f32_slice_eq(&read_only_values, &[1.0, 2.0, 3.0, 4.0]);
+    assert!(
+        read_only.widget.semantics.iter().all(|node| {
+            node.state.disabled && !node.focusable && node.label.as_deref().is_some()
+        })
+    );
 }
 
 #[test]
