@@ -8,9 +8,10 @@ use kinetik_ui_core::{
 };
 use kinetik_ui_text::TextEditState;
 use kinetik_ui_widgets::{
-    ColorFieldConfig, NumericScrubInputConfig, RadioGroupChoice, SliderStep, Ui, WidgetOutput,
-    button, checkbox_with_label, color_field, icon_button_with_label, label, panel,
-    radio_button_with_label, slider_with_label, toggle_with_label,
+    AssetSlotAsset, AssetSlotConfig, ColorFieldConfig, DropdownItem, DropdownItemId, DropdownModel,
+    NumericScrubInputConfig, RadioGroupChoice, SelectFieldConfig, SliderStep, Ui, WidgetOutput,
+    asset_slot_field, button, checkbox_with_label, color_field, icon_button_with_label, label,
+    panel, radio_button_with_label, select_field, slider_with_label, toggle_with_label,
 };
 
 fn pointer_input(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInput {
@@ -42,6 +43,18 @@ fn dragged_at(x: f32, y: f32, delta_x: f32) -> UiInput {
 
 fn released_at(x: f32, y: f32) -> UiInput {
     pointer_input(x, y, false, false, true)
+}
+
+fn double_released_at(x: f32, y: f32) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(Point::new(x, y)),
+            primary: PointerButtonState::new(false, false, true),
+            click_count: 2,
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
 }
 
 fn pressed_key(key: Key) -> UiInput {
@@ -590,6 +603,218 @@ fn disabled_and_read_only_color_fields_do_not_request_open() {
             .actions
             .iter()
             .any(|action| action.kind == SemanticActionKind::Open)
+    );
+}
+
+#[test]
+fn select_field_uses_dropdown_presentation_and_open_intent() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("material-select");
+    let rect = Rect::new(0.0, 0.0, 180.0, 24.0);
+    let mut model = DropdownModel::from_items([
+        DropdownItem::new(DropdownItemId::from_raw(7), "Matte"),
+        DropdownItem::new(DropdownItemId::from_raw(8), "Glossy"),
+    ]);
+    assert!(model.set_selected_id(DropdownItemId::from_raw(8)));
+    let mut memory = UiMemory::new();
+
+    let _ = select_field(
+        id,
+        rect,
+        "Material",
+        &model,
+        SelectFieldConfig::new("Choose material").open(true),
+        &pressed_at(8.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+    let output = select_field(
+        id,
+        rect,
+        "Material",
+        &model,
+        SelectFieldConfig::new("Choose material").open(true),
+        &released_at(8.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+
+    assert_eq!(output.presentation.label, "Glossy");
+    assert_eq!(
+        output.presentation.selected_id,
+        Some(DropdownItemId::from_raw(8))
+    );
+    assert!(output.presentation.selected());
+    assert!(output.presentation.open);
+    assert!(output.open_requested);
+    assert_eq!(output.widget.semantics[0].role, SemanticRole::Button);
+    assert_eq!(
+        output.widget.semantics[0].label.as_deref(),
+        Some("Material")
+    );
+    assert_eq!(output.widget.semantics[0].state.expanded, Some(true));
+    assert_eq!(
+        output.widget.semantics[0].state.value,
+        Some(SemanticValue::Text("Glossy".to_owned()))
+    );
+    assert!(
+        output.widget.semantics[0]
+            .actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::Open)
+    );
+}
+
+#[test]
+fn select_field_empty_all_disabled_and_read_only_states_are_non_invokable() {
+    let theme = default_dark_theme();
+    let rect = Rect::new(0.0, 0.0, 180.0, 24.0);
+    let disabled_model = DropdownModel::from_items([
+        DropdownItem::new(DropdownItemId::from_raw(1), "Box").with_enabled(false),
+        DropdownItem::new(DropdownItemId::from_raw(2), "Sphere").with_enabled(false),
+    ]);
+
+    for (key, model, config) in [
+        (
+            "empty-select",
+            DropdownModel::new(),
+            SelectFieldConfig::new("None"),
+        ),
+        (
+            "all-disabled-select",
+            disabled_model,
+            SelectFieldConfig::new("Collider"),
+        ),
+        (
+            "read-only-select",
+            DropdownModel::from_items([DropdownItem::new(DropdownItemId::from_raw(3), "Mesh")]),
+            SelectFieldConfig::new("Collider").read_only(true),
+        ),
+    ] {
+        let output = select_field(
+            WidgetId::from_key(key),
+            rect,
+            "Collider",
+            &model,
+            config,
+            &released_at(8.0, 8.0),
+            &mut UiMemory::new(),
+            &theme,
+        );
+
+        assert!(!output.open_requested);
+        assert!(output.response.state.disabled);
+        assert!(output.presentation.placeholder);
+        assert!(output.presentation.disabled);
+        assert!(output.widget.semantics[0].state.disabled);
+        assert!(!output.widget.semantics[0].focusable);
+    }
+}
+
+#[test]
+fn asset_slot_field_reports_empty_filled_disabled_read_only_and_drop_states() {
+    let theme = default_dark_theme();
+    let rect = Rect::new(0.0, 0.0, 220.0, 24.0);
+    let asset = AssetSlotAsset::new("asset://night_sky", "night_sky")
+        .with_kind("texture")
+        .with_icon(IconId::from_raw(3));
+
+    let empty = asset_slot_field(
+        WidgetId::from_key("empty-asset"),
+        rect,
+        "Texture",
+        None,
+        AssetSlotConfig::new("None").accepts_drop(true),
+        &UiInput::default(),
+        &mut UiMemory::new(),
+        &theme,
+    );
+    assert!(!empty.filled);
+    assert!(!empty.pick_requested);
+    assert!(!empty.open_requested);
+    assert!(empty.drop_target.is_some());
+    assert_eq!(
+        empty.widget.semantics[0].state.value,
+        Some(SemanticValue::Text("None".to_owned()))
+    );
+
+    let id = WidgetId::from_key("filled-asset");
+    let mut memory = UiMemory::new();
+    let _ = asset_slot_field(
+        id,
+        rect,
+        "Texture",
+        Some(&asset),
+        AssetSlotConfig::default(),
+        &pressed_at(8.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+    let filled = asset_slot_field(
+        id,
+        rect,
+        "Texture",
+        Some(&asset),
+        AssetSlotConfig::default(),
+        &double_released_at(8.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+    assert!(filled.filled);
+    assert!(filled.open_requested);
+    assert!(!filled.pick_requested);
+    assert!(filled.widget.semantics[0].state.selected);
+    assert!(
+        filled.widget.semantics[0]
+            .actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::Open)
+    );
+
+    let disabled = asset_slot_field(
+        WidgetId::from_key("disabled-asset"),
+        rect,
+        "Texture",
+        Some(&asset),
+        AssetSlotConfig::default().disabled(true),
+        &pressed_at(8.0, 8.0),
+        &mut UiMemory::new(),
+        &theme,
+    );
+    assert!(!disabled.pick_requested);
+    assert!(disabled.response.state.disabled);
+    assert!(disabled.widget.semantics[0].state.disabled);
+
+    let read_only = asset_slot_field(
+        WidgetId::from_key("read-only-asset"),
+        rect,
+        "Texture",
+        Some(&asset),
+        AssetSlotConfig::default().read_only(true),
+        &pressed_at(8.0, 8.0),
+        &mut UiMemory::new(),
+        &theme,
+    );
+    assert!(read_only.read_only);
+    assert!(!read_only.pick_requested);
+    assert!(read_only.response.state.disabled);
+
+    let mut drop_memory = UiMemory::new();
+    drop_memory.start_drag(WidgetId::from_key("asset-source"));
+    let dropped = asset_slot_field(
+        WidgetId::from_key("drop-asset"),
+        rect,
+        "Texture",
+        None,
+        AssetSlotConfig::default().accepts_drop(true),
+        &released_at(8.0, 8.0),
+        &mut drop_memory,
+        &theme,
+    );
+    assert!(dropped.drop_received);
+    assert_eq!(
+        dropped.drop_target.and_then(|drop| drop.source),
+        Some(WidgetId::from_key("asset-source"))
     );
 }
 

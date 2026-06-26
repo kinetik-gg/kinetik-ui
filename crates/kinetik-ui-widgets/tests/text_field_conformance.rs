@@ -12,10 +12,10 @@ use kinetik_ui_core::{
 };
 use kinetik_ui_text::{TextEditState, TextLayoutStore, TextSelection};
 use kinetik_ui_widgets::{
-    NumericInputDraft, NumericScrubInputConfig, Ui, VectorComponentLayout, VectorScrubInputConfig,
-    classify_numeric_input_draft, multi_line_text_field, numeric_input, numeric_scrub_input,
-    restore_text_draft, text_field, text_field_with_text_layouts, vector2_scrub_input,
-    vector3_component_rects, vector3_scrub_input, vector4_scrub_input,
+    NumericInputDraft, NumericScrubInputConfig, PathFieldConfig, Ui, VectorComponentLayout,
+    VectorScrubInputConfig, classify_numeric_input_draft, multi_line_text_field, numeric_input,
+    numeric_scrub_input, path_field, restore_text_draft, text_field, text_field_with_text_layouts,
+    vector2_scrub_input, vector3_component_rects, vector3_scrub_input, vector4_scrub_input,
 };
 
 fn root_child(key: &str) -> WidgetId {
@@ -73,6 +73,22 @@ fn input_at(x: f32, y: f32, down: bool, pressed: bool, released: bool) -> UiInpu
 
 fn pressed_at(x: f32, y: f32) -> UiInput {
     input_at(x, y, true, true, false)
+}
+
+fn released_at(x: f32, y: f32) -> UiInput {
+    input_at(x, y, false, false, true)
+}
+
+fn double_released_at(x: f32, y: f32) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(Point::new(x, y)),
+            primary: PointerButtonState::new(false, false, true),
+            click_count: 2,
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
 }
 
 fn scrub_drag_at(x: f32, y: f32, delta_x: f32, modifiers: Modifiers) -> UiInput {
@@ -377,6 +393,154 @@ fn focused_text_field_receives_text_and_unfocused_field_ignores_it() {
     assert_eq!(focused_state.text, "focused typed");
     assert!(!unfocused_output.changed);
     assert_eq!(unfocused_state.text, "unfocused");
+}
+
+#[test]
+fn path_field_preserves_text_input_and_emits_only_browse_or_open_intents() {
+    let theme = default_dark_theme();
+    let id = WidgetId::from_key("script-path");
+    let text_id = id.child("text");
+    let rect = Rect::new(0.0, 0.0, 240.0, 24.0);
+    let mut memory = UiMemory::new();
+    memory.focus(text_id);
+    memory.set_text_input_owner(text_id);
+    let mut state = TextEditState::new("scripts/player.rs");
+    state.set_caret(state.text.len());
+
+    let typed = path_field(
+        id,
+        rect,
+        "Script path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &UiInput {
+            text_events: vec![TextInputEvent::Commit(".bak".to_owned())],
+            ..UiInput::default()
+        },
+        &mut memory,
+        &theme,
+    );
+    assert!(typed.changed);
+    assert_eq!(state.text, "scripts/player.rs.bak");
+    assert!(!typed.browse_requested);
+    assert!(!typed.open_requested);
+    assert!(
+        typed
+            .widget
+            .semantics
+            .iter()
+            .any(|node| node.role == SemanticRole::TextField
+                && node.label.as_deref() == Some("Script path")
+                && node.state.value
+                    == Some(SemanticValue::Text("scripts/player.rs.bak".to_owned())))
+    );
+
+    let _ = path_field(
+        id,
+        rect,
+        "Script path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &pressed_at(218.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+    let browse = path_field(
+        id,
+        rect,
+        "Script path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &released_at(218.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+    assert!(browse.browse_requested);
+    assert!(!browse.open_requested);
+    assert!(browse.browse_response.is_some());
+    assert!(browse.widget.semantics.iter().any(|node| {
+        node.role == SemanticRole::Button
+            && node.label.as_deref() == Some("Browse Script path")
+            && node
+                .actions
+                .iter()
+                .any(|action| action.kind == SemanticActionKind::Open)
+    }));
+
+    let _ = path_field(
+        id,
+        rect,
+        "Script path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &pressed_at(8.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+    let open = path_field(
+        id,
+        rect,
+        "Script path",
+        &mut state,
+        PathFieldConfig::default().open(true),
+        &double_released_at(8.0, 8.0),
+        &mut memory,
+        &theme,
+    );
+    assert!(open.open_requested);
+    assert!(!open.browse_requested);
+}
+
+#[test]
+fn disabled_and_read_only_path_fields_do_not_edit_or_emit_browse_intents() {
+    let theme = default_dark_theme();
+    let rect = Rect::new(0.0, 0.0, 240.0, 24.0);
+
+    for (key, config) in [
+        ("disabled-path", PathFieldConfig::default().disabled(true)),
+        ("read-only-path", PathFieldConfig::default().read_only(true)),
+    ] {
+        let id = WidgetId::from_key(key);
+        let mut memory = UiMemory::new();
+        memory.focus(id.child("text"));
+        memory.set_text_input_owner(id.child("text"));
+        let mut state = TextEditState::new("assets/file.png");
+        state.set_caret(state.text.len());
+        let output = path_field(
+            id,
+            rect,
+            "Texture path",
+            &mut state,
+            config,
+            &UiInput {
+                text_events: vec![TextInputEvent::Commit("x".to_owned())],
+                ..released_at(218.0, 8.0)
+            },
+            &mut memory,
+            &theme,
+        );
+
+        assert_eq!(state.text, "assets/file.png");
+        assert!(!output.changed);
+        assert!(!output.browse_requested);
+        assert!(!output.open_requested);
+        assert!(
+            output
+                .field
+                .widget
+                .response
+                .expect("text response")
+                .state
+                .disabled
+        );
+        assert!(
+            output
+                .browse_response
+                .expect("browse response")
+                .state
+                .disabled
+        );
+    }
 }
 
 #[test]
