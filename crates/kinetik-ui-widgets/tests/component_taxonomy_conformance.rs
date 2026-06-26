@@ -12,11 +12,12 @@ use kinetik_ui_widgets::{
     COMPONENT_METADATA, ColorFieldConfig, ComponentCategory, ComponentConformanceStatus,
     ComponentMetadata, DropdownCloseReason, DropdownItem, DropdownItemId, DropdownModel,
     DropdownOverlay, NumericScrubInputConfig, OverlayId, OverlayStack, PanelId, PopoverPlacement,
-    PropertyGridLayout, PropertyGridRow, PropertyGridRowState, PropertyGridRowStatus,
-    PropertyGridStatusSeverity, RadioGroupChoice, SliderStep, TabStrip, Ui, VectorComponentLayout,
-    VectorScrubInputConfig, classify_numeric_input_draft, component_metadata,
-    components_by_category, numeric_input, numeric_scrub_input, slider_with_step,
-    vector4_component_rects,
+    PropertyGridAffordanceLayout, PropertyGridLayout, PropertyGridRow, PropertyGridRowAffordances,
+    PropertyGridRowState, PropertyGridRowStatus, PropertyGridStatusSeverity, RadioGroupChoice,
+    SliderStep, TabStrip, Ui, VectorComponentLayout, VectorScrubInputConfig,
+    classify_numeric_input_draft, component_metadata, components_by_category, numeric_input,
+    numeric_scrub_input, property_grid_row_affordance_controls, property_grid_row_affordance_rects,
+    slider_with_step, vector4_component_rects,
 };
 
 fn entry(name: &str) -> &'static ComponentMetadata {
@@ -235,6 +236,7 @@ fn stage2_control_taxonomy_reports_honest_statuses() {
 #[test]
 fn stage7_vector_and_color_fields_report_implemented_inspector_statuses() {
     for name in [
+        "PropertyAffordanceControls",
         "Vector2Field",
         "Vector3Field",
         "Vector4Field",
@@ -546,6 +548,60 @@ fn stage2_property_grid_partial_status_is_backed_by_layout_and_row_state_metadat
         PropertyGridStatusSeverity::Warning
     );
     assert!(!rows[2].is_editable());
+}
+
+#[test]
+fn property_grid_partial_status_includes_affordance_request_contracts() {
+    assert_entry(
+        "PropertyGrid",
+        ComponentCategory::Inspector,
+        ComponentConformanceStatus::Partial,
+    );
+
+    let theme = default_dark_theme();
+    let row = PropertyGridRow::property(kinetik_ui_widgets::ItemId::from_raw(7), "Exposure", 0)
+        .with_status(PropertyGridRowStatus::warning("Preview range exceeded"))
+        .with_resettable(true, false)
+        .with_keyframeable(true, true);
+    let rects = property_grid_row_affordance_rects(
+        &row,
+        Rect::new(0.0, 0.0, 120.0, 20.0),
+        PropertyGridAffordanceLayout::new(18.0, 4.0),
+    );
+    let output = property_grid_row_affordance_controls(
+        WidgetId::from_key("exposure-affordances"),
+        &row,
+        rects,
+        &UiInput::default(),
+        &mut UiMemory::new(),
+        &theme,
+    );
+
+    assert_eq!(
+        row.state.affordances,
+        PropertyGridRowAffordances::neutral()
+            .with_reset(true, false)
+            .with_keyframe(true, true)
+    );
+    assert!(row.can_request_reset());
+    assert!(row.can_request_keyframe_toggle());
+    assert!(rects.value_rect.width < 120.0);
+    assert_eq!(output.widget.semantics.len(), 2);
+    assert!(output.widget.semantics.iter().any(|node| {
+        node.role == SemanticRole::IconButton
+            && node.label.as_deref() == Some("Reset Exposure to default")
+            && node
+                .actions
+                .iter()
+                .any(|action| action.kind == SemanticActionKind::Invoke)
+    }));
+    assert!(output.widget.semantics.iter().any(|node| {
+        node.label.as_deref() == Some("Toggle keyframe for Exposure") && node.state.selected
+    }));
+    assert_eq!(
+        row.state.status.presentation(),
+        PropertyGridStatusSeverity::Warning.presentation()
+    );
 }
 
 #[test]
