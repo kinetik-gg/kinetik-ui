@@ -34,6 +34,141 @@ pub enum PropertyGridRowKind {
     },
 }
 
+/// Validation or help status severity for a property-grid row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PropertyGridStatusSeverity {
+    /// No status is attached to the row.
+    #[default]
+    None,
+    /// Informational row status.
+    Info,
+    /// Non-blocking warning row status.
+    Warning,
+    /// Blocking error row status.
+    Error,
+}
+
+/// Data-only validation or help status for a property-grid row.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PropertyGridRowStatus {
+    /// Status severity.
+    pub severity: PropertyGridStatusSeverity,
+    /// Optional status message owned by the application.
+    pub message: Option<String>,
+}
+
+impl PropertyGridRowStatus {
+    /// Creates a row status with the given severity and no message.
+    #[must_use]
+    pub const fn severity(severity: PropertyGridStatusSeverity) -> Self {
+        Self {
+            severity,
+            message: None,
+        }
+    }
+
+    /// Creates an informational row status.
+    #[must_use]
+    pub fn info(message: impl Into<String>) -> Self {
+        Self::severity(PropertyGridStatusSeverity::Info).with_message(message)
+    }
+
+    /// Creates a warning row status.
+    #[must_use]
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self::severity(PropertyGridStatusSeverity::Warning).with_message(message)
+    }
+
+    /// Creates an error row status.
+    #[must_use]
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::severity(PropertyGridStatusSeverity::Error).with_message(message)
+    }
+
+    /// Returns this status with an attached message.
+    #[must_use]
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = Some(message.into());
+        self
+    }
+
+    /// Returns true when this status represents a blocking error.
+    #[must_use]
+    pub const fn is_blocking_error(&self) -> bool {
+        matches!(self.severity, PropertyGridStatusSeverity::Error)
+    }
+}
+
+/// Data-only form state metadata for a property-grid row.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PropertyGridRowState {
+    /// True when the row should not accept interaction.
+    pub disabled: bool,
+    /// True when the row value should be presented as non-editable.
+    pub read_only: bool,
+    /// True when the row represents a required property.
+    pub required: bool,
+    /// Optional help text owned by the application.
+    pub help_text: Option<String>,
+    /// Optional validation or help status owned by the application.
+    pub status: PropertyGridRowStatus,
+}
+
+impl PropertyGridRowState {
+    /// Creates neutral row state metadata.
+    #[must_use]
+    pub const fn neutral() -> Self {
+        Self {
+            disabled: false,
+            read_only: false,
+            required: false,
+            help_text: None,
+            status: PropertyGridRowStatus::severity(PropertyGridStatusSeverity::None),
+        }
+    }
+
+    /// Returns this metadata with disabled state set.
+    #[must_use]
+    pub const fn with_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Returns this metadata with read-only state set.
+    #[must_use]
+    pub const fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    /// Returns this metadata with required state set.
+    #[must_use]
+    pub const fn with_required(mut self, required: bool) -> Self {
+        self.required = required;
+        self
+    }
+
+    /// Returns this metadata with help text attached.
+    #[must_use]
+    pub fn with_help_text(mut self, help_text: impl Into<String>) -> Self {
+        self.help_text = Some(help_text.into());
+        self
+    }
+
+    /// Returns this metadata with status attached.
+    #[must_use]
+    pub fn with_status(mut self, status: PropertyGridRowStatus) -> Self {
+        self.status = status;
+        self
+    }
+
+    /// Returns true when this metadata carries a blocking error status.
+    #[must_use]
+    pub const fn has_blocking_error(&self) -> bool {
+        self.status.is_blocking_error()
+    }
+}
+
 /// One property-grid row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PropertyGridRow {
@@ -43,6 +178,8 @@ pub struct PropertyGridRow {
     pub label: String,
     /// Row kind.
     pub kind: PropertyGridRowKind,
+    /// Data-only row state metadata.
+    pub state: PropertyGridRowState,
 }
 
 impl PropertyGridRow {
@@ -53,6 +190,7 @@ impl PropertyGridRow {
             id,
             label: label.into(),
             kind: PropertyGridRowKind::Section,
+            state: PropertyGridRowState::neutral(),
         }
     }
 
@@ -63,7 +201,68 @@ impl PropertyGridRow {
             id,
             label: label.into(),
             kind: PropertyGridRowKind::Property { depth },
+            state: PropertyGridRowState::neutral(),
         }
+    }
+
+    /// Returns this row with state metadata attached.
+    #[must_use]
+    pub fn with_state(mut self, state: PropertyGridRowState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Returns this row with disabled state set.
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: bool) -> Self {
+        self.state = self.state.with_disabled(disabled);
+        self
+    }
+
+    /// Returns this row with read-only state set.
+    #[must_use]
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.state = self.state.with_read_only(read_only);
+        self
+    }
+
+    /// Returns this row with required state set.
+    #[must_use]
+    pub fn with_required(mut self, required: bool) -> Self {
+        self.state = self.state.with_required(required);
+        self
+    }
+
+    /// Returns this row with help text attached.
+    #[must_use]
+    pub fn with_help_text(mut self, help_text: impl Into<String>) -> Self {
+        self.state = self.state.with_help_text(help_text);
+        self
+    }
+
+    /// Returns this row with status attached.
+    #[must_use]
+    pub fn with_status(mut self, status: PropertyGridRowStatus) -> Self {
+        self.state = self.state.with_status(status);
+        self
+    }
+
+    /// Returns true when this row can accept interaction.
+    #[must_use]
+    pub fn is_interactable(&self) -> bool {
+        matches!(self.kind, PropertyGridRowKind::Property { .. }) && !self.state.disabled
+    }
+
+    /// Returns true when this row represents an editable property value.
+    #[must_use]
+    pub fn is_editable(&self) -> bool {
+        self.is_interactable() && !self.state.read_only
+    }
+
+    /// Returns true when this row carries a blocking error status.
+    #[must_use]
+    pub fn has_blocking_error(&self) -> bool {
+        self.state.has_blocking_error()
     }
 }
 
@@ -322,7 +521,10 @@ impl PropertyGridLayout {
 
 #[cfg(test)]
 mod tests {
-    use super::{PropertyGridError, PropertyGridLayout, PropertyGridRow};
+    use super::{
+        PropertyGridError, PropertyGridLayout, PropertyGridRow, PropertyGridRowState,
+        PropertyGridRowStatus, PropertyGridStatusSeverity,
+    };
     use crate::ItemId;
     use kinetik_ui_core::Rect;
 
@@ -345,8 +547,11 @@ mod tests {
     #[test]
     fn property_grid_validates_duplicate_row_ids() {
         let rows = vec![
-            PropertyGridRow::property(ItemId::from_raw(1), "A", 0),
-            PropertyGridRow::property(ItemId::from_raw(1), "B", 0),
+            PropertyGridRow::property(ItemId::from_raw(1), "A", 0)
+                .with_status(PropertyGridRowStatus::warning("Check value")),
+            PropertyGridRow::property(ItemId::from_raw(1), "B", 0)
+                .with_disabled(true)
+                .with_required(true),
         ];
 
         assert_eq!(
@@ -355,6 +560,73 @@ mod tests {
                 id: ItemId::from_raw(1)
             })
         );
+    }
+
+    #[test]
+    fn property_grid_row_metadata_defaults_to_neutral_state() {
+        let section = PropertyGridRow::section(ItemId::from_raw(1), "Transform");
+        let property = PropertyGridRow::property(ItemId::from_raw(2), "Position", 0);
+
+        assert_eq!(section.state, PropertyGridRowState::neutral());
+        assert_eq!(property.state, PropertyGridRowState::neutral());
+        assert!(!section.is_interactable());
+        assert!(!section.is_editable());
+        assert!(property.is_interactable());
+        assert!(property.is_editable());
+        assert!(!property.has_blocking_error());
+    }
+
+    #[test]
+    fn property_grid_row_builder_attaches_state_metadata() {
+        let row = PropertyGridRow::property(ItemId::from_raw(1), "Exposure", 0)
+            .with_disabled(true)
+            .with_read_only(true)
+            .with_required(true)
+            .with_help_text("Use scene-referred values")
+            .with_status(PropertyGridRowStatus::warning(
+                "Value is above preview range",
+            ));
+
+        assert!(row.state.disabled);
+        assert!(row.state.read_only);
+        assert!(row.state.required);
+        assert_eq!(
+            row.state.help_text.as_deref(),
+            Some("Use scene-referred values")
+        );
+        assert_eq!(
+            row.state.status.severity,
+            PropertyGridStatusSeverity::Warning
+        );
+        assert_eq!(
+            row.state.status.message.as_deref(),
+            Some("Value is above preview range")
+        );
+        assert!(!row.is_interactable());
+        assert!(!row.is_editable());
+        assert!(!row.has_blocking_error());
+    }
+
+    #[test]
+    fn property_grid_row_helpers_reflect_editability_and_error_state() {
+        let read_only =
+            PropertyGridRow::property(ItemId::from_raw(1), "Script", 0).with_read_only(true);
+        let disabled =
+            PropertyGridRow::property(ItemId::from_raw(2), "Collider", 0).with_disabled(true);
+        let error = PropertyGridRow::property(ItemId::from_raw(3), "Mass", 0)
+            .with_status(PropertyGridRowStatus::error("Mass must be positive"));
+        let info = PropertyGridRow::property(ItemId::from_raw(4), "Material", 0)
+            .with_status(PropertyGridRowStatus::info("Inherited from parent"));
+
+        assert!(read_only.is_interactable());
+        assert!(!read_only.is_editable());
+        assert!(!read_only.has_blocking_error());
+        assert!(!disabled.is_interactable());
+        assert!(!disabled.is_editable());
+        assert!(error.is_interactable());
+        assert!(error.is_editable());
+        assert!(error.has_blocking_error());
+        assert!(!info.has_blocking_error());
     }
 
     #[test]
@@ -383,6 +655,32 @@ mod tests {
         assert_approx(rects[1].value_rect.x, 108.0);
         assert_approx(rects[2].label_rect.x, 22.0);
         assert_approx(rects[2].value_rect.x, 120.0);
+    }
+
+    #[test]
+    fn property_grid_metadata_does_not_change_row_rectangles() {
+        let plain = rows();
+        let annotated = vec![
+            PropertyGridRow::section(ItemId::from_raw(1), "Transform")
+                .with_help_text("Object transform"),
+            PropertyGridRow::property(ItemId::from_raw(2), "Position", 0)
+                .with_required(true)
+                .with_status(PropertyGridRowStatus::severity(
+                    PropertyGridStatusSeverity::Info,
+                )),
+            PropertyGridRow::property(ItemId::from_raw(3), "X", 1)
+                .with_status(PropertyGridRowStatus::warning("Outside guide range")),
+            PropertyGridRow::property(ItemId::from_raw(4), "Y", 1)
+                .with_read_only(true)
+                .with_status(PropertyGridRowStatus::error("Missing linked property")),
+        ];
+        let layout = PropertyGridLayout::new(20.0, 24.0, 90.0, 8.0, 12.0);
+        let bounds = Rect::new(10.0, 100.0, 220.0, 84.0);
+
+        assert_eq!(
+            layout.visible_row_rects(bounds, &plain, 0.0, 0),
+            layout.visible_row_rects(bounds, &annotated, 0.0, 0)
+        );
     }
 
     #[test]
