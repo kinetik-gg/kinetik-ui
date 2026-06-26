@@ -1,12 +1,13 @@
 //! Windowless menu, context menu, dropdown, tooltip, popover, and palette integration tests.
 
 use kinetik_ui_core::{
-    ActionContext, ActionDescriptor, ActionId, ActionQueue, ActionSource, Point, Rect, Size,
-    UiInput, UiMemory, WidgetId, default_dark_theme,
+    ActionContext, ActionDescriptor, ActionId, ActionQueue, ActionSource, Point, Rect,
+    RepaintRequest, Size, UiInput, UiMemory, WidgetId, default_dark_theme,
 };
 use kinetik_ui_widgets::{
-    CommandPaletteOverlay, Menu, MenuOverlay, OverlayDismissal, OverlayEntry, OverlayId,
-    OverlayKind, OverlayStack, PopoverPlacement, PopoverRequest, Ui, place_popover,
+    CommandPaletteOverlay, DropdownCloseReason, DropdownItem, DropdownItemId, DropdownModel,
+    DropdownOverlay, Menu, MenuOverlay, OverlayDismissal, OverlayEntry, OverlayId, OverlayKind,
+    OverlayStack, PopoverPlacement, PopoverRequest, Ui, place_popover,
 };
 
 fn action(id: &str, label: &str) -> ActionDescriptor {
@@ -15,6 +16,10 @@ fn action(id: &str, label: &str) -> ActionDescriptor {
 
 fn overlay_id(raw: u64) -> OverlayId {
     OverlayId::from_raw(raw)
+}
+
+fn dropdown_item(raw: u64, label: &str) -> DropdownItem {
+    DropdownItem::new(DropdownItemId::from_raw(raw), label)
 }
 
 #[test]
@@ -132,6 +137,47 @@ fn dropdown_popover_and_tooltip_use_overlay_stack_placement_and_dismissal() {
             )
         )]
     );
+}
+
+#[test]
+fn ui_dropdown_selection_helper_closes_overlay_and_requests_repaint() {
+    let theme = default_dark_theme();
+    let input = UiInput::default();
+    let mut memory = UiMemory::new();
+    let trigger = WidgetId::from_key("view-mode-trigger");
+    let mut dropdown = DropdownOverlay::anchored(
+        overlay_id(50),
+        trigger,
+        DropdownModel::from_items([dropdown_item(1, "Source"), dropdown_item(2, "Composite")]),
+        Rect::new(220.0, 12.0, 72.0, 24.0),
+        Size::new(120.0, 80.0),
+        PopoverPlacement::Below,
+        4.0,
+        true,
+        Rect::new(0.0, 0.0, 300.0, 180.0),
+        OverlayDismissal::OutsideClickOrEscape,
+    );
+    let mut stack = OverlayStack::new();
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+
+    dropdown.open_in(&mut stack);
+    let close = ui
+        .select_dropdown_overlay_item(&mut dropdown, DropdownItemId::from_raw(2), &mut stack)
+        .expect("enabled dropdown item selection closes overlay");
+    let output = ui.finish_output();
+
+    assert_eq!(
+        close.reason,
+        DropdownCloseReason::Selection(DropdownItemId::from_raw(2))
+    );
+    assert_eq!(close.selected_id, Some(DropdownItemId::from_raw(2)));
+    assert_eq!(close.focus_return, trigger);
+    assert!(stack.entries().is_empty());
+    assert_eq!(
+        dropdown.model.selected_id(),
+        Some(DropdownItemId::from_raw(2))
+    );
+    assert_eq!(output.repaint, RepaintRequest::NextFrame);
 }
 
 #[test]
