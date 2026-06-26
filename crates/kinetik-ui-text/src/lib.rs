@@ -1654,6 +1654,112 @@ mod tests {
     }
 
     #[test]
+    fn backspace_and_delete_handle_ascii_boundaries_and_edges() {
+        let mut backspace = TextEditState::new("abc");
+        backspace.set_caret(2);
+
+        backspace.backspace();
+
+        assert_eq!(backspace.text, "ac");
+        assert_eq!(backspace.caret(), 1);
+        assert!(backspace.undo());
+        assert_eq!(backspace.text, "abc");
+
+        let mut at_start = TextEditState::new("abc");
+        at_start.set_caret(0);
+        at_start.backspace();
+        assert_eq!(at_start.text, "abc");
+        assert_eq!(at_start.caret(), 0);
+        assert!(!at_start.undo());
+
+        let mut delete = TextEditState::new("abc");
+        delete.set_caret(1);
+
+        delete.delete_forward();
+
+        assert_eq!(delete.text, "ac");
+        assert_eq!(delete.caret(), 1);
+        assert!(delete.undo());
+        assert_eq!(delete.text, "abc");
+
+        let mut at_end = TextEditState::new("abc");
+        at_end.set_caret(3);
+        at_end.delete_forward();
+        assert_eq!(at_end.text, "abc");
+        assert_eq!(at_end.caret(), 3);
+        assert!(!at_end.undo());
+    }
+
+    #[test]
+    fn backspace_and_delete_use_utf8_character_boundaries() {
+        let mut backspace = TextEditState::new("aéz");
+        backspace.set_caret("aé".len());
+
+        backspace.backspace();
+
+        assert_eq!(backspace.text, "az");
+        assert_eq!(backspace.caret(), 1);
+        assert!(backspace.text.is_char_boundary(backspace.caret()));
+
+        let mut delete = TextEditState::new("aéz");
+        delete.set_caret(1);
+
+        delete.delete_forward();
+
+        assert_eq!(delete.text, "az");
+        assert_eq!(delete.caret(), 1);
+        assert!(delete.text.is_char_boundary(delete.caret()));
+    }
+
+    #[test]
+    fn backspace_and_delete_remove_selection_in_either_direction() {
+        let mut backspace = TextEditState::new("abcd");
+        backspace.set_selection(TextSelection::new(3, 1));
+
+        backspace.backspace();
+
+        assert_eq!(backspace.text, "ad");
+        assert_eq!(backspace.caret(), 1);
+        assert!(backspace.undo());
+        assert_eq!(backspace.text, "abcd");
+
+        let mut delete = TextEditState::new("abcd");
+        delete.set_selection(TextSelection::new(1, 3));
+
+        delete.delete_forward();
+
+        assert_eq!(delete.text, "ad");
+        assert_eq!(delete.caret(), 1);
+        assert!(delete.undo());
+        assert_eq!(delete.text, "abcd");
+    }
+
+    #[test]
+    fn committed_and_pasted_text_replace_selection_with_local_undo() {
+        let mut committed = TextEditState::new("abcd");
+        committed.set_selection(TextSelection::new(1, 3));
+
+        committed.insert_text("XY");
+
+        assert_eq!(committed.text, "aXYd");
+        assert_eq!(committed.caret(), 3);
+        assert!(committed.undo());
+        assert_eq!(committed.text, "abcd");
+        assert_eq!(committed.selection, TextSelection::new(1, 3));
+
+        let mut pasted = TextEditState::new("abcd");
+        pasted.set_selection(TextSelection::new(3, 1));
+
+        pasted.paste_text("é");
+
+        assert_eq!(pasted.text, "aéd");
+        assert_eq!(pasted.caret(), "aé".len());
+        assert!(pasted.undo());
+        assert_eq!(pasted.text, "abcd");
+        assert_eq!(pasted.selection, TextSelection::new(3, 1));
+    }
+
+    #[test]
     fn clamps_public_selection_before_replacing_text() {
         let mut state = TextEditState::new("éa");
         state.selection = TextSelection::new(1, 99);
