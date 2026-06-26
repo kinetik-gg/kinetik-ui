@@ -1020,6 +1020,14 @@ impl TextEditState {
         }
     }
 
+    /// Extends the selection left by one character boundary.
+    pub fn extend_left(&mut self) {
+        if let Some(previous) = previous_boundary(&self.text, self.selection.active) {
+            self.selection.active = previous;
+            self.selection = self.selection.clamp_to_text(&self.text);
+        }
+    }
+
     /// Moves the caret right.
     pub fn move_right(&mut self) {
         if !self.selection.is_caret() {
@@ -1032,14 +1040,34 @@ impl TextEditState {
         }
     }
 
+    /// Extends the selection right by one character boundary.
+    pub fn extend_right(&mut self) {
+        if let Some(next) = next_boundary(&self.text, self.selection.active) {
+            self.selection.active = next;
+            self.selection = self.selection.clamp_to_text(&self.text);
+        }
+    }
+
     /// Moves the caret to the start of the buffer.
     pub fn move_home(&mut self) {
         self.set_caret(0);
     }
 
+    /// Extends the selection to the start of the buffer.
+    pub fn extend_home(&mut self) {
+        self.selection.active = 0;
+        self.selection = self.selection.clamp_to_text(&self.text);
+    }
+
     /// Moves the caret to the end of the buffer.
     pub fn move_end(&mut self) {
         self.set_caret(self.text.len());
+    }
+
+    /// Extends the selection to the end of the buffer.
+    pub fn extend_end(&mut self) {
+        self.selection.active = self.text.len();
+        self.selection = self.selection.clamp_to_text(&self.text);
     }
 
     /// Applies text and key events from a frame.
@@ -1070,6 +1098,10 @@ impl TextEditState {
             match event.key {
                 Key::Backspace => self.backspace(),
                 Key::Delete => self.delete_forward(),
+                Key::ArrowLeft if event.modifiers.shift => self.extend_left(),
+                Key::ArrowRight if event.modifiers.shift => self.extend_right(),
+                Key::Home if event.modifiers.shift => self.extend_home(),
+                Key::End if event.modifiers.shift => self.extend_end(),
                 Key::ArrowLeft => self.move_left(),
                 Key::ArrowRight => self.move_right(),
                 Key::Home => self.move_home(),
@@ -1676,6 +1708,173 @@ mod tests {
         assert_eq!(state.caret(), 0);
         state.move_end();
         assert_eq!(state.caret(), 4);
+    }
+
+    #[test]
+    fn shift_movement_extends_selection_from_existing_anchor() {
+        let mut state = TextEditState::new("abcd");
+        let shift = Modifiers::new(true, false, false, false);
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowLeft,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(4, 3));
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowLeft,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(4, 2));
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowRight,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(4, 3));
+    }
+
+    #[test]
+    fn shift_right_at_end_boundary_keeps_selection_at_buffer_end() {
+        let mut state = TextEditState::new("aéz");
+        let shift = Modifiers::new(true, false, false, false);
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowRight,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+
+        assert_eq!(state.text, "aéz");
+        assert_eq!(state.selection, TextSelection::new(4, 4));
+        assert!(state.text.is_char_boundary(state.selection.active));
+    }
+
+    #[test]
+    fn shift_home_and_end_extend_selection_to_buffer_edges() {
+        let mut state = TextEditState::new("abcd");
+        let shift = Modifiers::new(true, false, false, false);
+        state.set_caret(2);
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(Key::Home, KeyState::Pressed, shift, false)],
+        );
+        assert_eq!(state.selection, TextSelection::new(2, 0));
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(Key::End, KeyState::Pressed, shift, false)],
+        );
+        assert_eq!(state.selection, TextSelection::new(2, 4));
+    }
+
+    #[test]
+    fn shift_movement_clamps_to_utf8_boundaries_and_buffer_edges() {
+        let mut state = TextEditState::new("aéz");
+        let shift = Modifiers::new(true, false, false, false);
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowLeft,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(4, 3));
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowLeft,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(4, 1));
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowLeft,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(4, 0));
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowLeft,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(4, 0));
+        assert!(state.text.is_char_boundary(state.selection.active));
+    }
+
+    #[test]
+    fn unmodified_movement_collapses_shift_selection_to_expected_endpoint() {
+        let mut state = TextEditState::new("abcd");
+        let shift = Modifiers::new(true, false, false, false);
+
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowLeft,
+                KeyState::Pressed,
+                shift,
+                false,
+            )],
+        );
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowLeft,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(3, 3));
+
+        state.set_selection(TextSelection::new(1, 3));
+        state.apply_input(
+            &[],
+            &[KeyEvent::new(
+                Key::ArrowRight,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            )],
+        );
+        assert_eq!(state.selection, TextSelection::new(3, 3));
     }
 
     #[test]
