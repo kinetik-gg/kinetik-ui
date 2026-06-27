@@ -1080,6 +1080,76 @@ mod node_graph_conformance {
     }
 
     #[test]
+    fn hit_testing_rejects_duplicate_frame_ids_before_returning_frame_targets() {
+        let duplicate = NodeFrameId::from_raw(7);
+        let graph = NodeGraphDescriptor {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            frames: vec![
+                NodeFrameDescriptor::new(
+                    duplicate,
+                    "First",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+                NodeFrameDescriptor::new(
+                    duplicate,
+                    "Second",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+            ],
+            groups: Vec::new(),
+        };
+
+        assert_eq!(
+            graph.hit_test(
+                NodeGraphViewport::new(
+                    Rect::new(0.0, 0.0, 100.0, 100.0),
+                    NodeGraphPanZoom::default()
+                ),
+                Point::new(10.0, 10.0)
+            ),
+            Err(NodeGraphHitTestError::Validation(
+                NodeGraphValidationError::DuplicateFrameId { id: duplicate }
+            ))
+        );
+    }
+
+    #[test]
+    fn hit_testing_rejects_duplicate_group_ids_before_returning_group_targets() {
+        let duplicate = NodeGroupId::from_raw(8);
+        let graph = NodeGraphDescriptor {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: vec![
+                NodeGroupDescriptor::new(
+                    duplicate,
+                    "First",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+                NodeGroupDescriptor::new(
+                    duplicate,
+                    "Second",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+            ],
+        };
+
+        assert_eq!(
+            graph.hit_test(
+                NodeGraphViewport::new(
+                    Rect::new(0.0, 0.0, 100.0, 100.0),
+                    NodeGraphPanZoom::default()
+                ),
+                Point::new(10.0, 10.0)
+            ),
+            Err(NodeGraphHitTestError::Validation(
+                NodeGraphValidationError::DuplicateGroupId { id: duplicate }
+            ))
+        );
+    }
+
+    #[test]
     fn static_view_emits_deterministic_clipped_primitive_order() {
         let graph = static_graph();
         let style = NodeGraphStyle {

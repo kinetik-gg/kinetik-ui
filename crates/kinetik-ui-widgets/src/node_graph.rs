@@ -420,10 +420,12 @@ impl NodeGraphDescriptor {
     ///
     /// # Errors
     ///
-    /// Returns a structured validation error when node IDs are duplicated or a
-    /// node contains duplicate port IDs.
+    /// Returns a structured validation error when node, frame, or group IDs are
+    /// duplicated, or a node contains duplicate port IDs.
     pub fn validate(&self) -> Result<(), NodeGraphValidationError> {
-        validate_node_graph_descriptors(&self.nodes)
+        validate_node_graph_descriptors(&self.nodes)?;
+        validate_node_graph_frame_descriptors(&self.frames)?;
+        validate_node_graph_group_descriptors(&self.groups)
     }
 
     /// Resolves edge endpoints against node and port descriptors.
@@ -485,6 +487,16 @@ pub enum NodeGraphValidationError {
         /// Duplicated port ID.
         port: PortId,
     },
+    /// The graph contains a duplicate frame ID.
+    DuplicateFrameId {
+        /// Duplicated frame ID.
+        id: NodeFrameId,
+    },
+    /// The graph contains a duplicate group ID.
+    DuplicateGroupId {
+        /// Duplicated group ID.
+        id: NodeGroupId,
+    },
 }
 
 /// Validates deterministic descriptor invariants for nodes.
@@ -515,6 +527,32 @@ pub fn validate_node_graph_descriptors(
                     port: port.id,
                 });
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_node_graph_frame_descriptors(
+    frames: &[NodeFrameDescriptor],
+) -> Result<(), NodeGraphValidationError> {
+    let mut seen_frames = BTreeSet::new();
+    for frame in frames {
+        if !seen_frames.insert(frame.id) {
+            return Err(NodeGraphValidationError::DuplicateFrameId { id: frame.id });
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_node_graph_group_descriptors(
+    groups: &[NodeGroupDescriptor],
+) -> Result<(), NodeGraphValidationError> {
+    let mut seen_groups = BTreeSet::new();
+    for group in groups {
+        if !seen_groups.insert(group.id) {
+            return Err(NodeGraphValidationError::DuplicateGroupId { id: group.id });
         }
     }
 
