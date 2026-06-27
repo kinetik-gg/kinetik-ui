@@ -8,11 +8,11 @@ mod node_graph_conformance {
         EdgeDescriptor, EdgeEndpointRole, EdgeId, EdgeResolutionError, GraphPoint, GraphRect,
         GraphVector, NodeDescriptor, NodeFrameDescriptor, NodeFrameId, NodeGraphDescriptor,
         NodeGraphEmissionError, NodeGraphGridStyle, NodeGraphHitTarget, NodeGraphHitTestConfig,
-        NodeGraphHitTestError, NodeGraphPanZoom, NodeGraphPortState, NodeGraphStaticView,
-        NodeGraphStyle, NodeGraphValidationError, NodeGraphViewport, NodeGroupDescriptor,
-        NodeGroupId, NodeId, PortCompatibilityError, PortDescriptor, PortDirection, PortEndpoint,
-        PortId, PortTypeId, ports_are_compatible, validate_node_graph_descriptors,
-        validate_port_compatibility,
+        NodeGraphHitTestError, NodeGraphPanZoom, NodeGraphPortState, NodeGraphSelection,
+        NodeGraphSelectionOperation, NodeGraphSelectionTarget, NodeGraphStaticView, NodeGraphStyle,
+        NodeGraphValidationError, NodeGraphViewport, NodeGroupDescriptor, NodeGroupId, NodeId,
+        PortCompatibilityError, PortDescriptor, PortDirection, PortEndpoint, PortId, PortTypeId,
+        ports_are_compatible, validate_node_graph_descriptors, validate_port_compatibility,
     };
 
     fn assert_close(actual: f32, expected: f32) {
@@ -1147,6 +1147,177 @@ mod node_graph_conformance {
                 NodeGraphValidationError::DuplicateGroupId { id: duplicate }
             ))
         );
+    }
+
+    #[test]
+    fn selection_replace_from_hit_normalizes_node_title_and_body_targets() {
+        let node = NodeId::from_raw(10);
+        let edge = EdgeId::from_raw(20);
+        let selection = NodeGraphSelection::new()
+            .replace(NodeGraphSelectionTarget::Edge(edge))
+            .replace_from_hit(NodeGraphHitTarget::NodeTitle(node));
+
+        assert_eq!(
+            selection.selected(),
+            vec![NodeGraphSelectionTarget::Node(node)]
+        );
+        assert_eq!(
+            selection.active(),
+            Some(NodeGraphSelectionTarget::Node(node))
+        );
+
+        let body_selection = selection.replace_from_hit(NodeGraphHitTarget::NodeBody(node));
+        assert_eq!(
+            body_selection.selected(),
+            vec![NodeGraphSelectionTarget::Node(node)]
+        );
+    }
+
+    #[test]
+    fn selection_toggles_node_edge_and_port_targets() {
+        let node = NodeGraphSelectionTarget::Node(NodeId::from_raw(1));
+        let edge = NodeGraphSelectionTarget::Edge(EdgeId::from_raw(2));
+        let port = NodeGraphSelectionTarget::Port(PortEndpoint::new(
+            NodeId::from_raw(3),
+            PortId::from_raw(4),
+        ));
+
+        let selection = NodeGraphSelection::new()
+            .toggle(node)
+            .toggle(edge)
+            .toggle(port);
+
+        assert!(selection.contains(node));
+        assert!(selection.contains(edge));
+        assert!(selection.contains(port));
+        assert_eq!(selection.active(), Some(port));
+
+        let selection = selection.toggle(edge).toggle(port).toggle(node);
+        assert!(selection.is_empty());
+        assert_eq!(selection.active(), Some(node));
+    }
+
+    #[test]
+    fn selection_extend_remove_and_operation_application_are_deterministic() {
+        let node = NodeGraphSelectionTarget::Node(NodeId::from_raw(3));
+        let edge = NodeGraphSelectionTarget::Edge(EdgeId::from_raw(1));
+        let port = NodeGraphSelectionTarget::Port(PortEndpoint::new(
+            NodeId::from_raw(2),
+            PortId::from_raw(9),
+        ));
+        let missing = NodeGraphSelectionTarget::Node(NodeId::from_raw(99));
+
+        let selection = NodeGraphSelection::new()
+            .apply(NodeGraphSelectionOperation::Extend(port))
+            .apply(NodeGraphSelectionOperation::Extend(node))
+            .apply(NodeGraphSelectionOperation::Extend(edge))
+            .apply(NodeGraphSelectionOperation::Remove(missing));
+
+        assert_eq!(selection.selected(), vec![node, edge, port]);
+        assert_eq!(selection.active(), Some(edge));
+
+        let selection = selection
+            .apply(NodeGraphSelectionOperation::Remove(edge))
+            .apply(NodeGraphSelectionOperation::Toggle(port))
+            .apply(NodeGraphSelectionOperation::Replace(edge));
+
+        assert_eq!(selection.selected(), vec![edge]);
+        assert_eq!(selection.active(), Some(edge));
+    }
+
+    #[test]
+    fn selection_canvas_clear_behavior_is_explicit_and_deterministic() {
+        let node = NodeGraphSelectionTarget::Node(NodeId::from_raw(1));
+        let frame_hit = NodeGraphHitTarget::Frame(NodeFrameId::from_raw(7));
+        let group_hit = NodeGraphHitTarget::Group(NodeGroupId::from_raw(8));
+        let selection = NodeGraphSelection::new().replace(node);
+
+        assert_eq!(selection.replace_from_hit(frame_hit), selection);
+        assert_eq!(selection.replace_from_hit(group_hit), selection);
+        assert!(
+            selection
+                .replace_from_hit(NodeGraphHitTarget::Canvas)
+                .selected()
+                .is_empty()
+        );
+        assert_eq!(
+            selection.apply(NodeGraphSelectionOperation::Clear),
+            NodeGraphSelection::new()
+        );
+    }
+
+    #[test]
+    fn selection_identity_uses_graph_ids_not_viewport_coordinates() {
+        let graph = static_graph();
+        let first_viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 400.0, 300.0),
+            NodeGraphPanZoom::default(),
+        );
+        let second_viewport = NodeGraphViewport::new(
+            Rect::new(100.0, 50.0, 400.0, 300.0),
+            NodeGraphPanZoom::new(GraphVector::new(20.0, 10.0), 2.0),
+        );
+        let first_hit = graph
+            .hit_test(first_viewport, Point::new(20.0, 30.0))
+            .expect("first hit");
+        let second_hit = graph
+            .hit_test(second_viewport, Point::new(140.0, 110.0))
+            .expect("second hit");
+
+        assert_eq!(
+            first_hit,
+            NodeGraphHitTarget::NodeTitle(NodeId::from_raw(1))
+        );
+        assert_eq!(second_hit, first_hit);
+        assert_eq!(
+            NodeGraphSelectionTarget::from_hit_target(first_hit),
+            Some(NodeGraphSelectionTarget::Node(NodeId::from_raw(1)))
+        );
+    }
+
+    #[test]
+    fn static_view_selection_marks_matching_semantic_nodes_only() {
+        let graph = static_graph();
+        let selection = NodeGraphSelection::from_targets([
+            NodeGraphSelectionTarget::Node(NodeId::from_raw(1)),
+            NodeGraphSelectionTarget::Edge(EdgeId::from_raw(50)),
+            NodeGraphSelectionTarget::Port(PortEndpoint::new(
+                NodeId::from_raw(2),
+                PortId::from_raw(3),
+            )),
+            NodeGraphSelectionTarget::Node(NodeId::from_raw(99)),
+            NodeGraphSelectionTarget::Edge(EdgeId::from_raw(99)),
+            NodeGraphSelectionTarget::Port(PortEndpoint::new(
+                NodeId::from_raw(99),
+                PortId::from_raw(99),
+            )),
+        ]);
+        let output =
+            NodeGraphStaticView::new(WidgetId::from_key("graph"), static_viewport(), &graph)
+                .with_selection(selection)
+                .emit()
+                .expect("static graph output");
+
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticRole::Custom("node".to_owned())
+                && node.label.as_deref() == Some("Source")
+                && node.state.selected
+        }));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticRole::Custom("edge".to_owned())
+                && node.label.as_deref() == Some("Edge 50: Source Out to Target In")
+                && node.state.selected
+        }));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticRole::Custom("port".to_owned())
+                && node.label.as_deref() == Some("Input In")
+                && node.state.selected
+        }));
+        assert!(output.semantics.iter().any(|node| {
+            node.role == SemanticRole::Custom("node".to_owned())
+                && node.label.as_deref() == Some("Target")
+                && !node.state.selected
+        }));
     }
 
     #[test]
