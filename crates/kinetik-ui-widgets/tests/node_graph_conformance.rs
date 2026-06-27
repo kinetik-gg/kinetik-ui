@@ -63,6 +63,15 @@ mod node_graph_conformance {
         assert_close(pan_zoom.pan.y, 0.0);
         assert_close(pan_zoom.zoom, 1.0);
 
+        for invalid_zoom in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let pan_zoom =
+                NodeGraphPanZoom::new(GraphVector::new(5.0, -3.0), invalid_zoom).sanitized();
+
+            assert_close(pan_zoom.pan.x, 5.0);
+            assert_close(pan_zoom.pan.y, -3.0);
+            assert_close(pan_zoom.zoom, 1.0);
+        }
+
         let mut pan_zoom = NodeGraphPanZoom::default();
         pan_zoom.set_zoom(0.0);
         pan_zoom.pan_by(GraphVector::new(5.0, f32::NEG_INFINITY));
