@@ -1455,6 +1455,33 @@ mod node_graph_conformance {
     }
 
     #[test]
+    fn box_selection_finite_origin_with_non_finite_size_is_noop() {
+        let graph = NodeGraphDescriptor {
+            nodes: vec![NodeDescriptor::new(
+                NodeId::from_raw(1),
+                "Would Have Matched",
+                GraphRect::new(20.0, 15.0, 5.0, 5.0),
+            )],
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+        let request = NodeGraphBoxSelectionRequest::new(
+            NodeGraphViewport::new(Rect::ZERO, NodeGraphPanZoom::default()),
+            Rect::new(100.0, 10.0, f32::INFINITY, 20.0),
+            NodeGraphBoxSelectionMode::Intersects,
+            NodeGraphSelectionIntent::Add,
+        );
+        let selection = request.select(&graph);
+
+        assert!(request.is_empty());
+        assert_rect_close(request.screen_rect, Rect::ZERO);
+        assert_graph_rect_close(request.graph_rect, GraphRect::ZERO);
+        assert!(selection.targets.is_empty());
+        assert!(selection.is_noop());
+    }
+
+    #[test]
     fn drag_delta_accounts_for_viewport_zoom_and_sanitizes_invalid_input() {
         let viewport = NodeGraphViewport::new(
             Rect::new(50.0, 30.0, 300.0, 200.0),

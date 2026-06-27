@@ -2452,6 +2452,14 @@ fn sanitize_rect(rect: Rect) -> Rect {
 }
 
 fn normalize_screen_rect(rect: Rect) -> Rect {
+    if !rect.x.is_finite()
+        || !rect.y.is_finite()
+        || !rect.width.is_finite()
+        || !rect.height.is_finite()
+    {
+        return Rect::ZERO;
+    }
+
     let min = sanitize_point(rect.origin());
     let max = sanitize_point(Point::new(
         finite_rect_extent(rect.x, rect.width),
