@@ -7,11 +7,12 @@ mod node_graph_conformance {
     use kinetik_ui_widgets::{
         EdgeDescriptor, EdgeEndpointRole, EdgeId, EdgeResolutionError, GraphPoint, GraphRect,
         GraphVector, NodeDescriptor, NodeFrameDescriptor, NodeFrameId, NodeGraphDescriptor,
-        NodeGraphEmissionError, NodeGraphGridStyle, NodeGraphPanZoom, NodeGraphPortState,
-        NodeGraphStaticView, NodeGraphStyle, NodeGraphValidationError, NodeGraphViewport,
-        NodeGroupDescriptor, NodeGroupId, NodeId, PortCompatibilityError, PortDescriptor,
-        PortDirection, PortEndpoint, PortId, PortTypeId, ports_are_compatible,
-        validate_node_graph_descriptors, validate_port_compatibility,
+        NodeGraphEmissionError, NodeGraphGridStyle, NodeGraphHitTarget, NodeGraphHitTestConfig,
+        NodeGraphHitTestError, NodeGraphPanZoom, NodeGraphPortState, NodeGraphStaticView,
+        NodeGraphStyle, NodeGraphValidationError, NodeGraphViewport, NodeGroupDescriptor,
+        NodeGroupId, NodeId, PortCompatibilityError, PortDescriptor, PortDirection, PortEndpoint,
+        PortId, PortTypeId, ports_are_compatible, validate_node_graph_descriptors,
+        validate_port_compatibility,
     };
 
     fn assert_close(actual: f32, expected: f32) {
@@ -742,6 +743,410 @@ mod node_graph_conformance {
         assert_graph_point_close(graph, GraphPoint::new(0.0, 0.0));
         assert_rect_close(screen_rect, Rect::new(0.0, 0.0, 0.0, 0.0));
         assert_graph_rect_close(graph_rect, GraphRect::new(0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn hit_testing_prioritizes_ports_over_node_title_and_body() {
+        let number = PortTypeId::from_raw(10);
+        let graph = NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(
+                    NodeId::from_raw(1),
+                    "Node",
+                    GraphRect::new(0.0, 0.0, 100.0, 80.0),
+                )
+                .with_ports(vec![
+                    PortDescriptor::new(PortId::from_raw(1), PortDirection::Input, "In", number),
+                    PortDescriptor::new(PortId::from_raw(2), PortDirection::Output, "Out", number),
+                ]),
+            ],
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 300.0, 200.0),
+            NodeGraphPanZoom::default(),
+        );
+        let config = NodeGraphHitTestConfig::new().with_port_size(24.0);
+
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(0.0, 40.0), config),
+            Ok(NodeGraphHitTarget::Port(PortEndpoint::new(
+                NodeId::from_raw(1),
+                PortId::from_raw(1)
+            )))
+        );
+    }
+
+    #[test]
+    fn hit_testing_node_title_and_body_transform_through_viewport() {
+        let graph = NodeGraphDescriptor {
+            nodes: vec![NodeDescriptor::new(
+                NodeId::from_raw(10),
+                "Transformed",
+                GraphRect::new(10.0, 20.0, 100.0, 80.0),
+            )],
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+        let viewport = NodeGraphViewport::new(
+            Rect::new(100.0, 50.0, 500.0, 400.0),
+            NodeGraphPanZoom::new(GraphVector::new(20.0, -10.0), 2.0),
+        );
+
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(160.0, 90.0)),
+            Ok(NodeGraphHitTarget::NodeTitle(NodeId::from_raw(10)))
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(160.0, 160.0)),
+            Ok(NodeGraphHitTarget::NodeBody(NodeId::from_raw(10)))
+        );
+    }
+
+    #[test]
+    fn hit_testing_edges_uses_resolved_anchors_and_tolerance() {
+        let number = PortTypeId::from_raw(10);
+        let graph = NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(
+                    NodeId::from_raw(1),
+                    "Source",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(1),
+                    PortDirection::Output,
+                    "Out",
+                    number,
+                )]),
+                NodeDescriptor::new(
+                    NodeId::from_raw(2),
+                    "Target",
+                    GraphRect::new(200.0, 0.0, 100.0, 100.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(2),
+                    PortDirection::Input,
+                    "In",
+                    number,
+                )]),
+            ],
+            edges: vec![EdgeDescriptor::new(
+                EdgeId::from_raw(30),
+                PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
+                PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
+            )],
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 400.0, 200.0),
+            NodeGraphPanZoom::default(),
+        );
+        let config = NodeGraphHitTestConfig::new().with_edge_tolerance(5.0);
+
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(150.0, 53.0), config),
+            Ok(NodeGraphHitTarget::Edge(EdgeId::from_raw(30)))
+        );
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(150.0, 56.0), config),
+            Ok(NodeGraphHitTarget::Canvas)
+        );
+    }
+
+    #[test]
+    fn hit_testing_frames_groups_and_canvas_are_deterministic() {
+        let graph = NodeGraphDescriptor {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            frames: vec![
+                NodeFrameDescriptor::new(
+                    NodeFrameId::from_raw(1),
+                    "Back",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+                NodeFrameDescriptor::new(
+                    NodeFrameId::from_raw(2),
+                    "Front",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+            ],
+            groups: vec![NodeGroupDescriptor::new(
+                NodeGroupId::from_raw(3),
+                "Group",
+                GraphRect::new(150.0, 0.0, 100.0, 100.0),
+            )],
+        };
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 300.0, 200.0),
+            NodeGraphPanZoom::default(),
+        );
+
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(50.0, 50.0)),
+            Ok(NodeGraphHitTarget::Frame(NodeFrameId::from_raw(2)))
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(175.0, 50.0)),
+            Ok(NodeGraphHitTarget::Group(NodeGroupId::from_raw(3)))
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(275.0, 50.0)),
+            Ok(NodeGraphHitTarget::Canvas)
+        );
+    }
+
+    #[test]
+    fn hit_testing_skips_disabled_targets_without_skipping_enabled_fallbacks() {
+        let number = PortTypeId::from_raw(10);
+        let graph = NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(
+                    NodeId::from_raw(1),
+                    "Node",
+                    GraphRect::new(0.0, 0.0, 100.0, 80.0),
+                )
+                .with_ports(vec![
+                    PortDescriptor::new(PortId::from_raw(1), PortDirection::Input, "In", number)
+                        .with_enabled(false),
+                    PortDescriptor::new(PortId::from_raw(2), PortDirection::Output, "Out", number),
+                ]),
+                NodeDescriptor::new(
+                    NodeId::from_raw(2),
+                    "Other",
+                    GraphRect::new(200.0, 0.0, 100.0, 80.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(3),
+                    PortDirection::Input,
+                    "In",
+                    number,
+                )]),
+            ],
+            edges: vec![
+                EdgeDescriptor::new(
+                    EdgeId::from_raw(20),
+                    PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(2)),
+                    PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(3)),
+                )
+                .with_enabled(false),
+            ],
+            frames: vec![
+                NodeFrameDescriptor::new(
+                    NodeFrameId::from_raw(30),
+                    "Disabled frame",
+                    GraphRect::new(120.0, 0.0, 50.0, 50.0),
+                )
+                .with_enabled(false),
+            ],
+            groups: vec![
+                NodeGroupDescriptor::new(
+                    NodeGroupId::from_raw(40),
+                    "Disabled group",
+                    GraphRect::new(180.0, 0.0, 50.0, 50.0),
+                )
+                .with_enabled(false),
+            ],
+        };
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 300.0, 200.0),
+            NodeGraphPanZoom::default(),
+        );
+        let config = NodeGraphHitTestConfig::new().with_port_size(24.0);
+
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(0.0, 40.0), config),
+            Ok(NodeGraphHitTarget::NodeBody(NodeId::from_raw(1)))
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(150.0, 40.0)),
+            Ok(NodeGraphHitTarget::Canvas)
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(125.0, 5.0)),
+            Ok(NodeGraphHitTarget::Canvas)
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(185.0, 5.0)),
+            Ok(NodeGraphHitTarget::Canvas)
+        );
+
+        let disabled_node_graph = NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(
+                    NodeId::from_raw(50),
+                    "Disabled node",
+                    GraphRect::new(0.0, 0.0, 100.0, 80.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(51),
+                    PortDirection::Input,
+                    "In",
+                    number,
+                )])
+                .with_enabled(false),
+            ],
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+
+        assert_eq!(
+            disabled_node_graph.hit_test_with_config(viewport, Point::new(0.0, 40.0), config),
+            Ok(NodeGraphHitTarget::Canvas)
+        );
+    }
+
+    #[test]
+    fn hit_testing_tie_breaks_use_topmost_descriptor_order() {
+        let number = PortTypeId::from_raw(10);
+        let graph = NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(
+                    NodeId::from_raw(1),
+                    "Back",
+                    GraphRect::new(0.0, 0.0, 100.0, 80.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(1),
+                    PortDirection::Input,
+                    "In",
+                    number,
+                )]),
+                NodeDescriptor::new(
+                    NodeId::from_raw(2),
+                    "Front",
+                    GraphRect::new(0.0, 0.0, 100.0, 80.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(2),
+                    PortDirection::Input,
+                    "In",
+                    number,
+                )]),
+            ],
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 300.0, 200.0),
+            NodeGraphPanZoom::default(),
+        );
+        let config = NodeGraphHitTestConfig::new().with_port_size(24.0);
+
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(0.0, 40.0), config),
+            Ok(NodeGraphHitTarget::Port(PortEndpoint::new(
+                NodeId::from_raw(2),
+                PortId::from_raw(2)
+            )))
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(50.0, 10.0)),
+            Ok(NodeGraphHitTarget::NodeTitle(NodeId::from_raw(2)))
+        );
+    }
+
+    #[test]
+    fn hit_testing_invalid_descriptors_return_structured_errors() {
+        let duplicate = NodeId::from_raw(1);
+        let graph = NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(duplicate, "First", GraphRect::ZERO),
+                NodeDescriptor::new(duplicate, "Second", GraphRect::ZERO),
+            ],
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+
+        assert_eq!(
+            graph.hit_test(
+                NodeGraphViewport::new(
+                    Rect::new(0.0, 0.0, 100.0, 100.0),
+                    NodeGraphPanZoom::default()
+                ),
+                Point::new(1.0, 1.0)
+            ),
+            Err(NodeGraphHitTestError::Validation(
+                NodeGraphValidationError::DuplicateNodeId { id: duplicate }
+            ))
+        );
+    }
+
+    #[test]
+    fn hit_testing_rejects_duplicate_frame_ids_before_returning_frame_targets() {
+        let duplicate = NodeFrameId::from_raw(7);
+        let graph = NodeGraphDescriptor {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            frames: vec![
+                NodeFrameDescriptor::new(
+                    duplicate,
+                    "First",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+                NodeFrameDescriptor::new(
+                    duplicate,
+                    "Second",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+            ],
+            groups: Vec::new(),
+        };
+
+        assert_eq!(
+            graph.hit_test(
+                NodeGraphViewport::new(
+                    Rect::new(0.0, 0.0, 100.0, 100.0),
+                    NodeGraphPanZoom::default()
+                ),
+                Point::new(10.0, 10.0)
+            ),
+            Err(NodeGraphHitTestError::Validation(
+                NodeGraphValidationError::DuplicateFrameId { id: duplicate }
+            ))
+        );
+    }
+
+    #[test]
+    fn hit_testing_rejects_duplicate_group_ids_before_returning_group_targets() {
+        let duplicate = NodeGroupId::from_raw(8);
+        let graph = NodeGraphDescriptor {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: vec![
+                NodeGroupDescriptor::new(
+                    duplicate,
+                    "First",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+                NodeGroupDescriptor::new(
+                    duplicate,
+                    "Second",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                ),
+            ],
+        };
+
+        assert_eq!(
+            graph.hit_test(
+                NodeGraphViewport::new(
+                    Rect::new(0.0, 0.0, 100.0, 100.0),
+                    NodeGraphPanZoom::default()
+                ),
+                Point::new(10.0, 10.0)
+            ),
+            Err(NodeGraphHitTestError::Validation(
+                NodeGraphValidationError::DuplicateGroupId { id: duplicate }
+            ))
+        );
     }
 
     #[test]
