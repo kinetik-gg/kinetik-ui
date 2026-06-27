@@ -3,8 +3,11 @@
 mod node_graph_conformance {
     use kinetik_ui_core::{Point, Rect};
     use kinetik_ui_widgets::{
-        EdgeId, GraphPoint, GraphRect, GraphVector, NodeFrameId, NodeGraphPanZoom,
-        NodeGraphViewport, NodeGroupId, NodeId, PortId,
+        EdgeDescriptor, EdgeId, GraphPoint, GraphRect, GraphVector, NodeDescriptor,
+        NodeFrameDescriptor, NodeFrameId, NodeGraphDescriptor, NodeGraphPanZoom,
+        NodeGraphValidationError, NodeGraphViewport, NodeGroupDescriptor, NodeGroupId, NodeId,
+        PortCompatibilityError, PortDescriptor, PortDirection, PortEndpoint, PortId, PortTypeId,
+        ports_are_compatible, validate_node_graph_descriptors, validate_port_compatibility,
     };
 
     fn assert_close(actual: f32, expected: f32) {
@@ -52,6 +55,177 @@ mod node_graph_conformance {
         assert_eq!(EdgeId::from_raw(3).raw(), 3);
         assert_eq!(NodeFrameId::from_raw(4).raw(), 4);
         assert_eq!(NodeGroupId::from_raw(5).raw(), 5);
+        assert_eq!(PortTypeId::from_raw(6).raw(), 6);
+    }
+
+    #[test]
+    fn node_graph_descriptors_preserve_data_only_metadata() {
+        let number = PortTypeId::from_raw(10);
+        let vector = PortTypeId::from_raw(11);
+        let output =
+            PortDescriptor::new(PortId::from_raw(1), PortDirection::Output, "Color", number);
+        let input =
+            PortDescriptor::new(PortId::from_raw(2), PortDirection::Input, "Vector", vector)
+                .with_enabled(false);
+        let frame = NodeFrameDescriptor::new(
+            NodeFrameId::from_raw(30),
+            "Frame A",
+            GraphRect::new(-10.0, -20.0, 300.0, 180.0),
+        )
+        .with_enabled(false);
+        let group = NodeGroupDescriptor::new(
+            NodeGroupId::from_raw(40),
+            "Group A",
+            GraphRect::new(0.0, 0.0, 200.0, 120.0),
+        )
+        .with_nodes(vec![NodeId::from_raw(20)])
+        .with_enabled(false);
+        let node = NodeDescriptor::new(
+            NodeId::from_raw(20),
+            "Mix",
+            GraphRect::new(5.0, 10.0, 140.0, 90.0),
+        )
+        .with_ports(vec![output.clone(), input.clone()])
+        .with_frame(frame.id)
+        .with_group(group.id)
+        .with_enabled(false);
+        let edge = EdgeDescriptor::new(
+            EdgeId::from_raw(50),
+            PortEndpoint::new(node.id, output.id),
+            PortEndpoint::new(NodeId::from_raw(21), PortId::from_raw(3)),
+        )
+        .with_enabled(false);
+        let graph = NodeGraphDescriptor {
+            nodes: vec![node.clone()],
+            edges: vec![edge],
+            frames: vec![frame.clone()],
+            groups: vec![group.clone()],
+        };
+
+        assert_eq!(node.title, "Mix");
+        assert_eq!(node.rect, GraphRect::new(5.0, 10.0, 140.0, 90.0));
+        assert_eq!(node.ports, vec![output.clone(), input.clone()]);
+        assert_eq!(node.frame, Some(frame.id));
+        assert_eq!(node.group, Some(group.id));
+        assert!(!node.enabled);
+
+        assert_eq!(input.direction, PortDirection::Input);
+        assert_eq!(input.label, "Vector");
+        assert_eq!(input.port_type, vector);
+        assert!(!input.enabled);
+
+        assert_eq!(graph.edges[0].id, EdgeId::from_raw(50));
+        assert_eq!(graph.edges[0].from, PortEndpoint::new(node.id, output.id));
+        assert_eq!(
+            graph.edges[0].to,
+            PortEndpoint::new(NodeId::from_raw(21), PortId::from_raw(3))
+        );
+        assert!(!graph.edges[0].enabled);
+        assert_eq!(graph.frames, vec![frame]);
+        assert_eq!(graph.groups, vec![group]);
+        assert_eq!(graph.validate(), Ok(()));
+    }
+
+    #[test]
+    fn descriptor_validation_reports_duplicate_node_ids_deterministically() {
+        let id = NodeId::from_raw(1);
+        let nodes = vec![
+            NodeDescriptor::new(id, "First", GraphRect::ZERO),
+            NodeDescriptor::new(NodeId::from_raw(2), "Second", GraphRect::ZERO),
+            NodeDescriptor::new(id, "Duplicate", GraphRect::ZERO),
+        ];
+
+        assert_eq!(
+            validate_node_graph_descriptors(&nodes),
+            Err(NodeGraphValidationError::DuplicateNodeId { id })
+        );
+    }
+
+    #[test]
+    fn descriptor_validation_reports_duplicate_port_ids_within_one_node() {
+        let node_id = NodeId::from_raw(1);
+        let port_id = PortId::from_raw(7);
+        let port_type = PortTypeId::from_raw(10);
+        let nodes = vec![
+            NodeDescriptor::new(node_id, "Node", GraphRect::ZERO).with_ports(vec![
+                PortDescriptor::new(port_id, PortDirection::Input, "A", port_type),
+                PortDescriptor::new(port_id, PortDirection::Output, "B", port_type),
+            ]),
+            NodeDescriptor::new(NodeId::from_raw(2), "Other", GraphRect::ZERO).with_ports(vec![
+                PortDescriptor::new(port_id, PortDirection::Input, "Scoped", port_type),
+            ]),
+        ];
+
+        assert_eq!(
+            validate_node_graph_descriptors(&nodes),
+            Err(NodeGraphValidationError::DuplicatePortId {
+                node: node_id,
+                port: port_id,
+            })
+        );
+    }
+
+    #[test]
+    fn descriptor_validation_scopes_port_ids_by_node() {
+        let port_id = PortId::from_raw(7);
+        let port_type = PortTypeId::from_raw(10);
+        let nodes = vec![
+            NodeDescriptor::new(NodeId::from_raw(1), "A", GraphRect::ZERO).with_ports(vec![
+                PortDescriptor::new(port_id, PortDirection::Input, "Input", port_type),
+            ]),
+            NodeDescriptor::new(NodeId::from_raw(2), "B", GraphRect::ZERO).with_ports(vec![
+                PortDescriptor::new(port_id, PortDirection::Output, "Output", port_type),
+            ]),
+        ];
+
+        assert_eq!(validate_node_graph_descriptors(&nodes), Ok(()));
+    }
+
+    #[test]
+    fn compatibility_is_directed_enabled_and_keyed_by_app_metadata() {
+        let number = PortTypeId::from_raw(10);
+        let vector = PortTypeId::from_raw(11);
+        let output = PortDescriptor::new(PortId::from_raw(1), PortDirection::Output, "Out", number);
+        let input = PortDescriptor::new(PortId::from_raw(2), PortDirection::Input, "In", number);
+        let other_input =
+            PortDescriptor::new(PortId::from_raw(3), PortDirection::Input, "Other", vector);
+        let disabled_input =
+            PortDescriptor::new(PortId::from_raw(4), PortDirection::Input, "Off", number)
+                .with_enabled(false);
+
+        assert!(ports_are_compatible(&output, &input));
+        assert_eq!(validate_port_compatibility(&output, &input), Ok(()));
+
+        assert_eq!(
+            validate_port_compatibility(&input, &output),
+            Err(PortCompatibilityError::DirectionMismatch {
+                output: PortDirection::Input,
+                input: PortDirection::Output,
+            })
+        );
+        assert!(matches!(
+            validate_port_compatibility(&output, &output),
+            Err(PortCompatibilityError::DirectionMismatch { .. })
+        ));
+        assert!(matches!(
+            validate_port_compatibility(&input, &input),
+            Err(PortCompatibilityError::DirectionMismatch { .. })
+        ));
+        assert_eq!(
+            validate_port_compatibility(&output, &other_input),
+            Err(PortCompatibilityError::TypeMismatch {
+                output: number,
+                input: vector,
+            })
+        );
+        assert_eq!(
+            validate_port_compatibility(&output, &disabled_input),
+            Err(PortCompatibilityError::DisabledPort {
+                output_enabled: true,
+                input_enabled: false,
+            })
+        );
+        assert!(!ports_are_compatible(&output, &disabled_input));
     }
 
     #[test]
