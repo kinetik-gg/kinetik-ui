@@ -9,6 +9,12 @@ use kinetik_ui_core::{
 
 const DEFAULT_ZOOM: f32 = 1.0;
 const MIN_ZOOM: f32 = 0.01;
+/// Default screen-space tolerance for node graph edge hit testing.
+pub const DEFAULT_NODE_GRAPH_EDGE_HIT_TOLERANCE: f32 = 6.0;
+/// Default screen-space square size for node graph port hit testing.
+pub const DEFAULT_NODE_GRAPH_PORT_HIT_SIZE: f32 = 8.0;
+/// Default graph-space height for node title hit testing.
+pub const DEFAULT_NODE_GRAPH_TITLE_BAR_HEIGHT: f32 = 24.0;
 
 macro_rules! node_graph_id {
     ($name:ident, $doc:literal) => {
@@ -429,6 +435,38 @@ impl NodeGraphDescriptor {
     /// incompatible port types.
     pub fn resolve_edges(&self) -> Result<Vec<ResolvedEdge<'_>>, EdgeResolutionError> {
         resolve_node_graph_edges(self)
+    }
+
+    /// Resolves one UI logical screen-space point to a stable typed hit target.
+    ///
+    /// Disabled targets are intentionally skipped. Invalid descriptors return a
+    /// structured error before any target is guessed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured hit test error when descriptor validation or edge
+    /// endpoint resolution fails.
+    pub fn hit_test(
+        &self,
+        viewport: NodeGraphViewport,
+        point: Point,
+    ) -> Result<NodeGraphHitTarget, NodeGraphHitTestError> {
+        hit_test_node_graph(viewport, self, point)
+    }
+
+    /// Resolves one UI logical screen-space point with explicit hit geometry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured hit test error when descriptor validation or edge
+    /// endpoint resolution fails.
+    pub fn hit_test_with_config(
+        &self,
+        viewport: NodeGraphViewport,
+        point: Point,
+        config: NodeGraphHitTestConfig,
+    ) -> Result<NodeGraphHitTarget, NodeGraphHitTestError> {
+        hit_test_node_graph_with_config(viewport, self, point, config)
     }
 }
 
@@ -962,6 +1000,331 @@ impl NodeGraphViewport {
             finite_div(rect.height, zoom).max(0.0),
         )
     }
+}
+
+/// Stable backend-independent node graph hit target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeGraphHitTarget {
+    /// A hittable port on a node.
+    Port(PortEndpoint),
+    /// The node title bar.
+    NodeTitle(NodeId),
+    /// The node body below the title bar.
+    NodeBody(NodeId),
+    /// A resolved edge segment.
+    Edge(EdgeId),
+    /// A frame surface.
+    Frame(NodeFrameId),
+    /// A group surface.
+    Group(NodeGroupId),
+    /// The graph canvas or an out-of-viewport point.
+    Canvas,
+}
+
+/// Deterministic node graph hit test geometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodeGraphHitTestConfig {
+    /// Screen-space tolerance for edge segment hits.
+    pub edge_tolerance: f32,
+    /// Screen-space square size for port hits.
+    pub port_size: f32,
+    /// Graph-space height of the title target within each node.
+    pub title_bar_height: f32,
+}
+
+impl Default for NodeGraphHitTestConfig {
+    fn default() -> Self {
+        Self {
+            edge_tolerance: DEFAULT_NODE_GRAPH_EDGE_HIT_TOLERANCE,
+            port_size: DEFAULT_NODE_GRAPH_PORT_HIT_SIZE,
+            title_bar_height: DEFAULT_NODE_GRAPH_TITLE_BAR_HEIGHT,
+        }
+    }
+}
+
+impl NodeGraphHitTestConfig {
+    /// Creates a hit test configuration using deterministic defaults.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            edge_tolerance: DEFAULT_NODE_GRAPH_EDGE_HIT_TOLERANCE,
+            port_size: DEFAULT_NODE_GRAPH_PORT_HIT_SIZE,
+            title_bar_height: DEFAULT_NODE_GRAPH_TITLE_BAR_HEIGHT,
+        }
+    }
+
+    /// Sets the edge hit tolerance in screen logical units.
+    #[must_use]
+    pub const fn with_edge_tolerance(mut self, edge_tolerance: f32) -> Self {
+        self.edge_tolerance = edge_tolerance;
+        self
+    }
+
+    /// Sets the port hit square size in screen logical units.
+    #[must_use]
+    pub const fn with_port_size(mut self, port_size: f32) -> Self {
+        self.port_size = port_size;
+        self
+    }
+
+    /// Sets the node title hit height in graph units.
+    #[must_use]
+    pub const fn with_title_bar_height(mut self, title_bar_height: f32) -> Self {
+        self.title_bar_height = title_bar_height;
+        self
+    }
+
+    fn sanitized(self) -> Self {
+        Self {
+            edge_tolerance: finite_non_negative(self.edge_tolerance),
+            port_size: finite_non_negative(self.port_size),
+            title_bar_height: finite_non_negative(self.title_bar_height),
+        }
+    }
+}
+
+/// Structured node graph hit test failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeGraphHitTestError {
+    /// Descriptor validation failed before hit testing could run.
+    Validation(NodeGraphValidationError),
+    /// Edge endpoint resolution failed before edge hit testing could run.
+    Edge(EdgeResolutionError),
+}
+
+impl From<NodeGraphValidationError> for NodeGraphHitTestError {
+    fn from(error: NodeGraphValidationError) -> Self {
+        Self::Validation(error)
+    }
+}
+
+impl From<EdgeResolutionError> for NodeGraphHitTestError {
+    fn from(error: EdgeResolutionError) -> Self {
+        Self::Edge(error)
+    }
+}
+
+/// Resolves one UI logical screen-space point to a stable typed node graph target.
+///
+/// Hit priority is deterministic: enabled ports, enabled node title/body,
+/// enabled edges with enabled endpoint nodes, enabled frames, enabled groups,
+/// then canvas. Within one priority tier, later descriptors win so hit testing
+/// follows the same topmost-last ordering used by static primitive emission.
+/// Disabled targets are skipped instead of returned.
+///
+/// # Errors
+///
+/// Returns a structured error when descriptor validation or edge endpoint
+/// resolution fails.
+pub fn hit_test_node_graph(
+    viewport: NodeGraphViewport,
+    graph: &NodeGraphDescriptor,
+    point: Point,
+) -> Result<NodeGraphHitTarget, NodeGraphHitTestError> {
+    hit_test_node_graph_with_config(viewport, graph, point, NodeGraphHitTestConfig::default())
+}
+
+/// Resolves one UI logical screen-space point with explicit hit geometry.
+///
+/// # Errors
+///
+/// Returns a structured error when descriptor validation or edge endpoint
+/// resolution fails.
+pub fn hit_test_node_graph_with_config(
+    viewport: NodeGraphViewport,
+    graph: &NodeGraphDescriptor,
+    point: Point,
+    config: NodeGraphHitTestConfig,
+) -> Result<NodeGraphHitTarget, NodeGraphHitTestError> {
+    graph.validate()?;
+    let resolved_edges = graph.resolve_edges()?;
+    let point = sanitize_point(point);
+    let bounds = viewport.effective_bounds();
+    let config = config.sanitized();
+
+    if !bounds.contains_point(point) {
+        return Ok(NodeGraphHitTarget::Canvas);
+    }
+
+    if let Some(target) = hit_test_ports(viewport, graph, point, config) {
+        return Ok(target);
+    }
+
+    if let Some(target) = hit_test_nodes(viewport, graph, point, config) {
+        return Ok(target);
+    }
+
+    if let Some(target) = hit_test_edges(viewport, &resolved_edges, point, config) {
+        return Ok(target);
+    }
+
+    if let Some(target) = hit_test_frames(viewport, graph, point) {
+        return Ok(target);
+    }
+
+    if let Some(target) = hit_test_groups(viewport, graph, point) {
+        return Ok(target);
+    }
+
+    Ok(NodeGraphHitTarget::Canvas)
+}
+
+fn hit_test_ports(
+    viewport: NodeGraphViewport,
+    graph: &NodeGraphDescriptor,
+    point: Point,
+    config: NodeGraphHitTestConfig,
+) -> Option<NodeGraphHitTarget> {
+    graph.nodes.iter().rev().find_map(|node| {
+        if !node.enabled {
+            return None;
+        }
+
+        node.ports.iter().rev().find_map(|port| {
+            if !port.enabled {
+                return None;
+            }
+
+            port_hit_rect(viewport, node, port, config.port_size)
+                .contains_point(point)
+                .then_some(NodeGraphHitTarget::Port(PortEndpoint::new(
+                    node.id, port.id,
+                )))
+        })
+    })
+}
+
+fn hit_test_nodes(
+    viewport: NodeGraphViewport,
+    graph: &NodeGraphDescriptor,
+    point: Point,
+    config: NodeGraphHitTestConfig,
+) -> Option<NodeGraphHitTarget> {
+    graph.nodes.iter().rev().find_map(|node| {
+        if !node.enabled {
+            return None;
+        }
+
+        let node_rect = viewport.graph_rect_to_screen(node.rect);
+        if !node_rect.contains_point(point) {
+            return None;
+        }
+
+        if node_title_rect(viewport, node, config.title_bar_height).contains_point(point) {
+            Some(NodeGraphHitTarget::NodeTitle(node.id))
+        } else {
+            Some(NodeGraphHitTarget::NodeBody(node.id))
+        }
+    })
+}
+
+fn hit_test_edges(
+    viewport: NodeGraphViewport,
+    edges: &[ResolvedEdge<'_>],
+    point: Point,
+    config: NodeGraphHitTestConfig,
+) -> Option<NodeGraphHitTarget> {
+    edges.iter().rev().find_map(|edge| {
+        if !edge.edge.enabled || !edge.from.node.enabled || !edge.to.node.enabled {
+            return None;
+        }
+
+        let from = viewport.graph_to_screen(edge.from.anchor);
+        let to = viewport.graph_to_screen(edge.to.anchor);
+        (point_to_segment_distance(point, from, to) <= config.edge_tolerance)
+            .then_some(NodeGraphHitTarget::Edge(edge.edge.id))
+    })
+}
+
+fn hit_test_frames(
+    viewport: NodeGraphViewport,
+    graph: &NodeGraphDescriptor,
+    point: Point,
+) -> Option<NodeGraphHitTarget> {
+    graph.frames.iter().rev().find_map(|frame| {
+        if !frame.enabled {
+            return None;
+        }
+
+        viewport
+            .graph_rect_to_screen(frame.rect)
+            .contains_point(point)
+            .then_some(NodeGraphHitTarget::Frame(frame.id))
+    })
+}
+
+fn hit_test_groups(
+    viewport: NodeGraphViewport,
+    graph: &NodeGraphDescriptor,
+    point: Point,
+) -> Option<NodeGraphHitTarget> {
+    graph.groups.iter().rev().find_map(|group| {
+        if !group.enabled {
+            return None;
+        }
+
+        viewport
+            .graph_rect_to_screen(group.rect)
+            .contains_point(point)
+            .then_some(NodeGraphHitTarget::Group(group.id))
+    })
+}
+
+fn port_hit_rect(
+    viewport: NodeGraphViewport,
+    node: &NodeDescriptor,
+    port: &PortDescriptor,
+    size: f32,
+) -> Rect {
+    let anchor = viewport.graph_to_screen(port_anchor(node, port));
+    let size = finite_non_negative(size);
+    Rect::new(anchor.x - size * 0.5, anchor.y - size * 0.5, size, size)
+}
+
+fn node_title_rect(
+    viewport: NodeGraphViewport,
+    node: &NodeDescriptor,
+    title_bar_height: f32,
+) -> Rect {
+    let rect = node.rect.sanitized();
+    let title_height = finite_non_negative(title_bar_height).min(rect.height);
+    viewport.graph_rect_to_screen(GraphRect::new(rect.x, rect.y, rect.width, title_height))
+}
+
+fn point_to_segment_distance(point: Point, from: Point, to: Point) -> f32 {
+    let segment_x = to.x - from.x;
+    let segment_y = to.y - from.y;
+    let length_squared = finite_sum(
+        finite_product(segment_x, segment_x),
+        finite_product(segment_y, segment_y),
+    );
+
+    if length_squared <= f32::EPSILON {
+        return point_distance(point, from);
+    }
+
+    let point_x = point.x - from.x;
+    let point_y = point.y - from.y;
+    let projection = finite_div(
+        finite_sum(
+            finite_product(point_x, segment_x),
+            finite_product(point_y, segment_y),
+        ),
+        length_squared,
+    )
+    .clamp(0.0, 1.0);
+    let closest = Point::new(
+        finite_sum(from.x, finite_product(segment_x, projection)),
+        finite_sum(from.y, finite_product(segment_y, projection)),
+    );
+
+    point_distance(point, closest)
+}
+
+fn point_distance(lhs: Point, rhs: Point) -> f32 {
+    let x = lhs.x - rhs.x;
+    let y = lhs.y - rhs.y;
+    finite_sum(finite_product(x, x), finite_product(y, y)).sqrt()
 }
 
 /// Static node graph primitive and semantic emission failure.
