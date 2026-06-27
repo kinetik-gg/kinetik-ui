@@ -1,4 +1,6 @@
-//! Backend-independent node graph identity and coordinate contracts.
+//! Backend-independent node graph identity, descriptor, and coordinate contracts.
+
+use std::collections::BTreeSet;
 
 use kinetik_ui_core::{Point, Rect};
 
@@ -32,6 +34,403 @@ node_graph_id!(PortId, "Stable node port identity.");
 node_graph_id!(EdgeId, "Stable node graph edge identity.");
 node_graph_id!(NodeFrameId, "Stable identity for a node frame surface.");
 node_graph_id!(NodeGroupId, "Stable identity for a node group.");
+node_graph_id!(
+    PortTypeId,
+    "Application-owned node port compatibility key identity."
+);
+
+/// Port flow direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortDirection {
+    /// The port consumes values or connections.
+    Input,
+    /// The port produces values or connections.
+    Output,
+}
+
+/// Stable address for one port scoped by its owning node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PortEndpoint {
+    /// Owning node.
+    pub node: NodeId,
+    /// Port on the owning node.
+    pub port: PortId,
+}
+
+impl PortEndpoint {
+    /// Creates a port endpoint.
+    #[must_use]
+    pub const fn new(node: NodeId, port: PortId) -> Self {
+        Self { node, port }
+    }
+}
+
+/// Data-only port descriptor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortDescriptor {
+    /// Stable port identity, scoped by the owning node.
+    pub id: PortId,
+    /// Directed port flow.
+    pub direction: PortDirection,
+    /// User-facing port label.
+    pub label: String,
+    /// Application-owned compatibility key.
+    pub port_type: PortTypeId,
+    /// Whether the port is currently available.
+    pub enabled: bool,
+}
+
+impl PortDescriptor {
+    /// Creates an enabled port descriptor.
+    #[must_use]
+    pub fn new(
+        id: PortId,
+        direction: PortDirection,
+        label: impl Into<String>,
+        port_type: PortTypeId,
+    ) -> Self {
+        Self {
+            id,
+            direction,
+            label: label.into(),
+            port_type,
+            enabled: true,
+        }
+    }
+
+    /// Sets whether the port is currently available.
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
+/// Data-only node descriptor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeDescriptor {
+    /// Stable node identity.
+    pub id: NodeId,
+    /// User-facing node title.
+    pub title: String,
+    /// Node bounds in graph space.
+    pub rect: GraphRect,
+    /// Ports exposed by this node.
+    pub ports: Vec<PortDescriptor>,
+    /// Optional frame containing this node.
+    pub frame: Option<NodeFrameId>,
+    /// Optional group containing this node.
+    pub group: Option<NodeGroupId>,
+    /// Whether the node is currently available.
+    pub enabled: bool,
+}
+
+impl NodeDescriptor {
+    /// Creates an enabled node descriptor with no frame, group, or ports.
+    #[must_use]
+    pub fn new(id: NodeId, title: impl Into<String>, rect: GraphRect) -> Self {
+        Self {
+            id,
+            title: title.into(),
+            rect,
+            ports: Vec::new(),
+            frame: None,
+            group: None,
+            enabled: true,
+        }
+    }
+
+    /// Sets ports.
+    #[must_use]
+    pub fn with_ports(mut self, ports: impl Into<Vec<PortDescriptor>>) -> Self {
+        self.ports = ports.into();
+        self
+    }
+
+    /// Sets the containing frame.
+    #[must_use]
+    pub const fn with_frame(mut self, frame: NodeFrameId) -> Self {
+        self.frame = Some(frame);
+        self
+    }
+
+    /// Sets the containing group.
+    #[must_use]
+    pub const fn with_group(mut self, group: NodeGroupId) -> Self {
+        self.group = Some(group);
+        self
+    }
+
+    /// Sets whether the node is currently available.
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
+/// Data-only edge descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeDescriptor {
+    /// Stable edge identity.
+    pub id: EdgeId,
+    /// Output endpoint.
+    pub from: PortEndpoint,
+    /// Input endpoint.
+    pub to: PortEndpoint,
+    /// Whether the edge is currently available.
+    pub enabled: bool,
+}
+
+impl EdgeDescriptor {
+    /// Creates an enabled edge descriptor.
+    #[must_use]
+    pub const fn new(id: EdgeId, from: PortEndpoint, to: PortEndpoint) -> Self {
+        Self {
+            id,
+            from,
+            to,
+            enabled: true,
+        }
+    }
+
+    /// Sets whether the edge is currently available.
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
+/// Data-only frame descriptor for node graph surfaces.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeFrameDescriptor {
+    /// Stable frame identity.
+    pub id: NodeFrameId,
+    /// User-facing frame title.
+    pub title: String,
+    /// Frame bounds in graph space.
+    pub rect: GraphRect,
+    /// Whether the frame is currently available.
+    pub enabled: bool,
+}
+
+impl NodeFrameDescriptor {
+    /// Creates an enabled frame descriptor.
+    #[must_use]
+    pub fn new(id: NodeFrameId, title: impl Into<String>, rect: GraphRect) -> Self {
+        Self {
+            id,
+            title: title.into(),
+            rect,
+            enabled: true,
+        }
+    }
+
+    /// Sets whether the frame is currently available.
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
+/// Data-only group descriptor for node graph surfaces.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeGroupDescriptor {
+    /// Stable group identity.
+    pub id: NodeGroupId,
+    /// User-facing group title.
+    pub title: String,
+    /// Group bounds in graph space.
+    pub rect: GraphRect,
+    /// Nodes contained by this group.
+    pub nodes: Vec<NodeId>,
+    /// Whether the group is currently available.
+    pub enabled: bool,
+}
+
+impl NodeGroupDescriptor {
+    /// Creates an enabled group descriptor with no contained nodes.
+    #[must_use]
+    pub fn new(id: NodeGroupId, title: impl Into<String>, rect: GraphRect) -> Self {
+        Self {
+            id,
+            title: title.into(),
+            rect,
+            nodes: Vec::new(),
+            enabled: true,
+        }
+    }
+
+    /// Sets contained nodes.
+    #[must_use]
+    pub fn with_nodes(mut self, nodes: impl Into<Vec<NodeId>>) -> Self {
+        self.nodes = nodes.into();
+        self
+    }
+
+    /// Sets whether the group is currently available.
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
+/// Data-only node graph descriptor.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeGraphDescriptor {
+    /// Nodes.
+    pub nodes: Vec<NodeDescriptor>,
+    /// Edges.
+    pub edges: Vec<EdgeDescriptor>,
+    /// Frames.
+    pub frames: Vec<NodeFrameDescriptor>,
+    /// Groups.
+    pub groups: Vec<NodeGroupDescriptor>,
+}
+
+impl NodeGraphDescriptor {
+    /// Creates an empty graph descriptor.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        }
+    }
+
+    /// Validates deterministic descriptor invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured validation error when node IDs are duplicated or a
+    /// node contains duplicate port IDs.
+    pub fn validate(&self) -> Result<(), NodeGraphValidationError> {
+        validate_node_graph_descriptors(&self.nodes)
+    }
+}
+
+/// Structured validation error for node graph descriptors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeGraphValidationError {
+    /// The graph contains a duplicate node ID.
+    DuplicateNodeId {
+        /// Duplicated node ID.
+        id: NodeId,
+    },
+    /// One node contains a duplicate port ID.
+    DuplicatePortId {
+        /// Node containing the duplicate port.
+        node: NodeId,
+        /// Duplicated port ID.
+        port: PortId,
+    },
+}
+
+/// Validates deterministic descriptor invariants for nodes.
+///
+/// This intentionally does not resolve edge endpoints or validate application
+/// domain semantics.
+///
+/// # Errors
+///
+/// Returns a structured validation error when node IDs are duplicated or a node
+/// contains duplicate port IDs.
+pub fn validate_node_graph_descriptors(
+    nodes: &[NodeDescriptor],
+) -> Result<(), NodeGraphValidationError> {
+    let mut seen_nodes = BTreeSet::new();
+    for node in nodes {
+        if !seen_nodes.insert(node.id) {
+            return Err(NodeGraphValidationError::DuplicateNodeId { id: node.id });
+        }
+    }
+
+    for node in nodes {
+        let mut seen_ports = BTreeSet::new();
+        for port in &node.ports {
+            if !seen_ports.insert(port.id) {
+                return Err(NodeGraphValidationError::DuplicatePortId {
+                    node: node.id,
+                    port: port.id,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Structured directed port compatibility failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortCompatibilityError {
+    /// Compatibility is only valid from an output port to an input port.
+    DirectionMismatch {
+        /// Source port direction.
+        output: PortDirection,
+        /// Target port direction.
+        input: PortDirection,
+    },
+    /// One or both ports are disabled.
+    DisabledPort {
+        /// Whether the source port is enabled.
+        output_enabled: bool,
+        /// Whether the target port is enabled.
+        input_enabled: bool,
+    },
+    /// The app-owned compatibility keys do not match.
+    TypeMismatch {
+        /// Source port compatibility key.
+        output: PortTypeId,
+        /// Target port compatibility key.
+        input: PortTypeId,
+    },
+}
+
+/// Validates directed output-to-input port compatibility.
+///
+/// # Errors
+///
+/// Returns a structured compatibility error when the pair is not directed from
+/// output to input, one of the ports is disabled, or the app-owned
+/// compatibility keys differ.
+pub fn validate_port_compatibility(
+    output: &PortDescriptor,
+    input: &PortDescriptor,
+) -> Result<(), PortCompatibilityError> {
+    if output.direction != PortDirection::Output || input.direction != PortDirection::Input {
+        return Err(PortCompatibilityError::DirectionMismatch {
+            output: output.direction,
+            input: input.direction,
+        });
+    }
+
+    if !output.enabled || !input.enabled {
+        return Err(PortCompatibilityError::DisabledPort {
+            output_enabled: output.enabled,
+            input_enabled: input.enabled,
+        });
+    }
+
+    if output.port_type != input.port_type {
+        return Err(PortCompatibilityError::TypeMismatch {
+            output: output.port_type,
+            input: input.port_type,
+        });
+    }
+
+    Ok(())
+}
+
+/// Returns true when two ports form a valid output-to-input compatibility pair.
+#[must_use]
+pub fn ports_are_compatible(output: &PortDescriptor, input: &PortDescriptor) -> bool {
+    validate_port_compatibility(output, input).is_ok()
+}
 
 /// A point in node graph content space.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
