@@ -13,17 +13,18 @@ mod node_graph_conformance {
         NodeGraphContextActionRequest, NodeGraphContextActionUnavailableReason,
         NodeGraphContextCanvasOperation, NodeGraphContextDisconnectTarget,
         NodeGraphContextOrganizationOperation, NodeGraphContextTarget, NodeGraphDescriptor,
-        NodeGraphEmissionError, NodeGraphGridStyle, NodeGraphHitTarget, NodeGraphHitTestConfig,
-        NodeGraphHitTestError, NodeGraphLinkDraftCompletionError, NodeGraphLinkDraftEndpoint,
-        NodeGraphLinkDraftEndpointError, NodeGraphLinkDraftOutcome, NodeGraphLinkDraftTarget,
-        NodeGraphLinkEditRequest, NodeGraphLinkEditRequestError, NodeGraphPanZoom,
-        NodeGraphPortState, NodeGraphSelectedNodeMoveRequest, NodeGraphSelection,
+        NodeGraphEdgeRoutePoint, NodeGraphEmissionError, NodeGraphGridStyle, NodeGraphHitTarget,
+        NodeGraphHitTestConfig, NodeGraphHitTestError, NodeGraphLinkDraftCompletionError,
+        NodeGraphLinkDraftEndpoint, NodeGraphLinkDraftEndpointError, NodeGraphLinkDraftOutcome,
+        NodeGraphLinkDraftTarget, NodeGraphLinkEditRequest, NodeGraphLinkEditRequestError,
+        NodeGraphPanZoom, NodeGraphPortState, NodeGraphSelectedNodeMoveRequest, NodeGraphSelection,
         NodeGraphSelectionIntent, NodeGraphSelectionOperation, NodeGraphSelectionTarget,
         NodeGraphStaticView, NodeGraphStyle, NodeGraphValidationError, NodeGraphViewport,
         NodeGroupDescriptor, NodeGroupId, NodeId, PortCompatibilityError, PortDescriptor,
-        PortDirection, PortEndpoint, PortId, PortTypeId, filter_node_graph_add_node_search_entries,
-        node_graph_drag_delta, node_graph_snap_delta, node_graph_snap_point, node_graph_snap_rect,
-        ports_are_compatible, validate_node_graph_descriptors, validate_port_compatibility,
+        PortDirection, PortEndpoint, PortId, PortTypeId, RerouteDescriptor, RerouteId,
+        filter_node_graph_add_node_search_entries, node_graph_drag_delta, node_graph_snap_delta,
+        node_graph_snap_point, node_graph_snap_rect, ports_are_compatible,
+        validate_node_graph_descriptors, validate_port_compatibility,
     };
 
     fn assert_close(actual: f32, expected: f32) {
@@ -119,6 +120,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(3)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         }
@@ -168,6 +170,7 @@ mod node_graph_conformance {
                 ]),
             ],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         }
@@ -228,6 +231,53 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
             )],
+            reroutes: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        }
+    }
+
+    fn routed_edge_graph(reroute_position: GraphPoint) -> NodeGraphDescriptor {
+        let number = PortTypeId::from_raw(10);
+        let reroute = RerouteId::from_raw(10);
+        NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(
+                    NodeId::from_raw(1),
+                    "Source",
+                    GraphRect::new(0.0, 0.0, 100.0, 100.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(1),
+                    PortDirection::Output,
+                    "Out",
+                    number,
+                )]),
+                NodeDescriptor::new(
+                    NodeId::from_raw(2),
+                    "Target",
+                    GraphRect::new(300.0, 0.0, 100.0, 100.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(2),
+                    PortDirection::Input,
+                    "In",
+                    number,
+                )]),
+            ],
+            edges: vec![
+                EdgeDescriptor::new(
+                    EdgeId::from_raw(50),
+                    PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
+                    PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
+                )
+                .with_route_points(vec![
+                    NodeGraphEdgeRoutePoint::point(GraphPoint::new(120.0, 40.0)),
+                    NodeGraphEdgeRoutePoint::reroute(reroute),
+                    NodeGraphEdgeRoutePoint::point(GraphPoint::new(240.0, 60.0)),
+                ]),
+            ],
+            reroutes: vec![RerouteDescriptor::new(reroute, "Bend A", reroute_position)],
             frames: Vec::new(),
             groups: Vec::new(),
         }
@@ -238,6 +288,7 @@ mod node_graph_conformance {
         assert_eq!(NodeId::from_raw(1).raw(), 1);
         assert_eq!(PortId::from_raw(2).raw(), 2);
         assert_eq!(EdgeId::from_raw(3).raw(), 3);
+        assert_eq!(RerouteId::from_raw(7).raw(), 7);
         assert_eq!(NodeFrameId::from_raw(4).raw(), 4);
         assert_eq!(NodeGroupId::from_raw(5).raw(), 5);
         assert_eq!(PortTypeId::from_raw(6).raw(), 6);
@@ -265,6 +316,13 @@ mod node_graph_conformance {
         )
         .with_nodes(vec![NodeId::from_raw(20)])
         .with_enabled(false);
+        let reroute = RerouteDescriptor::new(
+            RerouteId::from_raw(45),
+            "Bend A",
+            GraphPoint::new(40.0, 50.0),
+        )
+        .with_position(GraphPoint::new(45.0, 55.0))
+        .with_enabled(false);
         let node = NodeDescriptor::new(
             NodeId::from_raw(20),
             "Mix",
@@ -279,10 +337,12 @@ mod node_graph_conformance {
             PortEndpoint::new(node.id, output.id),
             PortEndpoint::new(NodeId::from_raw(21), PortId::from_raw(3)),
         )
+        .with_route_points(vec![NodeGraphEdgeRoutePoint::reroute(reroute.id)])
         .with_enabled(false);
         let graph = NodeGraphDescriptor {
             nodes: vec![node.clone()],
             edges: vec![edge],
+            reroutes: vec![reroute.clone()],
             frames: vec![frame.clone()],
             groups: vec![group.clone()],
         };
@@ -306,6 +366,14 @@ mod node_graph_conformance {
             PortEndpoint::new(NodeId::from_raw(21), PortId::from_raw(3))
         );
         assert!(!graph.edges[0].enabled);
+        assert_eq!(
+            graph.edges[0].route_points,
+            vec![NodeGraphEdgeRoutePoint::reroute(reroute.id)]
+        );
+        assert_eq!(graph.reroutes, vec![reroute]);
+        assert_eq!(graph.reroutes[0].label, "Bend A");
+        assert_eq!(graph.reroutes[0].position, GraphPoint::new(45.0, 55.0));
+        assert!(!graph.reroutes[0].enabled);
         assert_eq!(graph.frames, vec![frame]);
         assert_eq!(graph.groups, vec![group]);
         assert_eq!(graph.validate(), Ok(()));
@@ -458,6 +526,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(4)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -492,6 +561,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(9), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -502,6 +572,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(99)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -552,6 +623,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -597,6 +669,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -627,6 +700,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -691,6 +765,7 @@ mod node_graph_conformance {
                     PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
                 ),
             ],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -735,6 +810,7 @@ mod node_graph_conformance {
                     PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
                 ),
             ],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -744,6 +820,100 @@ mod node_graph_conformance {
         assert_eq!(
             resolved.iter().map(|edge| edge.edge.id).collect::<Vec<_>>(),
             vec![EdgeId::from_raw(70), EdgeId::from_raw(60)]
+        );
+    }
+
+    #[test]
+    fn routed_edge_route_point_order_is_preserved() {
+        let graph = routed_edge_graph(GraphPoint::new(180.0, 20.0));
+        let resolved = graph.resolve_edges().expect("routed edge should resolve");
+
+        assert_eq!(
+            resolved[0]
+                .route_points
+                .iter()
+                .map(|point| point.route_point)
+                .collect::<Vec<_>>(),
+            vec![
+                NodeGraphEdgeRoutePoint::point(GraphPoint::new(120.0, 40.0)),
+                NodeGraphEdgeRoutePoint::reroute(RerouteId::from_raw(10)),
+                NodeGraphEdgeRoutePoint::point(GraphPoint::new(240.0, 60.0)),
+            ]
+        );
+        assert_eq!(
+            resolved[0]
+                .route_points
+                .iter()
+                .map(|point| point.position)
+                .collect::<Vec<_>>(),
+            vec![
+                GraphPoint::new(120.0, 40.0),
+                GraphPoint::new(180.0, 20.0),
+                GraphPoint::new(240.0, 60.0),
+            ]
+        );
+
+        let output =
+            NodeGraphStaticView::new(WidgetId::from_key("graph"), static_viewport(), &graph)
+                .emit()
+                .expect("routed static output");
+        let edge_segments = output
+            .primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Line(line) => Some((line.from, line.to)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(edge_segments.len(), 4);
+        assert_point_close(edge_segments[0].0, Point::new(320.0, 160.0));
+        assert_point_close(edge_segments[0].1, Point::new(360.0, 140.0));
+        assert_point_close(edge_segments[1].0, Point::new(360.0, 140.0));
+        assert_point_close(edge_segments[1].1, Point::new(480.0, 100.0));
+        assert_point_close(edge_segments[2].0, Point::new(480.0, 100.0));
+        assert_point_close(edge_segments[2].1, Point::new(600.0, 180.0));
+        assert_point_close(edge_segments[3].0, Point::new(600.0, 180.0));
+        assert_point_close(edge_segments[3].1, Point::new(720.0, 160.0));
+    }
+
+    #[test]
+    fn stale_reroute_ids_report_deterministic_edge_resolution_errors() {
+        let mut graph = routed_edge_graph(GraphPoint::new(180.0, 20.0));
+        graph.reroutes.clear();
+
+        assert_eq!(
+            graph.resolve_edges(),
+            Err(EdgeResolutionError::MissingReroute {
+                edge: EdgeId::from_raw(50),
+                reroute: RerouteId::from_raw(10),
+            })
+        );
+    }
+
+    #[test]
+    fn moving_reroute_changes_edge_route_metadata_deterministically() {
+        let original = routed_edge_graph(GraphPoint::new(180.0, 20.0));
+        let moved = routed_edge_graph(GraphPoint::new(210.0, 70.0));
+
+        assert_eq!(original.edges[0].route_points, moved.edges[0].route_points);
+        assert_eq!(original.reroutes[0].id, moved.reroutes[0].id);
+        assert_eq!(original.reroutes[0].label, moved.reroutes[0].label);
+
+        let original_route = original.resolve_edges().expect("original route");
+        let moved_route = moved.resolve_edges().expect("moved route");
+
+        assert_eq!(
+            original_route[0].route_points[1].route_point,
+            NodeGraphEdgeRoutePoint::reroute(RerouteId::from_raw(10))
+        );
+        assert_graph_point_close(
+            original_route[0].route_points[1].position,
+            GraphPoint::new(180.0, 20.0),
+        );
+        assert_graph_point_close(
+            moved_route[0].route_points[1].position,
+            GraphPoint::new(210.0, 70.0),
         );
     }
 
@@ -767,6 +937,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(2)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -889,6 +1060,7 @@ mod node_graph_conformance {
                 ]),
             ],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -916,6 +1088,7 @@ mod node_graph_conformance {
                 GraphRect::new(10.0, 20.0, 100.0, 80.0),
             )],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -967,6 +1140,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -987,10 +1161,45 @@ mod node_graph_conformance {
     }
 
     #[test]
+    fn hit_testing_reroutes_prioritizes_topmost_reroute_before_edges() {
+        let mut graph = routed_edge_graph(GraphPoint::new(180.0, 20.0));
+        graph.reroutes.push(RerouteDescriptor::new(
+            RerouteId::from_raw(11),
+            "Top bend",
+            GraphPoint::new(180.0, 20.0),
+        ));
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 400.0, 200.0),
+            NodeGraphPanZoom::default(),
+        );
+        let config = NodeGraphHitTestConfig::new()
+            .with_reroute_size(20.0)
+            .with_edge_tolerance(20.0);
+
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(180.0, 20.0), config),
+            Ok(NodeGraphHitTarget::Reroute(RerouteId::from_raw(11)))
+        );
+
+        graph.reroutes[1].enabled = false;
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(180.0, 20.0), config),
+            Ok(NodeGraphHitTarget::Reroute(RerouteId::from_raw(10)))
+        );
+
+        graph.reroutes[0].enabled = false;
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(180.0, 20.0), config),
+            Ok(NodeGraphHitTarget::Edge(EdgeId::from_raw(50)))
+        );
+    }
+
+    #[test]
     fn hit_testing_frames_groups_and_canvas_are_deterministic() {
         let graph = NodeGraphDescriptor {
             nodes: Vec::new(),
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: vec![
                 NodeFrameDescriptor::new(
                     NodeFrameId::from_raw(1),
@@ -1063,6 +1272,7 @@ mod node_graph_conformance {
                 )
                 .with_enabled(false),
             ],
+            reroutes: Vec::new(),
             frames: vec![
                 NodeFrameDescriptor::new(
                     NodeFrameId::from_raw(30),
@@ -1119,6 +1329,7 @@ mod node_graph_conformance {
                 .with_enabled(false),
             ],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -1158,6 +1369,7 @@ mod node_graph_conformance {
                 )]),
             ],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -1189,6 +1401,7 @@ mod node_graph_conformance {
                 NodeDescriptor::new(duplicate, "Second", GraphRect::ZERO),
             ],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -1213,6 +1426,7 @@ mod node_graph_conformance {
         let graph = NodeGraphDescriptor {
             nodes: Vec::new(),
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: vec![
                 NodeFrameDescriptor::new(
                     duplicate,
@@ -1248,6 +1462,7 @@ mod node_graph_conformance {
         let graph = NodeGraphDescriptor {
             nodes: Vec::new(),
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: vec![
                 NodeGroupDescriptor::new(
@@ -1648,6 +1863,12 @@ mod node_graph_conformance {
             NodeGraphContextTarget::Edge(EdgeId::from_raw(50))
         );
         assert_eq!(
+            NodeGraphContextTarget::from_hit_target(NodeGraphHitTarget::Reroute(
+                RerouteId::from_raw(60)
+            )),
+            NodeGraphContextTarget::Reroute(RerouteId::from_raw(60))
+        );
+        assert_eq!(
             NodeGraphContextTarget::from_hit_target(NodeGraphHitTarget::Port(endpoint)),
             NodeGraphContextTarget::Port(endpoint)
         );
@@ -1833,6 +2054,7 @@ mod node_graph_conformance {
                 GraphRect::ZERO,
             )],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: vec![NodeFrameDescriptor::new(
                 NodeFrameId::from_raw(7),
                 "Frame",
@@ -1960,6 +2182,7 @@ mod node_graph_conformance {
             edges: vec![
                 EdgeDescriptor::new(EdgeId::from_raw(50), source, target).with_enabled(false),
             ],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -2368,6 +2591,7 @@ mod node_graph_conformance {
                 ),
             ],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -2419,6 +2643,7 @@ mod node_graph_conformance {
                 .with_enabled(false),
             ],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -2497,6 +2722,7 @@ mod node_graph_conformance {
                 GraphRect::new(20.0, 15.0, 5.0, 5.0),
             )],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -2531,6 +2757,7 @@ mod node_graph_conformance {
                 ),
             ],
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -2922,6 +3149,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(2)),
                 PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(3)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -2960,6 +3188,7 @@ mod node_graph_conformance {
                 PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
                 PortEndpoint::new(NodeId::from_raw(99), PortId::from_raw(2)),
             )],
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         };
@@ -3007,6 +3236,35 @@ mod node_graph_conformance {
                 && node.state.disabled
                 && node.description.as_deref() == Some("Disabled port")
         }));
+    }
+
+    #[test]
+    fn static_view_reroute_semantics_expose_stable_identity_and_label_metadata() {
+        let graph = routed_edge_graph(GraphPoint::new(180.0, 20.0));
+        let selection = NodeGraphSelection::new()
+            .replace(NodeGraphSelectionTarget::Reroute(RerouteId::from_raw(10)));
+        let output =
+            NodeGraphStaticView::new(WidgetId::from_key("graph"), static_viewport(), &graph)
+                .with_selection(selection)
+                .emit()
+                .expect("routed static output");
+        let reroute = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticRole::Custom("reroute".to_owned()))
+            .expect("reroute semantic node");
+
+        assert_eq!(
+            reroute.id,
+            WidgetId::from_key("graph").child(("reroute", 10_u64))
+        );
+        assert_eq!(reroute.label.as_deref(), Some("Bend A"));
+        assert!(matches!(
+            reroute.state.value,
+            Some(SemanticValue::Text(ref value)) if value == "Bend A"
+        ));
+        assert!(reroute.state.selected);
+        assert_rect_close(reroute.bounds, Rect::new(475.0, 95.0, 10.0, 10.0));
     }
 
     #[test]

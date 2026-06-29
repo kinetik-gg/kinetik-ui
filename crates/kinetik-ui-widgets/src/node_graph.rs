@@ -13,6 +13,8 @@ const MIN_ZOOM: f32 = 0.01;
 pub const DEFAULT_NODE_GRAPH_EDGE_HIT_TOLERANCE: f32 = 6.0;
 /// Default screen-space square size for node graph port hit testing.
 pub const DEFAULT_NODE_GRAPH_PORT_HIT_SIZE: f32 = 8.0;
+/// Default screen-space square size for node graph reroute hit testing.
+pub const DEFAULT_NODE_GRAPH_REROUTE_HIT_SIZE: f32 = 10.0;
 /// Default graph-space height for node title hit testing.
 pub const DEFAULT_NODE_GRAPH_TITLE_BAR_HEIGHT: f32 = 24.0;
 
@@ -41,6 +43,7 @@ macro_rules! node_graph_id {
 node_graph_id!(NodeId, "Stable node identity.");
 node_graph_id!(PortId, "Stable node port identity.");
 node_graph_id!(EdgeId, "Stable node graph edge identity.");
+node_graph_id!(RerouteId, "Stable node graph reroute identity.");
 node_graph_id!(NodeFrameId, "Stable identity for a node frame surface.");
 node_graph_id!(NodeGroupId, "Stable identity for a node group.");
 node_graph_id!(
@@ -182,8 +185,31 @@ impl NodeDescriptor {
     }
 }
 
+/// Data-only edge route point descriptor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NodeGraphEdgeRoutePoint {
+    /// Literal graph-space route point.
+    Point(GraphPoint),
+    /// Route point resolved from a reroute descriptor.
+    Reroute(RerouteId),
+}
+
+impl NodeGraphEdgeRoutePoint {
+    /// Creates a literal graph-space route point.
+    #[must_use]
+    pub const fn point(position: GraphPoint) -> Self {
+        Self::Point(position)
+    }
+
+    /// Creates a route point that follows a reroute descriptor.
+    #[must_use]
+    pub const fn reroute(reroute: RerouteId) -> Self {
+        Self::Reroute(reroute)
+    }
+}
+
 /// Data-only edge descriptor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EdgeDescriptor {
     /// Stable edge identity.
     pub id: EdgeId,
@@ -191,6 +217,8 @@ pub struct EdgeDescriptor {
     pub from: PortEndpoint,
     /// Input endpoint.
     pub to: PortEndpoint,
+    /// Ordered intermediate graph-space route points.
+    pub route_points: Vec<NodeGraphEdgeRoutePoint>,
     /// Whether the edge is currently available.
     pub enabled: bool,
 }
@@ -203,13 +231,24 @@ impl EdgeDescriptor {
             id,
             from,
             to,
+            route_points: Vec::new(),
             enabled: true,
         }
     }
 
+    /// Sets ordered intermediate route points.
+    #[must_use]
+    pub fn with_route_points(
+        mut self,
+        route_points: impl Into<Vec<NodeGraphEdgeRoutePoint>>,
+    ) -> Self {
+        self.route_points = route_points.into();
+        self
+    }
+
     /// Sets whether the edge is currently available.
     #[must_use]
-    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
@@ -239,13 +278,26 @@ pub struct ResolvedEndpoint<'a> {
     pub anchor: GraphPoint,
 }
 
-/// Resolved edge with source and target descriptor references.
+/// Resolved edge route point metadata.
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedEdgeRoutePoint<'a> {
+    /// Descriptor route point that produced this resolved point.
+    pub route_point: NodeGraphEdgeRoutePoint,
+    /// Resolved graph-space position.
+    pub position: GraphPoint,
+    /// Reroute descriptor, when this route point follows one.
+    pub reroute: Option<&'a RerouteDescriptor>,
+}
+
+/// Resolved edge with source, target, and route descriptor references.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedEdge<'a> {
     /// Edge descriptor.
     pub edge: &'a EdgeDescriptor,
     /// Resolved output endpoint.
     pub from: ResolvedEndpoint<'a>,
+    /// Ordered resolved intermediate route points.
+    pub route_points: Vec<ResolvedEdgeRoutePoint<'a>>,
     /// Resolved input endpoint.
     pub to: ResolvedEndpoint<'a>,
 }
@@ -317,6 +369,53 @@ pub enum EdgeResolutionError {
         /// Target port compatibility key.
         input: PortTypeId,
     },
+    /// An edge route references a missing reroute descriptor.
+    MissingReroute {
+        /// Edge being resolved.
+        edge: EdgeId,
+        /// Missing reroute ID.
+        reroute: RerouteId,
+    },
+}
+
+/// Data-only reroute descriptor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RerouteDescriptor {
+    /// Stable reroute identity.
+    pub id: RerouteId,
+    /// User-facing reroute label.
+    pub label: String,
+    /// Reroute position in graph space.
+    pub position: GraphPoint,
+    /// Whether the reroute is currently available.
+    pub enabled: bool,
+}
+
+impl RerouteDescriptor {
+    /// Creates an enabled reroute descriptor.
+    #[must_use]
+    pub fn new(id: RerouteId, label: impl Into<String>, position: GraphPoint) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            position,
+            enabled: true,
+        }
+    }
+
+    /// Sets the reroute graph-space position.
+    #[must_use]
+    pub const fn with_position(mut self, position: GraphPoint) -> Self {
+        self.position = position;
+        self
+    }
+
+    /// Sets whether the reroute is currently available.
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
 }
 
 /// Data-only frame descriptor for node graph surfaces.
@@ -402,6 +501,8 @@ pub struct NodeGraphDescriptor {
     pub nodes: Vec<NodeDescriptor>,
     /// Edges.
     pub edges: Vec<EdgeDescriptor>,
+    /// Reroutes.
+    pub reroutes: Vec<RerouteDescriptor>,
     /// Frames.
     pub frames: Vec<NodeFrameDescriptor>,
     /// Groups.
@@ -415,6 +516,7 @@ impl NodeGraphDescriptor {
         Self {
             nodes: Vec::new(),
             edges: Vec::new(),
+            reroutes: Vec::new(),
             frames: Vec::new(),
             groups: Vec::new(),
         }
@@ -428,6 +530,7 @@ impl NodeGraphDescriptor {
     /// duplicated, or a node contains duplicate port IDs.
     pub fn validate(&self) -> Result<(), NodeGraphValidationError> {
         validate_node_graph_descriptors(&self.nodes)?;
+        validate_node_graph_reroute_descriptors(&self.reroutes)?;
         validate_node_graph_frame_descriptors(&self.frames)?;
         validate_node_graph_group_descriptors(&self.groups)
     }
@@ -592,6 +695,11 @@ pub enum NodeGraphValidationError {
         /// Duplicated port ID.
         port: PortId,
     },
+    /// The graph contains a duplicate reroute ID.
+    DuplicateRerouteId {
+        /// Duplicated reroute ID.
+        id: RerouteId,
+    },
     /// The graph contains a duplicate frame ID.
     DuplicateFrameId {
         /// Duplicated frame ID.
@@ -632,6 +740,19 @@ pub fn validate_node_graph_descriptors(
                     port: port.id,
                 });
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_node_graph_reroute_descriptors(
+    reroutes: &[RerouteDescriptor],
+) -> Result<(), NodeGraphValidationError> {
+    let mut seen_reroutes = BTreeSet::new();
+    for reroute in reroutes {
+        if !seen_reroutes.insert(reroute.id) {
+            return Err(NodeGraphValidationError::DuplicateRerouteId { id: reroute.id });
         }
     }
 
@@ -791,10 +912,48 @@ pub fn resolve_node_graph_edges(
             });
         }
 
-        resolved.push(ResolvedEdge { edge, from, to });
+        let route_points = resolve_edge_route_points(edge, &graph.reroutes)?;
+
+        resolved.push(ResolvedEdge {
+            edge,
+            from,
+            route_points,
+            to,
+        });
     }
 
     Ok(resolved)
+}
+
+fn resolve_edge_route_points<'a>(
+    edge: &'a EdgeDescriptor,
+    reroutes: &'a [RerouteDescriptor],
+) -> Result<Vec<ResolvedEdgeRoutePoint<'a>>, EdgeResolutionError> {
+    edge.route_points
+        .iter()
+        .map(|route_point| match *route_point {
+            NodeGraphEdgeRoutePoint::Point(position) => Ok(ResolvedEdgeRoutePoint {
+                route_point: *route_point,
+                position: position.sanitized(),
+                reroute: None,
+            }),
+            NodeGraphEdgeRoutePoint::Reroute(reroute_id) => {
+                let reroute = reroutes
+                    .iter()
+                    .find(|reroute| reroute.id == reroute_id)
+                    .ok_or(EdgeResolutionError::MissingReroute {
+                        edge: edge.id,
+                        reroute: reroute_id,
+                    })?;
+
+                Ok(ResolvedEdgeRoutePoint {
+                    route_point: *route_point,
+                    position: reroute.position.sanitized(),
+                    reroute: Some(reroute),
+                })
+            }
+        })
+        .collect()
 }
 
 fn resolve_endpoint(
@@ -960,7 +1119,7 @@ fn resolve_link_edit_edge(
         }
 
         if candidate.id == edge {
-            resolved = Some(*candidate);
+            resolved = Some(candidate);
         }
     }
 
@@ -1385,6 +1544,8 @@ pub enum NodeGraphHitTarget {
     NodeTitle(NodeId),
     /// The node body below the title bar.
     NodeBody(NodeId),
+    /// A reroute handle.
+    Reroute(RerouteId),
     /// A resolved edge segment.
     Edge(EdgeId),
     /// A frame surface.
@@ -1402,6 +1563,8 @@ pub enum NodeGraphSelectionTarget {
     Node(NodeId),
     /// A graph edge.
     Edge(EdgeId),
+    /// A reroute handle.
+    Reroute(RerouteId),
     /// A node port endpoint.
     Port(PortEndpoint),
 }
@@ -1417,6 +1580,7 @@ impl NodeGraphSelectionTarget {
             NodeGraphHitTarget::NodeTitle(node) | NodeGraphHitTarget::NodeBody(node) => {
                 Some(Self::Node(node))
             }
+            NodeGraphHitTarget::Reroute(reroute) => Some(Self::Reroute(reroute)),
             NodeGraphHitTarget::Edge(edge) => Some(Self::Edge(edge)),
             NodeGraphHitTarget::Frame(_)
             | NodeGraphHitTarget::Group(_)
@@ -1489,7 +1653,9 @@ impl NodeGraphSelection {
             .iter()
             .filter_map(|target| match target {
                 NodeGraphSelectionTarget::Node(node) => Some(*node),
-                NodeGraphSelectionTarget::Edge(_) | NodeGraphSelectionTarget::Port(_) => None,
+                NodeGraphSelectionTarget::Edge(_)
+                | NodeGraphSelectionTarget::Reroute(_)
+                | NodeGraphSelectionTarget::Port(_) => None,
             })
             .collect()
     }
@@ -1588,6 +1754,8 @@ pub enum NodeGraphContextTarget {
     Node(NodeId),
     /// A graph edge.
     Edge(EdgeId),
+    /// A reroute handle.
+    Reroute(RerouteId),
     /// A node port endpoint.
     Port(PortEndpoint),
     /// A frame surface.
@@ -1607,6 +1775,7 @@ impl NodeGraphContextTarget {
             NodeGraphHitTarget::NodeTitle(node) | NodeGraphHitTarget::NodeBody(node) => {
                 Self::Node(node)
             }
+            NodeGraphHitTarget::Reroute(reroute) => Self::Reroute(reroute),
             NodeGraphHitTarget::Edge(edge) => Self::Edge(edge),
             NodeGraphHitTarget::Frame(frame) => Self::Frame(frame),
             NodeGraphHitTarget::Group(group) => Self::Group(group),
@@ -1620,6 +1789,7 @@ impl NodeGraphContextTarget {
         match self {
             Self::Node(node) => Some(NodeGraphSelectionTarget::Node(node)),
             Self::Edge(edge) => Some(NodeGraphSelectionTarget::Edge(edge)),
+            Self::Reroute(reroute) => Some(NodeGraphSelectionTarget::Reroute(reroute)),
             Self::Port(endpoint) => Some(NodeGraphSelectionTarget::Port(endpoint)),
             Self::Frame(_) | Self::Group(_) | Self::Canvas => None,
         }
@@ -1927,6 +2097,7 @@ fn node_graph_disconnect_context_action(
             node_graph_endpoint_disconnect_request(graph, target, endpoint)
         }
         NodeGraphContextTarget::Node(_)
+        | NodeGraphContextTarget::Reroute(_)
         | NodeGraphContextTarget::Frame(_)
         | NodeGraphContextTarget::Group(_)
         | NodeGraphContextTarget::Canvas => {
@@ -2201,6 +2372,11 @@ fn context_selectable_targets(graph: &NodeGraphDescriptor) -> Vec<NodeGraphSelec
             targets.insert(NodeGraphSelectionTarget::Edge(edge.id));
         }
     }
+    for reroute in &graph.reroutes {
+        if reroute.enabled {
+            targets.insert(NodeGraphSelectionTarget::Reroute(reroute.id));
+        }
+    }
 
     targets.into_iter().collect()
 }
@@ -2236,6 +2412,13 @@ fn validate_context_target_available(
             .iter()
             .find(|edge| edge.id == id)
             .map(|edge| edge.enabled)
+            .ok_or(NodeGraphContextActionUnavailableReason::MissingTarget)
+            .and_then(enabled_context_target),
+        NodeGraphContextTarget::Reroute(id) => graph
+            .reroutes
+            .iter()
+            .find(|reroute| reroute.id == id)
+            .map(|reroute| reroute.enabled)
             .ok_or(NodeGraphContextActionUnavailableReason::MissingTarget)
             .and_then(enabled_context_target),
         NodeGraphContextTarget::Port(endpoint) => {
@@ -3455,6 +3638,8 @@ pub struct NodeGraphHitTestConfig {
     pub edge_tolerance: f32,
     /// Screen-space square size for port hits.
     pub port_size: f32,
+    /// Screen-space square size for reroute hits.
+    pub reroute_size: f32,
     /// Graph-space height of the title target within each node.
     pub title_bar_height: f32,
 }
@@ -3464,6 +3649,7 @@ impl Default for NodeGraphHitTestConfig {
         Self {
             edge_tolerance: DEFAULT_NODE_GRAPH_EDGE_HIT_TOLERANCE,
             port_size: DEFAULT_NODE_GRAPH_PORT_HIT_SIZE,
+            reroute_size: DEFAULT_NODE_GRAPH_REROUTE_HIT_SIZE,
             title_bar_height: DEFAULT_NODE_GRAPH_TITLE_BAR_HEIGHT,
         }
     }
@@ -3476,6 +3662,7 @@ impl NodeGraphHitTestConfig {
         Self {
             edge_tolerance: DEFAULT_NODE_GRAPH_EDGE_HIT_TOLERANCE,
             port_size: DEFAULT_NODE_GRAPH_PORT_HIT_SIZE,
+            reroute_size: DEFAULT_NODE_GRAPH_REROUTE_HIT_SIZE,
             title_bar_height: DEFAULT_NODE_GRAPH_TITLE_BAR_HEIGHT,
         }
     }
@@ -3494,6 +3681,13 @@ impl NodeGraphHitTestConfig {
         self
     }
 
+    /// Sets the reroute hit square size in screen logical units.
+    #[must_use]
+    pub const fn with_reroute_size(mut self, reroute_size: f32) -> Self {
+        self.reroute_size = reroute_size;
+        self
+    }
+
     /// Sets the node title hit height in graph units.
     #[must_use]
     pub const fn with_title_bar_height(mut self, title_bar_height: f32) -> Self {
@@ -3505,6 +3699,7 @@ impl NodeGraphHitTestConfig {
         Self {
             edge_tolerance: finite_non_negative(self.edge_tolerance),
             port_size: finite_non_negative(self.port_size),
+            reroute_size: finite_non_negative(self.reroute_size),
             title_bar_height: finite_non_negative(self.title_bar_height),
         }
     }
@@ -3534,9 +3729,10 @@ impl From<EdgeResolutionError> for NodeGraphHitTestError {
 /// Resolves one UI logical screen-space point to a stable typed node graph target.
 ///
 /// Hit priority is deterministic: enabled ports, enabled node title/body,
-/// enabled edges with enabled endpoint nodes, enabled frames, enabled groups,
-/// then canvas. Within one priority tier, later descriptors win so hit testing
-/// follows the same topmost-last ordering used by static primitive emission.
+/// enabled reroutes, enabled edges with enabled endpoint nodes, enabled frames,
+/// enabled groups, then canvas. Within one priority tier, later descriptors
+/// win so hit testing follows the same topmost-last ordering used by static
+/// primitive emission.
 /// Disabled targets are skipped instead of returned.
 ///
 /// # Errors
@@ -3578,6 +3774,10 @@ pub fn hit_test_node_graph_with_config(
     }
 
     if let Some(target) = hit_test_nodes(viewport, graph, point, config) {
+        return Ok(target);
+    }
+
+    if let Some(target) = hit_test_reroutes(viewport, graph, point, config) {
         return Ok(target);
     }
 
@@ -3645,6 +3845,23 @@ fn hit_test_nodes(
     })
 }
 
+fn hit_test_reroutes(
+    viewport: NodeGraphViewport,
+    graph: &NodeGraphDescriptor,
+    point: Point,
+    config: NodeGraphHitTestConfig,
+) -> Option<NodeGraphHitTarget> {
+    graph.reroutes.iter().rev().find_map(|reroute| {
+        if !reroute.enabled {
+            return None;
+        }
+
+        reroute_hit_rect(viewport, reroute, config.reroute_size)
+            .contains_point(point)
+            .then_some(NodeGraphHitTarget::Reroute(reroute.id))
+    })
+}
+
 fn hit_test_edges(
     viewport: NodeGraphViewport,
     edges: &[ResolvedEdge<'_>],
@@ -3656,9 +3873,11 @@ fn hit_test_edges(
             return None;
         }
 
-        let from = viewport.graph_to_screen(edge.from.anchor);
-        let to = viewport.graph_to_screen(edge.to.anchor);
-        (point_to_segment_distance(point, from, to) <= config.edge_tolerance)
+        edge_screen_points(viewport, edge)
+            .windows(2)
+            .any(|segment| {
+                point_to_segment_distance(point, segment[0], segment[1]) <= config.edge_tolerance
+            })
             .then_some(NodeGraphHitTarget::Edge(edge.edge.id))
     })
 }
@@ -3706,6 +3925,12 @@ fn port_hit_rect(
     let anchor = viewport.graph_to_screen(port_anchor(node, port));
     let size = finite_non_negative(size);
     Rect::new(anchor.x - size * 0.5, anchor.y - size * 0.5, size, size)
+}
+
+fn reroute_hit_rect(viewport: NodeGraphViewport, reroute: &RerouteDescriptor, size: f32) -> Rect {
+    let center = viewport.graph_to_screen(reroute.position);
+    let size = finite_non_negative(size);
+    Rect::new(center.x - size * 0.5, center.y - size * 0.5, size, size)
 }
 
 fn node_title_rect(
@@ -3864,6 +4089,16 @@ pub struct NodeGraphStyle {
     pub disabled_edge: Color,
     /// Edge stroke width.
     pub edge_width: f32,
+    /// Reroute body fill.
+    pub reroute_fill: Color,
+    /// Disabled reroute body fill.
+    pub disabled_reroute_fill: Color,
+    /// Reroute outline color.
+    pub reroute_stroke: Color,
+    /// Reroute outline width.
+    pub reroute_stroke_width: f32,
+    /// Reroute square size in screen logical units.
+    pub reroute_size: f32,
     /// Normal port style.
     pub port: NodeGraphPortStyle,
     /// Disabled port style.
@@ -3896,6 +4131,11 @@ impl Default for NodeGraphStyle {
             edge: Color::rgba(0.70, 0.78, 0.90, 1.0),
             disabled_edge: Color::rgba(0.36, 0.38, 0.42, 1.0),
             edge_width: 2.0,
+            reroute_fill: Color::rgba(0.22, 0.28, 0.34, 1.0),
+            disabled_reroute_fill: Color::rgba(0.16, 0.17, 0.19, 1.0),
+            reroute_stroke: Color::rgba(0.76, 0.82, 0.90, 1.0),
+            reroute_stroke_width: 1.0,
+            reroute_size: DEFAULT_NODE_GRAPH_REROUTE_HIT_SIZE,
             port: NodeGraphPortStyle {
                 fill: Color::rgba(0.25, 0.55, 0.90, 1.0),
                 stroke: Color::rgba(0.78, 0.86, 0.96, 1.0),
@@ -4046,7 +4286,17 @@ impl<'a> NodeGraphStaticView<'a> {
             primitives.extend(grid_primitives(self.viewport, grid));
         }
 
-        primitives.extend(resolved_edges.iter().map(|edge| self.edge_primitive(edge)));
+        primitives.extend(
+            resolved_edges
+                .iter()
+                .flat_map(|edge| self.edge_primitives(edge)),
+        );
+        primitives.extend(
+            self.graph
+                .reroutes
+                .iter()
+                .map(|reroute| self.reroute_primitive(reroute)),
+        );
         primitives.extend(
             self.graph
                 .nodes
@@ -4071,16 +4321,38 @@ impl<'a> NodeGraphStaticView<'a> {
         primitives
     }
 
-    fn edge_primitive(&self, edge: &ResolvedEdge<'_>) -> Primitive {
+    fn edge_primitives(&self, edge: &ResolvedEdge<'_>) -> Vec<Primitive> {
         let color = if edge.edge.enabled {
             self.style.edge
         } else {
             self.style.disabled_edge
         };
-        Primitive::Line(LinePrimitive {
-            from: self.viewport.graph_to_screen(edge.from.anchor),
-            to: self.viewport.graph_to_screen(edge.to.anchor),
-            stroke: Stroke::new(self.style.edge_width, Brush::Solid(color)),
+        let stroke = Stroke::new(self.style.edge_width, Brush::Solid(color));
+        edge_screen_points(self.viewport, edge)
+            .windows(2)
+            .map(|segment| {
+                Primitive::Line(LinePrimitive {
+                    from: segment[0],
+                    to: segment[1],
+                    stroke,
+                })
+            })
+            .collect()
+    }
+
+    fn reroute_primitive(&self, reroute: &RerouteDescriptor) -> Primitive {
+        Primitive::Rect(RectPrimitive {
+            rect: reroute_hit_rect(self.viewport, reroute, self.style.reroute_size),
+            fill: Some(Brush::Solid(if reroute.enabled {
+                self.style.reroute_fill
+            } else {
+                self.style.disabled_reroute_fill
+            })),
+            stroke: Some(Stroke::new(
+                self.style.reroute_stroke_width,
+                Brush::Solid(self.style.reroute_stroke),
+            )),
+            radius: CornerRadius::all(2.0),
         })
     }
 
@@ -4149,6 +4421,11 @@ impl<'a> NodeGraphStaticView<'a> {
         let edge_ids = resolved_edges
             .iter()
             .map(|edge| self.edge_semantic_id(edge.edge.id));
+        let reroute_ids = self
+            .graph
+            .reroutes
+            .iter()
+            .map(|reroute| self.reroute_semantic_id(reroute.id));
         let node_ids = self
             .graph
             .nodes
@@ -4161,10 +4438,16 @@ impl<'a> NodeGraphStaticView<'a> {
                 self.viewport.effective_bounds(),
             )
             .with_label("Node graph")
-            .with_children(edge_ids.chain(node_ids)),
+            .with_children(edge_ids.chain(reroute_ids).chain(node_ids)),
         ];
 
         semantics.extend(resolved_edges.iter().map(|edge| self.edge_semantics(edge)));
+        semantics.extend(
+            self.graph
+                .reroutes
+                .iter()
+                .map(|reroute| self.reroute_semantics(reroute)),
+        );
         for node in &self.graph.nodes {
             semantics.push(self.node_semantics(node));
             semantics.extend(
@@ -4180,10 +4463,7 @@ impl<'a> NodeGraphStaticView<'a> {
         let mut node = SemanticNode::new(
             self.edge_semantic_id(edge.edge.id),
             SemanticRole::Custom("edge".to_owned()),
-            line_bounds(
-                self.viewport.graph_to_screen(edge.from.anchor),
-                self.viewport.graph_to_screen(edge.to.anchor),
-            ),
+            polyline_bounds(&edge_screen_points(self.viewport, edge)),
         )
         .with_label(format!(
             "Edge {}: {} {} to {} {}",
@@ -4197,6 +4477,21 @@ impl<'a> NodeGraphStaticView<'a> {
         node.state.selected = self
             .selection
             .contains(NodeGraphSelectionTarget::Edge(edge.edge.id));
+        node
+    }
+
+    fn reroute_semantics(&self, reroute: &RerouteDescriptor) -> SemanticNode {
+        let mut node = SemanticNode::new(
+            self.reroute_semantic_id(reroute.id),
+            SemanticRole::Custom("reroute".to_owned()),
+            reroute_hit_rect(self.viewport, reroute, self.style.reroute_size),
+        )
+        .with_label(reroute.label.clone());
+        node.state.disabled = !reroute.enabled;
+        node.state.selected = self
+            .selection
+            .contains(NodeGraphSelectionTarget::Reroute(reroute.id));
+        node.state.value = Some(SemanticValue::Text(reroute.label.clone()));
         node
     }
 
@@ -4262,6 +4557,10 @@ impl<'a> NodeGraphStaticView<'a> {
         self.id.child(("edge", edge.raw()))
     }
 
+    fn reroute_semantic_id(&self, reroute: RerouteId) -> WidgetId {
+        self.id.child(("reroute", reroute.raw()))
+    }
+
     fn node_semantic_id(&self, node: NodeId) -> WidgetId {
         self.id.child(("node", node.raw()))
     }
@@ -4316,13 +4615,32 @@ fn grid_primitives(viewport: NodeGraphViewport, grid: NodeGraphGridStyle) -> Vec
     primitives
 }
 
-fn line_bounds(from: Point, to: Point) -> Rect {
-    Rect::from_min_max(
-        Point::new(from.x.min(to.x), from.y.min(to.y)),
-        Point::new(from.x.max(to.x), from.y.max(to.y)),
-    )
-    .outset(1.0)
-    .max_zero()
+fn edge_screen_points(viewport: NodeGraphViewport, edge: &ResolvedEdge<'_>) -> Vec<Point> {
+    let mut points = Vec::with_capacity(edge.route_points.len() + 2);
+    points.push(viewport.graph_to_screen(edge.from.anchor));
+    points.extend(
+        edge.route_points
+            .iter()
+            .map(|route_point| viewport.graph_to_screen(route_point.position)),
+    );
+    points.push(viewport.graph_to_screen(edge.to.anchor));
+    points
+}
+
+fn polyline_bounds(points: &[Point]) -> Rect {
+    let Some((first, rest)) = points.split_first() else {
+        return Rect::ZERO;
+    };
+    let first = sanitize_point(*first);
+    let mut min = first;
+    let mut max = first;
+    for point in rest {
+        let point = sanitize_point(*point);
+        min = Point::new(min.x.min(point.x), min.y.min(point.y));
+        max = Point::new(max.x.max(point.x), max.y.max(point.y));
+    }
+
+    Rect::from_min_max(min, max).outset(1.0).max_zero()
 }
 
 #[allow(clippy::cast_precision_loss)]
