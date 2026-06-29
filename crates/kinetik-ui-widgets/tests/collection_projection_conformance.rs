@@ -170,6 +170,30 @@ mod collection_projection_conformance {
     }
 
     #[test]
+    fn descending_asset_sort_preserves_equal_primary_key_order() {
+        let model = AssetBrowserModel::new(vec![
+            asset(10, "Terrain", "mesh", &["surface"]),
+            asset(20, "Concrete", "material", &["surface"]),
+            asset(30, "Brick", "material", &["surface"]),
+            asset(40, "Studio HDRI", "image", &["lighting"]),
+        ]);
+
+        let by_kind_desc = model.projected(
+            |_| true,
+            Some(AssetBrowserSort::new(
+                AssetBrowserSortKey::Kind,
+                SortDirection::Descending,
+            )),
+        );
+
+        assert_eq!(
+            by_kind_desc.visible_ids(),
+            vec![id(10), id(20), id(30), id(40)]
+        );
+        assert_eq!(by_kind_desc.source_indices(), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
     fn asset_grid_and_list_selection_survives_view_mode_switch() {
         let model = asset_model();
         let projection = model.projected(

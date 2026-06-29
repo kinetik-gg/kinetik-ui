@@ -276,8 +276,7 @@ impl AssetBrowserModel {
             AssetBrowserSortKey::Name => lhs_item.name.cmp(&rhs_item.name),
             AssetBrowserSortKey::Kind => lhs_item.kind.cmp(&rhs_item.kind),
             AssetBrowserSortKey::Tags => lhs_item.tags.cmp(&rhs_item.tags),
-        }
-        .then_with(|| lhs.source_index.cmp(&rhs.source_index));
+        };
 
         match sort.direction {
             SortDirection::Ascending => order,
