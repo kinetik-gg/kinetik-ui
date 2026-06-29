@@ -1,5 +1,6 @@
 //! Data-only asset browser contracts for app-owned asset collections.
 
+use std::cmp::Ordering;
 use std::ops::Range;
 
 use kinetik_ui_core::{
@@ -8,9 +9,9 @@ use kinetik_ui_core::{
 };
 
 use crate::{
-    CollectionContextTarget, CollectionDragSource, GridLayout, InlineEditBeginRequest,
-    InlineEditEligibility, ItemId, ListLayout, Selection, VirtualWindowRequest,
-    inline_edit_widget_id, virtual_window,
+    CollectionContextTarget, CollectionDragSource, CollectionProjectedItem, CollectionProjection,
+    GridLayout, InlineEditBeginRequest, InlineEditEligibility, ItemId, ListLayout, Selection,
+    SortDirection, VirtualWindowRequest, inline_edit_widget_id, virtual_window,
 };
 
 /// Generic asset browser view mode.
@@ -20,6 +21,36 @@ pub enum AssetBrowserViewMode {
     Grid,
     /// Show assets as fixed-height list rows.
     List,
+}
+
+/// Asset browser sort key supplied by app-owned asset descriptors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetBrowserSortKey {
+    /// Keep source collection order.
+    Source,
+    /// Sort by the asset name field.
+    Name,
+    /// Sort by the asset kind field.
+    Kind,
+    /// Sort by the asset tag list.
+    Tags,
+}
+
+/// Asset browser sort contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssetBrowserSort {
+    /// App-provided key to sort by.
+    pub key: AssetBrowserSortKey,
+    /// Sort direction.
+    pub direction: SortDirection,
+}
+
+impl AssetBrowserSort {
+    /// Creates an asset sort contract.
+    #[must_use]
+    pub const fn new(key: AssetBrowserSortKey, direction: SortDirection) -> Self {
+        Self { key, direction }
+    }
 }
 
 /// App-owned fallback metadata used when an asset has no thumbnail.
@@ -176,10 +207,82 @@ impl AssetBrowserModel {
         self.items.iter().map(|item| item.id).collect()
     }
 
+    /// Returns an identity projection over all asset descriptors.
+    #[must_use]
+    pub fn projection(&self) -> CollectionProjection {
+        CollectionProjection::from_source_ids(&self.item_ids())
+    }
+
+    /// Returns a filtered asset projection without mutating source descriptors.
+    #[must_use]
+    pub fn filtered_projection(
+        &self,
+        mut include: impl FnMut(&AssetBrowserItem) -> bool,
+    ) -> CollectionProjection {
+        CollectionProjection::from_items(
+            self.items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| include(item))
+                .map(|(source_index, item)| CollectionProjectedItem::new(item.id, source_index)),
+        )
+    }
+
+    /// Returns a filtered and optionally sorted asset projection.
+    #[must_use]
+    pub fn projected(
+        &self,
+        include: impl FnMut(&AssetBrowserItem) -> bool,
+        sort: Option<AssetBrowserSort>,
+    ) -> CollectionProjection {
+        let projection = self.filtered_projection(include);
+        if let Some(sort) = sort {
+            self.sorted_projection(&projection, sort)
+        } else {
+            projection
+        }
+    }
+
+    /// Sorts an existing projection by app-provided asset keys.
+    #[must_use]
+    pub fn sorted_projection(
+        &self,
+        projection: &CollectionProjection,
+        sort: AssetBrowserSort,
+    ) -> CollectionProjection {
+        projection.sorted_by(|lhs, rhs| self.compare_projected_assets(lhs, rhs, sort))
+    }
+
     /// Returns an asset descriptor by stable ID.
     #[must_use]
     pub fn item_by_id(&self, id: ItemId) -> Option<&AssetBrowserItem> {
         self.items.iter().find(|item| item.id == id)
+    }
+
+    fn compare_projected_assets(
+        &self,
+        lhs: &CollectionProjectedItem,
+        rhs: &CollectionProjectedItem,
+        sort: AssetBrowserSort,
+    ) -> Ordering {
+        let Some(lhs_item) = self.items.get(lhs.source_index) else {
+            return lhs.source_index.cmp(&rhs.source_index);
+        };
+        let Some(rhs_item) = self.items.get(rhs.source_index) else {
+            return lhs.source_index.cmp(&rhs.source_index);
+        };
+        let order = match sort.key {
+            AssetBrowserSortKey::Source => lhs.source_index.cmp(&rhs.source_index),
+            AssetBrowserSortKey::Name => lhs_item.name.cmp(&rhs_item.name),
+            AssetBrowserSortKey::Kind => lhs_item.kind.cmp(&rhs_item.kind),
+            AssetBrowserSortKey::Tags => lhs_item.tags.cmp(&rhs_item.tags),
+        }
+        .then_with(|| lhs.source_index.cmp(&rhs.source_index));
+
+        match sort.direction {
+            SortDirection::Ascending => order,
+            SortDirection::Descending => order.reverse(),
+        }
     }
 
     /// Creates an inline rename begin request for the active selected item.
@@ -457,13 +560,34 @@ impl AssetBrowserLayout {
         selection: &Selection,
         hovered: Option<ItemId>,
     ) -> AssetBrowserLayoutResult {
+        self.resolve_projected(
+            bounds,
+            model,
+            &model.projection(),
+            scroll_offset,
+            selection,
+            hovered,
+        )
+    }
+
+    /// Resolves item rectangles and presentation metadata through a projection.
+    #[must_use]
+    pub fn resolve_projected(
+        self,
+        bounds: Rect,
+        model: &AssetBrowserModel,
+        projection: &CollectionProjection,
+        scroll_offset: f32,
+        selection: &Selection,
+        hovered: Option<ItemId>,
+    ) -> AssetBrowserLayoutResult {
         let bounds = finite_rect(bounds);
         match self.view_mode {
             AssetBrowserViewMode::Grid => {
-                self.resolve_grid(bounds, model, scroll_offset, selection, hovered)
+                self.resolve_grid(bounds, model, projection, scroll_offset, selection, hovered)
             }
             AssetBrowserViewMode::List => {
-                self.resolve_list(bounds, model, scroll_offset, selection, hovered)
+                self.resolve_list(bounds, model, projection, scroll_offset, selection, hovered)
             }
         }
     }
@@ -472,6 +596,7 @@ impl AssetBrowserLayout {
         self,
         bounds: Rect,
         model: &AssetBrowserModel,
+        projection: &CollectionProjection,
         scroll_offset: f32,
         selection: &Selection,
         hovered: Option<ItemId>,
@@ -481,7 +606,7 @@ impl AssetBrowserLayout {
         };
         let gap = self.grid.effective_gap();
         let columns = self.grid.column_count(bounds);
-        let row_count = row_count(model.len(), columns);
+        let row_count = row_count(projection.len(), columns);
         let row_extent = item_size.height + gap;
         let window = virtual_window(VirtualWindowRequest {
             item_count: row_count,
@@ -491,8 +616,8 @@ impl AssetBrowserLayout {
             overscan: self.overscan,
         });
         let materialized_range =
-            item_range_for_rows(&window.materialized_range, columns, model.len());
-        let visible_range = item_range_for_rows(&window.visible_range, columns, model.len());
+            item_range_for_rows(&window.materialized_range, columns, projection.len());
+        let visible_range = item_range_for_rows(&window.visible_range, columns, projection.len());
         let rect_bounds = Rect::new(
             bounds.x,
             finite_sum(bounds.y, -window.clamped_scroll_offset),
@@ -501,12 +626,13 @@ impl AssetBrowserLayout {
         );
         let items = self
             .grid
-            .item_rects(rect_bounds, model.len(), materialized_range.clone())
+            .item_rects(rect_bounds, projection.len(), materialized_range.clone())
             .into_iter()
             .filter_map(|item_rect| {
-                model.items.get(item_rect.index).map(|item| {
+                let projected = projection.get(item_rect.index)?;
+                model.items.get(projected.source_index).map(|item| {
                     let item = AssetBrowserResolvedItem::from_item(
-                        item_rect.index,
+                        projected.source_index,
                         item,
                         selection,
                         hovered,
@@ -532,13 +658,17 @@ impl AssetBrowserLayout {
         self,
         bounds: Rect,
         model: &AssetBrowserModel,
+        projection: &CollectionProjection,
         scroll_offset: f32,
         selection: &Selection,
         hovered: Option<ItemId>,
     ) -> AssetBrowserLayoutResult {
-        let window =
-            self.list
-                .virtual_window(model.len(), scroll_offset, bounds.height, self.overscan);
+        let window = self.list.virtual_window(
+            projection.len(),
+            scroll_offset,
+            bounds.height,
+            self.overscan,
+        );
         let rect_bounds = Rect::new(
             bounds.x,
             finite_sum(bounds.y, -window.clamped_scroll_offset),
@@ -547,12 +677,17 @@ impl AssetBrowserLayout {
         );
         let items = self
             .list
-            .row_rects(rect_bounds, model.len(), window.materialized_range.clone())
+            .row_rects(
+                rect_bounds,
+                projection.len(),
+                window.materialized_range.clone(),
+            )
             .into_iter()
             .filter_map(|item_rect| {
-                model.items.get(item_rect.index).map(|item| {
+                let projected = projection.get(item_rect.index)?;
+                model.items.get(projected.source_index).map(|item| {
                     let item = AssetBrowserResolvedItem::from_item(
-                        item_rect.index,
+                        projected.source_index,
                         item,
                         selection,
                         hovered,

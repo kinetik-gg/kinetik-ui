@@ -244,6 +244,30 @@ impl OutlinerModel {
             .collect()
     }
 
+    /// Resolves visible rows after applying an app-owned deterministic filter.
+    ///
+    /// Ancestors of matched descendants remain visible so tree context is
+    /// preserved. Expansion state is not mutated, allowing search and filter
+    /// changes to reveal descendants again without losing expansion intent.
+    #[must_use]
+    pub fn filtered_visible_rows(
+        &self,
+        expansion: &TreeExpansion,
+        mut include: impl FnMut(&OutlinerItem) -> bool,
+    ) -> Vec<OutlinerRow> {
+        let tree = self.tree_model();
+        let rows = tree.filtered_visible_rows(expansion, |tree_item| {
+            self.item_by_id(tree_item.id).is_some_and(&mut include)
+        });
+        rows.into_iter()
+            .filter_map(|row| {
+                self.items
+                    .get(row.item_index)
+                    .map(|item| OutlinerRow::from_item(row, item))
+            })
+            .collect()
+    }
+
     /// Returns visible item IDs in row order.
     #[must_use]
     pub fn visible_item_ids(&self, expansion: &TreeExpansion) -> Vec<ItemId> {

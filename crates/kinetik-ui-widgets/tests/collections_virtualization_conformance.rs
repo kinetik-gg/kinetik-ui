@@ -6,8 +6,8 @@ mod collections_virtualization_conformance {
 
     use kinetik_ui_core::Rect;
     use kinetik_ui_widgets::{
-        ItemId, ListLayout, Selection, TableColumn, TableColumnConstraints, TableLayout,
-        TreeExpansion, TreeItem, TreeLayout, TreeModel, TreeRow, VirtualRangeRequest,
+        CollectionProjection, ItemId, ListLayout, Selection, TableColumn, TableColumnConstraints,
+        TableLayout, TreeExpansion, TreeItem, TreeLayout, TreeModel, TreeRow, VirtualRangeRequest,
         VirtualWindow, VirtualWindowRequest, virtual_range, virtual_window,
     };
 
@@ -316,6 +316,27 @@ mod collections_virtualization_conformance {
         assert_eq!(rects[0].index, 3);
         assert_eq!(rects[8].index, 11);
         assert_approx(rects[0].rect.y, -20.0);
+    }
+
+    #[test]
+    fn virtual_window_applies_after_collection_projection() {
+        let source_ids = (1..=10).map(id).collect::<Vec<_>>();
+        let projection = CollectionProjection::from_source_ids(&source_ids)
+            .filtered_by(|item| item.source_index % 2 == 0);
+        let list = ListLayout::new(10.0);
+        let window = list.virtual_window(projection.len(), 20.0, 20.0, 0);
+
+        assert_window_finite(&window);
+        assert_range(window.visible_range.clone(), 2..4);
+        assert_range(window.materialized_range.clone(), 2..5);
+        assert_eq!(
+            projection.visible_ids(),
+            vec![id(1), id(3), id(5), id(7), id(9)]
+        );
+        assert_eq!(
+            projection.ids_in_range(window.materialized_range),
+            vec![id(5), id(7), id(9)]
+        );
     }
 
     #[test]

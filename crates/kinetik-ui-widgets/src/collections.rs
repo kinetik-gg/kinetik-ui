@@ -1,5 +1,6 @@
 //! Collection models for lists, grids, tables, trees, virtualization, and selection.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
@@ -30,6 +31,149 @@ pub struct ItemRect {
     pub index: usize,
     /// Item rectangle.
     pub rect: Rect,
+}
+
+/// One source item resolved into a projected collection order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollectionProjectedItem {
+    /// Stable item identity.
+    pub id: ItemId,
+    /// Index of the item in the application-owned source collection.
+    pub source_index: usize,
+}
+
+impl CollectionProjectedItem {
+    /// Creates a projected item entry.
+    #[must_use]
+    pub const fn new(id: ItemId, source_index: usize) -> Self {
+        Self { id, source_index }
+    }
+}
+
+/// Data-only filtered and sorted projection of a source collection.
+///
+/// Projection stores stable item IDs and source indices only; applications
+/// retain ownership of the source data and decide filtering and sorting keys.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CollectionProjection {
+    items: Vec<CollectionProjectedItem>,
+}
+
+impl CollectionProjection {
+    /// Creates an empty projection.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Creates an identity projection from source item IDs.
+    #[must_use]
+    pub fn from_source_ids(source_ids: &[ItemId]) -> Self {
+        Self {
+            items: source_ids
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(source_index, id)| CollectionProjectedItem::new(id, source_index))
+                .collect(),
+        }
+    }
+
+    /// Creates a projection from pre-resolved projected items.
+    #[must_use]
+    pub fn from_items(items: impl IntoIterator<Item = CollectionProjectedItem>) -> Self {
+        Self {
+            items: items.into_iter().collect(),
+        }
+    }
+
+    /// Returns projected items in visible order.
+    #[must_use]
+    pub fn items(&self) -> &[CollectionProjectedItem] {
+        &self.items
+    }
+
+    /// Returns the projected item count.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Returns true when no items are visible through this projection.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Returns projected IDs in visible order.
+    #[must_use]
+    pub fn visible_ids(&self) -> Vec<ItemId> {
+        self.items.iter().map(|item| item.id).collect()
+    }
+
+    /// Returns source indices in visible order.
+    #[must_use]
+    pub fn source_indices(&self) -> Vec<usize> {
+        self.items.iter().map(|item| item.source_index).collect()
+    }
+
+    /// Returns projected IDs within a virtualized projected range.
+    #[must_use]
+    pub fn ids_in_range(&self, range: std::ops::Range<usize>) -> Vec<ItemId> {
+        self.items
+            .get(range.start.min(self.items.len())..range.end.min(self.items.len()))
+            .unwrap_or_default()
+            .iter()
+            .map(|item| item.id)
+            .collect()
+    }
+
+    /// Returns a projected item by projected index.
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<CollectionProjectedItem> {
+        self.items.get(index).copied()
+    }
+
+    /// Returns the first source index for an item ID.
+    #[must_use]
+    pub fn source_index(&self, id: ItemId) -> Option<usize> {
+        self.items
+            .iter()
+            .find(|item| item.id == id)
+            .map(|item| item.source_index)
+    }
+
+    /// Returns the first projected index for an item ID.
+    #[must_use]
+    pub fn projected_index(&self, id: ItemId) -> Option<usize> {
+        self.items.iter().position(|item| item.id == id)
+    }
+
+    /// Returns a filtered copy of this projection.
+    #[must_use]
+    pub fn filtered_by(&self, mut include: impl FnMut(CollectionProjectedItem) -> bool) -> Self {
+        Self {
+            items: self
+                .items
+                .iter()
+                .copied()
+                .filter(|item| include(*item))
+                .collect(),
+        }
+    }
+
+    /// Returns a sorted copy of this projection.
+    ///
+    /// Sorting is stable. Equal comparisons keep the incoming projection order.
+    #[must_use]
+    pub fn sorted_by(
+        &self,
+        mut compare: impl FnMut(&CollectionProjectedItem, &CollectionProjectedItem) -> Ordering,
+    ) -> Self {
+        let mut items = self.items.clone();
+        items.sort_by(|lhs, rhs| compare(lhs, rhs));
+        Self { items }
+    }
 }
 
 fn finite_non_negative(value: f32) -> f32 {
@@ -988,6 +1132,46 @@ impl TreeModel {
             .collect()
     }
 
+    /// Computes visible tree rows after applying an app-owned filter.
+    ///
+    /// Matching descendants keep their ancestors visible, but expansion state
+    /// is read-only and preserved by the caller. Collapsed ancestors therefore
+    /// still hide their descendants until the app expands them.
+    #[must_use]
+    pub fn filtered_visible_rows(
+        &self,
+        expansion: &TreeExpansion,
+        mut include: impl FnMut(&TreeItem) -> bool,
+    ) -> Vec<TreeRow> {
+        if self.validate().is_err() {
+            return Vec::new();
+        }
+
+        let index_by_id = self.index_by_id();
+        let mut included = BTreeSet::new();
+        for item in &self.items {
+            if include(item) {
+                let mut current = Some(item.id);
+                while let Some(id) = current {
+                    if !included.insert(id) {
+                        break;
+                    }
+                    current = self.items[index_by_id[&id]].parent;
+                }
+            }
+        }
+
+        self.visible_rows(expansion)
+            .into_iter()
+            .filter(|row| included.contains(&row.id))
+            .enumerate()
+            .map(|(row_index, mut row)| {
+                row.row = row_index;
+                row
+            })
+            .collect()
+    }
+
     fn index_by_id(&self) -> BTreeMap<ItemId, usize> {
         self.items
             .iter()
@@ -1500,6 +1684,46 @@ pub struct Selection {
     anchor: Option<ItemId>,
 }
 
+/// Selection projection behavior.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SelectionProjectionPolicy {
+    /// Keep hidden selected IDs in the app-owned selection while exposing
+    /// visible selected IDs and repaired visible active/anchor IDs.
+    #[default]
+    PreserveHidden,
+}
+
+/// Non-mutating view of selection state through a collection projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionProjection {
+    /// All selected IDs in selection's deterministic order.
+    pub selected: Vec<ItemId>,
+    /// Selected IDs currently present in projected visible order.
+    pub visible_selected: Vec<ItemId>,
+    /// Selected IDs hidden by the projection, in selection's deterministic order.
+    pub hidden_selected: Vec<ItemId>,
+    /// App-owned active ID before projection.
+    pub active: Option<ItemId>,
+    /// App-owned anchor ID before projection.
+    pub anchor: Option<ItemId>,
+    /// Active ID only when it is visible through the projection.
+    pub visible_active: Option<ItemId>,
+    /// Anchor ID only when it is visible through the projection.
+    pub visible_anchor: Option<ItemId>,
+    /// Visible active ID repaired deterministically for the projected view.
+    pub repaired_active: Option<ItemId>,
+    /// Visible anchor ID repaired deterministically for the projected view.
+    pub repaired_anchor: Option<ItemId>,
+}
+
+impl SelectionProjection {
+    /// Returns true when at least one selected item is hidden by the projection.
+    #[must_use]
+    pub fn has_hidden_selection(&self) -> bool {
+        !self.hidden_selected.is_empty()
+    }
+}
+
 impl Selection {
     /// Creates an empty selection.
     #[must_use]
@@ -1557,6 +1781,63 @@ impl Selection {
         }
 
         changed
+    }
+
+    /// Projects selection through visible item IDs without mutating selection.
+    #[must_use]
+    pub fn project_visible(
+        &self,
+        visible_items: &[ItemId],
+        policy: SelectionProjectionPolicy,
+    ) -> SelectionProjection {
+        let projection = CollectionProjection::from_source_ids(visible_items);
+        self.project(&projection, policy)
+    }
+
+    /// Projects selection through a collection projection without mutating selection.
+    #[must_use]
+    pub fn project(
+        &self,
+        projection: &CollectionProjection,
+        policy: SelectionProjectionPolicy,
+    ) -> SelectionProjection {
+        match policy {
+            SelectionProjectionPolicy::PreserveHidden => {
+                let selected = self.selected();
+                let selected_set = selected.iter().copied().collect::<BTreeSet<_>>();
+                let visible_set = projection
+                    .visible_ids()
+                    .into_iter()
+                    .collect::<BTreeSet<_>>();
+                let visible_selected = projection
+                    .items()
+                    .iter()
+                    .map(|item| item.id)
+                    .filter(|id| selected_set.contains(id))
+                    .collect::<Vec<_>>();
+                let hidden_selected = selected
+                    .iter()
+                    .copied()
+                    .filter(|id| !visible_set.contains(id))
+                    .collect::<Vec<_>>();
+                let visible_active = self.active.filter(|active| visible_set.contains(active));
+                let visible_anchor = self.anchor.filter(|anchor| visible_set.contains(anchor));
+                let repaired_active = visible_active.or_else(|| visible_selected.first().copied());
+                let repaired_anchor = visible_anchor.or(repaired_active);
+
+                SelectionProjection {
+                    selected,
+                    visible_selected,
+                    hidden_selected,
+                    active: self.active,
+                    anchor: self.anchor,
+                    visible_active,
+                    visible_anchor,
+                    repaired_active,
+                    repaired_anchor,
+                }
+            }
+        }
     }
 
     /// Clears selection.
