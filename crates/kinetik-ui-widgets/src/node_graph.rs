@@ -137,6 +137,14 @@ pub struct NodeDescriptor {
     pub frame: Option<NodeFrameId>,
     /// Optional group containing this node.
     pub group: Option<NodeGroupId>,
+    /// Whether the node is presented as muted by the application.
+    pub muted: bool,
+    /// Whether the node is presented as bypassed by the application.
+    pub bypassed: bool,
+    /// Optional user-facing secondary label metadata.
+    pub label: Option<String>,
+    /// Optional user-facing comment metadata.
+    pub comment: Option<String>,
     /// Whether the node is currently available.
     pub enabled: bool,
 }
@@ -152,6 +160,10 @@ impl NodeDescriptor {
             ports: Vec::new(),
             frame: None,
             group: None,
+            muted: false,
+            bypassed: false,
+            label: None,
+            comment: None,
             enabled: true,
         }
     }
@@ -174,6 +186,34 @@ impl NodeDescriptor {
     #[must_use]
     pub const fn with_group(mut self, group: NodeGroupId) -> Self {
         self.group = Some(group);
+        self
+    }
+
+    /// Sets muted presentation metadata.
+    #[must_use]
+    pub const fn with_muted(mut self, muted: bool) -> Self {
+        self.muted = muted;
+        self
+    }
+
+    /// Sets bypassed presentation metadata.
+    #[must_use]
+    pub const fn with_bypassed(mut self, bypassed: bool) -> Self {
+        self.bypassed = bypassed;
+        self
+    }
+
+    /// Sets optional user-facing secondary label metadata.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Sets optional user-facing comment metadata.
+    #[must_use]
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
         self
     }
 
@@ -427,6 +467,12 @@ pub struct NodeFrameDescriptor {
     pub title: String,
     /// Frame bounds in graph space.
     pub rect: GraphRect,
+    /// Whether the frame is presented as collapsed by the application.
+    pub collapsed: bool,
+    /// Optional user-facing secondary label metadata.
+    pub label: Option<String>,
+    /// Optional user-facing comment metadata.
+    pub comment: Option<String>,
     /// Whether the frame is currently available.
     pub enabled: bool,
 }
@@ -439,8 +485,32 @@ impl NodeFrameDescriptor {
             id,
             title: title.into(),
             rect,
+            collapsed: false,
+            label: None,
+            comment: None,
             enabled: true,
         }
+    }
+
+    /// Sets collapsed presentation metadata.
+    #[must_use]
+    pub const fn with_collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+
+    /// Sets optional user-facing secondary label metadata.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Sets optional user-facing comment metadata.
+    #[must_use]
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
+        self
     }
 
     /// Sets whether the frame is currently available.
@@ -462,6 +532,12 @@ pub struct NodeGroupDescriptor {
     pub rect: GraphRect,
     /// Nodes contained by this group.
     pub nodes: Vec<NodeId>,
+    /// Whether the group is presented as collapsed by the application.
+    pub collapsed: bool,
+    /// Optional user-facing secondary label metadata.
+    pub label: Option<String>,
+    /// Optional user-facing comment metadata.
+    pub comment: Option<String>,
     /// Whether the group is currently available.
     pub enabled: bool,
 }
@@ -475,6 +551,9 @@ impl NodeGroupDescriptor {
             title: title.into(),
             rect,
             nodes: Vec::new(),
+            collapsed: false,
+            label: None,
+            comment: None,
             enabled: true,
         }
     }
@@ -483,6 +562,27 @@ impl NodeGroupDescriptor {
     #[must_use]
     pub fn with_nodes(mut self, nodes: impl Into<Vec<NodeId>>) -> Self {
         self.nodes = nodes.into();
+        self
+    }
+
+    /// Sets collapsed presentation metadata.
+    #[must_use]
+    pub const fn with_collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+
+    /// Sets optional user-facing secondary label metadata.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Sets optional user-facing comment metadata.
+    #[must_use]
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
         self
     }
 
@@ -532,7 +632,8 @@ impl NodeGraphDescriptor {
         validate_node_graph_descriptors(&self.nodes)?;
         validate_node_graph_reroute_descriptors(&self.reroutes)?;
         validate_node_graph_frame_descriptors(&self.frames)?;
-        validate_node_graph_group_descriptors(&self.groups)
+        validate_node_graph_group_descriptors(&self.groups)?;
+        validate_node_graph_memberships(self)
     }
 
     /// Resolves edge endpoints against node and port descriptors.
@@ -678,6 +779,145 @@ impl NodeGraphDescriptor {
     ) -> Vec<NodeGraphContextAction> {
         resolve_node_graph_context_actions(self, target, selection)
     }
+
+    /// Returns frame member node IDs in deterministic order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the frame target is missing.
+    pub fn frame_member_nodes(
+        &self,
+        frame: NodeFrameId,
+    ) -> Result<Vec<NodeId>, NodeGraphOrganizationRequestError> {
+        self.validate()?;
+        resolve_node_graph_frame(self, frame)?;
+        Ok(frame_member_nodes(self, frame))
+    }
+
+    /// Returns group member node IDs in deterministic order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the group target is missing.
+    pub fn group_member_nodes(
+        &self,
+        group: NodeGroupId,
+    ) -> Result<Vec<NodeId>, NodeGraphOrganizationRequestError> {
+        self.validate()?;
+        resolve_node_graph_group(self, group)?;
+        Ok(group_member_nodes(self, group))
+    }
+
+    /// Creates application-owned metadata for moving a parent frame and its children.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the frame target is missing or disabled.
+    pub fn move_frame_request(
+        &self,
+        viewport: NodeGraphViewport,
+        frame: NodeFrameId,
+        screen_delta: GraphVector,
+    ) -> Result<NodeGraphFrameMoveRequest, NodeGraphOrganizationRequestError> {
+        NodeGraphFrameMoveRequest::new(self, viewport, frame, screen_delta)
+    }
+
+    /// Creates application-owned collapse metadata for a frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the frame target is missing or disabled.
+    pub fn collapse_frame_request(
+        &self,
+        frame: NodeFrameId,
+        collapsed: bool,
+    ) -> Result<NodeGraphCollapseRequest, NodeGraphOrganizationRequestError> {
+        NodeGraphCollapseRequest::frame(self, frame, collapsed)
+    }
+
+    /// Creates application-owned collapse metadata for a group.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the group target is missing or disabled.
+    pub fn collapse_group_request(
+        &self,
+        group: NodeGroupId,
+        collapsed: bool,
+    ) -> Result<NodeGraphCollapseRequest, NodeGraphOrganizationRequestError> {
+        NodeGraphCollapseRequest::group(self, group, collapsed)
+    }
+
+    /// Creates application-owned node mute request metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the node target is missing or disabled.
+    pub fn mute_node_request(
+        &self,
+        node: NodeId,
+        muted: bool,
+    ) -> Result<NodeGraphNodeStateRequest, NodeGraphOrganizationRequestError> {
+        NodeGraphNodeStateRequest::new(self, node, NodeGraphNodeStateAction::Mute, muted)
+    }
+
+    /// Creates application-owned node bypass request metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the node target is missing or disabled.
+    pub fn bypass_node_request(
+        &self,
+        node: NodeId,
+        bypassed: bool,
+    ) -> Result<NodeGraphNodeStateRequest, NodeGraphOrganizationRequestError> {
+        NodeGraphNodeStateRequest::new(self, node, NodeGraphNodeStateAction::Bypass, bypassed)
+    }
+
+    /// Creates application-owned label request metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the target is missing or disabled.
+    pub fn label_request(
+        &self,
+        target: NodeGraphOrganizationTarget,
+        label: impl Into<String>,
+    ) -> Result<NodeGraphAnnotationRequest, NodeGraphOrganizationRequestError> {
+        NodeGraphAnnotationRequest::new(
+            self,
+            target,
+            NodeGraphAnnotationField::Label,
+            Some(label.into()),
+        )
+    }
+
+    /// Creates application-owned comment request metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the target is missing or disabled.
+    pub fn comment_request(
+        &self,
+        target: NodeGraphOrganizationTarget,
+        comment: impl Into<String>,
+    ) -> Result<NodeGraphAnnotationRequest, NodeGraphOrganizationRequestError> {
+        NodeGraphAnnotationRequest::new(
+            self,
+            target,
+            NodeGraphAnnotationField::Comment,
+            Some(comment.into()),
+        )
+    }
 }
 
 /// Structured validation error for node graph descriptors.
@@ -709,6 +949,43 @@ pub enum NodeGraphValidationError {
     DuplicateGroupId {
         /// Duplicated group ID.
         id: NodeGroupId,
+    },
+    /// A node references a missing frame.
+    MissingFrameId {
+        /// Node carrying the stale frame reference.
+        node: NodeId,
+        /// Missing frame ID.
+        frame: NodeFrameId,
+    },
+    /// A node references a missing group.
+    MissingGroupId {
+        /// Node carrying the stale group reference.
+        node: NodeId,
+        /// Missing group ID.
+        group: NodeGroupId,
+    },
+    /// A group lists the same node more than once.
+    DuplicateGroupMember {
+        /// Group containing the duplicate member.
+        group: NodeGroupId,
+        /// Duplicated member node ID.
+        node: NodeId,
+    },
+    /// A group lists a missing node.
+    MissingGroupMember {
+        /// Group containing the stale member reference.
+        group: NodeGroupId,
+        /// Missing member node ID.
+        node: NodeId,
+    },
+    /// A node is claimed by more than one group.
+    DuplicateGroupMembership {
+        /// Node with conflicting group membership.
+        node: NodeId,
+        /// First group discovered for the node.
+        first: NodeGroupId,
+        /// Later group discovered for the node.
+        second: NodeGroupId,
     },
 }
 
@@ -783,6 +1060,557 @@ fn validate_node_graph_group_descriptors(
     }
 
     Ok(())
+}
+
+fn validate_node_graph_memberships(
+    graph: &NodeGraphDescriptor,
+) -> Result<(), NodeGraphValidationError> {
+    let node_ids = graph
+        .nodes
+        .iter()
+        .map(|node| node.id)
+        .collect::<BTreeSet<_>>();
+    let frame_ids = graph
+        .frames
+        .iter()
+        .map(|frame| frame.id)
+        .collect::<BTreeSet<_>>();
+    let group_ids = graph
+        .groups
+        .iter()
+        .map(|group| group.id)
+        .collect::<BTreeSet<_>>();
+    let mut group_memberships = BTreeSet::new();
+
+    for node in &graph.nodes {
+        if let Some(frame) = node.frame
+            && !frame_ids.contains(&frame)
+        {
+            return Err(NodeGraphValidationError::MissingFrameId {
+                node: node.id,
+                frame,
+            });
+        }
+
+        if let Some(group) = node.group {
+            if !group_ids.contains(&group) {
+                return Err(NodeGraphValidationError::MissingGroupId {
+                    node: node.id,
+                    group,
+                });
+            }
+            group_memberships.insert((node.id, group));
+        }
+    }
+
+    for group in &graph.groups {
+        let mut group_nodes = BTreeSet::new();
+        for node in &group.nodes {
+            if !group_nodes.insert(*node) {
+                return Err(NodeGraphValidationError::DuplicateGroupMember {
+                    group: group.id,
+                    node: *node,
+                });
+            }
+            if !node_ids.contains(node) {
+                return Err(NodeGraphValidationError::MissingGroupMember {
+                    group: group.id,
+                    node: *node,
+                });
+            }
+            group_memberships.insert((*node, group.id));
+        }
+    }
+
+    let mut by_node = BTreeSet::new();
+    for (node, group) in group_memberships {
+        if let Some((_, first)) = by_node.iter().find(|(candidate, _)| *candidate == node) {
+            return Err(NodeGraphValidationError::DuplicateGroupMembership {
+                node,
+                first: *first,
+                second: group,
+            });
+        }
+        by_node.insert((node, group));
+    }
+
+    Ok(())
+}
+
+/// Structured organization request failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeGraphOrganizationRequestError {
+    /// Descriptor validation failed before request metadata could be created.
+    Validation(NodeGraphValidationError),
+    /// The addressed node is not present.
+    MissingNode {
+        /// Missing node ID.
+        node: NodeId,
+    },
+    /// The addressed frame is not present.
+    MissingFrame {
+        /// Missing frame ID.
+        frame: NodeFrameId,
+    },
+    /// The addressed group is not present.
+    MissingGroup {
+        /// Missing group ID.
+        group: NodeGroupId,
+    },
+    /// The addressed node is disabled.
+    DisabledNode {
+        /// Disabled node ID.
+        node: NodeId,
+    },
+    /// The addressed frame is disabled.
+    DisabledFrame {
+        /// Disabled frame ID.
+        frame: NodeFrameId,
+    },
+    /// The addressed group is disabled.
+    DisabledGroup {
+        /// Disabled group ID.
+        group: NodeGroupId,
+    },
+}
+
+impl From<NodeGraphValidationError> for NodeGraphOrganizationRequestError {
+    fn from(error: NodeGraphValidationError) -> Self {
+        Self::Validation(error)
+    }
+}
+
+/// Organization target that can carry label/comment metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NodeGraphOrganizationTarget {
+    /// A node target.
+    Node(NodeId),
+    /// A frame target.
+    Frame(NodeFrameId),
+    /// A group target.
+    Group(NodeGroupId),
+}
+
+/// Metadata for moving one parent frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodeGraphFrameMove {
+    /// Frame to move.
+    pub frame: NodeFrameId,
+    /// Graph-space movement delta for the frame.
+    pub delta: GraphVector,
+}
+
+/// Data-only request metadata for moving a parent frame and its member nodes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeGraphFrameMoveRequest {
+    /// Frame being moved.
+    pub frame: NodeGraphFrameMove,
+    /// Sanitized UI logical screen-space drag delta.
+    pub screen_delta: GraphVector,
+    /// Sanitized graph-space drag delta shared by the frame and children.
+    pub graph_delta: GraphVector,
+    /// Per-child move candidates in deterministic node order.
+    pub children: Vec<NodeGraphNodeMove>,
+}
+
+impl NodeGraphFrameMoveRequest {
+    /// Creates frame move request metadata from a viewport and frame target.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the frame target is missing or disabled.
+    pub fn new(
+        graph: &NodeGraphDescriptor,
+        viewport: NodeGraphViewport,
+        frame: NodeFrameId,
+        screen_delta: GraphVector,
+    ) -> Result<Self, NodeGraphOrganizationRequestError> {
+        graph.validate()?;
+        let descriptor = resolve_node_graph_frame(graph, frame)?;
+        if !descriptor.enabled {
+            return Err(NodeGraphOrganizationRequestError::DisabledFrame { frame });
+        }
+
+        let screen_delta = screen_delta.sanitized();
+        let graph_delta = node_graph_drag_delta(viewport, screen_delta);
+        let children = frame_member_nodes(graph, frame)
+            .into_iter()
+            .map(|node| NodeGraphNodeMove {
+                node,
+                delta: graph_delta,
+            })
+            .collect();
+
+        Ok(Self {
+            frame: NodeGraphFrameMove {
+                frame,
+                delta: graph_delta,
+            },
+            screen_delta,
+            graph_delta,
+            children,
+        })
+    }
+
+    /// Returns true when the request has no frame or child movement to apply.
+    #[must_use]
+    pub fn is_noop(&self) -> bool {
+        self.graph_delta == GraphVector::ZERO
+    }
+}
+
+/// Collapsible organization target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NodeGraphCollapseTarget {
+    /// A frame target.
+    Frame(NodeFrameId),
+    /// A group target.
+    Group(NodeGroupId),
+}
+
+/// Link identity metadata preserved while a frame or group is collapsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NodeGraphCollapseLinkMetadata {
+    /// Stable edge identity.
+    pub edge: EdgeId,
+    /// Source endpoint preserved from the edge descriptor.
+    pub from: PortEndpoint,
+    /// Target endpoint preserved from the edge descriptor.
+    pub to: PortEndpoint,
+}
+
+/// Data-only request metadata for changing collapsed presentation state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeGraphCollapseRequest {
+    /// Collapsible target.
+    pub target: NodeGraphCollapseTarget,
+    /// Previously-presented collapsed state.
+    pub previous_collapsed: bool,
+    /// Requested collapsed state.
+    pub collapsed: bool,
+    /// Member nodes captured in deterministic order.
+    pub nodes: Vec<NodeId>,
+    /// Member ports preserved in deterministic endpoint order.
+    pub ports: Vec<PortEndpoint>,
+    /// Links touching member nodes, preserving edge endpoint identity metadata.
+    pub links: Vec<NodeGraphCollapseLinkMetadata>,
+}
+
+impl NodeGraphCollapseRequest {
+    /// Creates collapse request metadata for a frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the frame target is missing or disabled.
+    pub fn frame(
+        graph: &NodeGraphDescriptor,
+        frame: NodeFrameId,
+        collapsed: bool,
+    ) -> Result<Self, NodeGraphOrganizationRequestError> {
+        graph.validate()?;
+        let descriptor = resolve_node_graph_frame(graph, frame)?;
+        if !descriptor.enabled {
+            return Err(NodeGraphOrganizationRequestError::DisabledFrame { frame });
+        }
+        let nodes = frame_member_nodes(graph, frame);
+        Ok(Self::from_members(
+            graph,
+            NodeGraphCollapseTarget::Frame(frame),
+            descriptor.collapsed,
+            collapsed,
+            nodes,
+        ))
+    }
+
+    /// Creates collapse request metadata for a group.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the group target is missing or disabled.
+    pub fn group(
+        graph: &NodeGraphDescriptor,
+        group: NodeGroupId,
+        collapsed: bool,
+    ) -> Result<Self, NodeGraphOrganizationRequestError> {
+        graph.validate()?;
+        let descriptor = resolve_node_graph_group(graph, group)?;
+        if !descriptor.enabled {
+            return Err(NodeGraphOrganizationRequestError::DisabledGroup { group });
+        }
+        let nodes = group_member_nodes(graph, group);
+        Ok(Self::from_members(
+            graph,
+            NodeGraphCollapseTarget::Group(group),
+            descriptor.collapsed,
+            collapsed,
+            nodes,
+        ))
+    }
+
+    fn from_members(
+        graph: &NodeGraphDescriptor,
+        target: NodeGraphCollapseTarget,
+        previous_collapsed: bool,
+        collapsed: bool,
+        nodes: Vec<NodeId>,
+    ) -> Self {
+        let node_set = nodes.iter().copied().collect::<BTreeSet<_>>();
+        let ports = graph
+            .nodes
+            .iter()
+            .filter(|node| node_set.contains(&node.id))
+            .flat_map(|node| {
+                node.ports
+                    .iter()
+                    .map(|port| PortEndpoint::new(node.id, port.id))
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let links = graph
+            .edges
+            .iter()
+            .filter(|edge| node_set.contains(&edge.from.node) || node_set.contains(&edge.to.node))
+            .map(|edge| NodeGraphCollapseLinkMetadata {
+                edge: edge.id,
+                from: edge.from,
+                to: edge.to,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        Self {
+            target,
+            previous_collapsed,
+            collapsed,
+            nodes,
+            ports,
+            links,
+        }
+    }
+
+    /// Returns true when the collapsed state would not change.
+    #[must_use]
+    pub const fn is_noop(&self) -> bool {
+        self.previous_collapsed == self.collapsed
+    }
+}
+
+/// Node state operation represented by request metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NodeGraphNodeStateAction {
+    /// Set muted presentation state.
+    Mute,
+    /// Set bypassed presentation state.
+    Bypass,
+}
+
+/// Data-only request metadata for node muted/bypassed state changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeGraphNodeStateRequest {
+    /// Node target.
+    pub node: NodeId,
+    /// Requested state action.
+    pub action: NodeGraphNodeStateAction,
+    /// Previously-presented state for this action.
+    pub previous: bool,
+    /// Requested state value.
+    pub requested: bool,
+}
+
+impl NodeGraphNodeStateRequest {
+    /// Creates node state request metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the node target is missing or disabled.
+    pub fn new(
+        graph: &NodeGraphDescriptor,
+        node: NodeId,
+        action: NodeGraphNodeStateAction,
+        requested: bool,
+    ) -> Result<Self, NodeGraphOrganizationRequestError> {
+        graph.validate()?;
+        let descriptor = resolve_node_graph_node(graph, node)?;
+        if !descriptor.enabled {
+            return Err(NodeGraphOrganizationRequestError::DisabledNode { node });
+        }
+        let previous = match action {
+            NodeGraphNodeStateAction::Mute => descriptor.muted,
+            NodeGraphNodeStateAction::Bypass => descriptor.bypassed,
+        };
+
+        Ok(Self {
+            node,
+            action,
+            previous,
+            requested,
+        })
+    }
+
+    /// Returns true when the requested state matches the current metadata.
+    #[must_use]
+    pub const fn is_noop(&self) -> bool {
+        self.previous == self.requested
+    }
+}
+
+/// Annotation field represented by request metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NodeGraphAnnotationField {
+    /// Secondary user-facing label metadata.
+    Label,
+    /// User-facing comment metadata.
+    Comment,
+}
+
+/// Data-only request metadata for label/comment changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeGraphAnnotationRequest {
+    /// Annotation target.
+    pub target: NodeGraphOrganizationTarget,
+    /// Requested annotation field.
+    pub field: NodeGraphAnnotationField,
+    /// Previously-presented annotation value.
+    pub previous: Option<String>,
+    /// Requested annotation value.
+    pub requested: Option<String>,
+}
+
+impl NodeGraphAnnotationRequest {
+    /// Creates annotation request metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured organization error when descriptors are invalid or
+    /// the target is missing or disabled.
+    pub fn new(
+        graph: &NodeGraphDescriptor,
+        target: NodeGraphOrganizationTarget,
+        field: NodeGraphAnnotationField,
+        requested: Option<String>,
+    ) -> Result<Self, NodeGraphOrganizationRequestError> {
+        graph.validate()?;
+        let previous = resolve_annotation_target(graph, target, field)?;
+
+        Ok(Self {
+            target,
+            field,
+            previous,
+            requested,
+        })
+    }
+
+    /// Returns true when the requested annotation matches current metadata.
+    #[must_use]
+    pub fn is_noop(&self) -> bool {
+        self.previous == self.requested
+    }
+}
+
+fn resolve_node_graph_node(
+    graph: &NodeGraphDescriptor,
+    node: NodeId,
+) -> Result<&NodeDescriptor, NodeGraphOrganizationRequestError> {
+    graph
+        .nodes
+        .iter()
+        .find(|descriptor| descriptor.id == node)
+        .ok_or(NodeGraphOrganizationRequestError::MissingNode { node })
+}
+
+fn resolve_node_graph_frame(
+    graph: &NodeGraphDescriptor,
+    frame: NodeFrameId,
+) -> Result<&NodeFrameDescriptor, NodeGraphOrganizationRequestError> {
+    graph
+        .frames
+        .iter()
+        .find(|descriptor| descriptor.id == frame)
+        .ok_or(NodeGraphOrganizationRequestError::MissingFrame { frame })
+}
+
+fn resolve_node_graph_group(
+    graph: &NodeGraphDescriptor,
+    group: NodeGroupId,
+) -> Result<&NodeGroupDescriptor, NodeGraphOrganizationRequestError> {
+    graph
+        .groups
+        .iter()
+        .find(|descriptor| descriptor.id == group)
+        .ok_or(NodeGraphOrganizationRequestError::MissingGroup { group })
+}
+
+fn frame_member_nodes(graph: &NodeGraphDescriptor, frame: NodeFrameId) -> Vec<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .filter(|node| node.frame == Some(frame))
+        .map(|node| node.id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn group_member_nodes(graph: &NodeGraphDescriptor, group: NodeGroupId) -> Vec<NodeId> {
+    let mut members = graph
+        .groups
+        .iter()
+        .find(|descriptor| descriptor.id == group)
+        .map(|descriptor| descriptor.nodes.iter().copied().collect::<BTreeSet<_>>())
+        .unwrap_or_default();
+    members.extend(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.group == Some(group))
+            .map(|node| node.id),
+    );
+    members.into_iter().collect()
+}
+
+fn resolve_annotation_target(
+    graph: &NodeGraphDescriptor,
+    target: NodeGraphOrganizationTarget,
+    field: NodeGraphAnnotationField,
+) -> Result<Option<String>, NodeGraphOrganizationRequestError> {
+    match target {
+        NodeGraphOrganizationTarget::Node(node) => {
+            let descriptor = resolve_node_graph_node(graph, node)?;
+            if !descriptor.enabled {
+                return Err(NodeGraphOrganizationRequestError::DisabledNode { node });
+            }
+            Ok(match field {
+                NodeGraphAnnotationField::Label => descriptor.label.clone(),
+                NodeGraphAnnotationField::Comment => descriptor.comment.clone(),
+            })
+        }
+        NodeGraphOrganizationTarget::Frame(frame) => {
+            let descriptor = resolve_node_graph_frame(graph, frame)?;
+            if !descriptor.enabled {
+                return Err(NodeGraphOrganizationRequestError::DisabledFrame { frame });
+            }
+            Ok(match field {
+                NodeGraphAnnotationField::Label => descriptor.label.clone(),
+                NodeGraphAnnotationField::Comment => descriptor.comment.clone(),
+            })
+        }
+        NodeGraphOrganizationTarget::Group(group) => {
+            let descriptor = resolve_node_graph_group(graph, group)?;
+            if !descriptor.enabled {
+                return Err(NodeGraphOrganizationRequestError::DisabledGroup { group });
+            }
+            Ok(match field {
+                NodeGraphAnnotationField::Label => descriptor.label.clone(),
+                NodeGraphAnnotationField::Comment => descriptor.comment.clone(),
+            })
+        }
+    }
 }
 
 /// Structured directed port compatibility failure.
