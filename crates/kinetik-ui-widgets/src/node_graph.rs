@@ -1350,9 +1350,19 @@ impl NodeGraphBoxSelectionRequest {
         mode: NodeGraphBoxSelectionMode,
         intent: NodeGraphSelectionIntent,
     ) -> Self {
+        let graph_rect = if graph_rect.x.is_finite()
+            && graph_rect.y.is_finite()
+            && graph_rect.width.is_finite()
+            && graph_rect.height.is_finite()
+        {
+            graph_rect.sanitized()
+        } else {
+            GraphRect::ZERO
+        };
+
         Self {
             screen_rect: Rect::ZERO,
-            graph_rect: graph_rect.sanitized(),
+            graph_rect,
             mode,
             intent,
         }

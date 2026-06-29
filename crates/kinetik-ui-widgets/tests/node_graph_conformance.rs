@@ -1482,6 +1482,46 @@ mod node_graph_conformance {
     }
 
     #[test]
+    fn box_selection_graph_rect_non_finite_components_are_noop() {
+        let graph = NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(
+                    NodeId::from_raw(1),
+                    "Would Have Matched Sanitized X",
+                    GraphRect::new(0.0, 10.0, 20.0, 20.0),
+                ),
+                NodeDescriptor::new(
+                    NodeId::from_raw(2),
+                    "Would Have Matched Sanitized Y",
+                    GraphRect::new(10.0, 0.0, 20.0, 20.0),
+                ),
+            ],
+            edges: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+
+        for graph_rect in [
+            GraphRect::new(f32::INFINITY, 10.0, 20.0, 20.0),
+            GraphRect::new(10.0, f32::NAN, 20.0, 20.0),
+            GraphRect::new(10.0, 10.0, f32::INFINITY, 20.0),
+            GraphRect::new(10.0, 10.0, 20.0, f32::NEG_INFINITY),
+        ] {
+            let request = NodeGraphBoxSelectionRequest::from_graph_rect(
+                graph_rect,
+                NodeGraphBoxSelectionMode::Intersects,
+                NodeGraphSelectionIntent::Add,
+            );
+            let selection = request.select(&graph);
+
+            assert!(request.is_empty());
+            assert_graph_rect_close(request.graph_rect, GraphRect::ZERO);
+            assert!(selection.targets.is_empty());
+            assert!(selection.is_noop());
+        }
+    }
+
+    #[test]
     fn drag_delta_accounts_for_viewport_zoom_and_sanitizes_invalid_input() {
         let viewport = NodeGraphViewport::new(
             Rect::new(50.0, 30.0, 300.0, 200.0),
