@@ -17,9 +17,10 @@ use kinetik_ui_widgets::{
     PopoverPlacement, PortDescriptor, PortDirection, PortEndpoint, PortId, PortTypeId,
     PropertyGridAffordanceLayout, PropertyGridLayout, PropertyGridRow, PropertyGridRowAffordances,
     PropertyGridRowState, PropertyGridRowStatus, PropertyGridStatusSeverity, RadioGroupChoice,
-    SliderStep, TabStrip, Ui, VectorComponentLayout, VectorScrubInputConfig,
-    classify_numeric_input_draft, component_metadata, components_by_category, numeric_input,
-    numeric_scrub_input, property_grid_row_affordance_controls, property_grid_row_affordance_rects,
+    SliderStep, TabStrip, TimelineFrameRate, TimelineRange, TimelineRulerTickRequest, TimelineZoom,
+    Ui, VectorComponentLayout, VectorScrubInputConfig, classify_numeric_input_draft,
+    component_metadata, components_by_category, numeric_input, numeric_scrub_input,
+    property_grid_row_affordance_controls, property_grid_row_affordance_rects,
     property_grid_row_status_semantics, slider_with_step, vector4_component_rects,
 };
 
@@ -373,6 +374,35 @@ fn stage9_node_graph_taxonomy_reports_partial_status_backed_by_public_contracts(
             && node.label.as_deref() == Some("Source")
             && node.state.selected
     }));
+}
+
+#[test]
+fn stage11_timeline_taxonomy_reports_partial_status_backed_by_public_contracts() {
+    assert_entry(
+        "Timeline",
+        ComponentCategory::Viewport,
+        ComponentConformanceStatus::Partial,
+    );
+    assert_entry(
+        "Ruler",
+        ComponentCategory::Viewport,
+        ComponentConformanceStatus::Partial,
+    );
+    assert_entry(
+        "TransportControls",
+        ComponentCategory::Control,
+        ComponentConformanceStatus::Partial,
+    );
+
+    let ticks = TimelineRulerTickRequest::new(
+        TimelineRange::seconds(0.0, 2.0),
+        TimelineFrameRate::integer(24),
+        TimelineZoom::new(120.0),
+    )
+    .ticks();
+
+    assert!(!ticks.is_empty());
+    assert!(ticks.iter().any(|tick| !tick.label.is_empty()));
 }
 
 #[test]

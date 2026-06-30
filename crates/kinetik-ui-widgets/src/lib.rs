@@ -11,6 +11,7 @@ pub mod node_graph;
 pub mod outliner;
 pub mod overlays;
 pub mod taxonomy;
+pub mod timeline;
 pub mod ui;
 pub mod viewport;
 
@@ -25,6 +26,7 @@ pub use node_graph::*;
 pub use outliner::*;
 pub use overlays::*;
 pub use taxonomy::*;
+pub use timeline::*;
 pub use ui::*;
 pub use viewport::*;
 
