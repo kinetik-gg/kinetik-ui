@@ -3,9 +3,10 @@
 use std::collections::BTreeSet;
 
 use kinetik_ui_core::{
-    Color, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, Point, PointerButtonState,
-    PointerInput, Rect, SemanticActionKind, SemanticRole, SemanticValue, Size, TextureId, UiInput,
-    UiMemory, Vec2, WidgetId, default_dark_theme,
+    ActionContext, ActionDescriptor, ActionId, ActionSource, Color, Key, KeyEvent, KeyState,
+    KeyboardInput, Modifiers, Point, PointerButtonState, PointerInput, Rect, SemanticActionKind,
+    SemanticRole, SemanticValue, Size, TextureId, UiInput, UiMemory, Vec2, WidgetId,
+    default_dark_theme,
 };
 use kinetik_ui_text::TextEditState;
 use kinetik_ui_widgets::{
@@ -21,14 +22,19 @@ use kinetik_ui_widgets::{
     TimelineItemDescriptor, TimelineItemId, TimelineLaneDescriptor, TimelineLaneId, TimelineRange,
     TimelineRulerTickRequest, TimelineSelection, TimelineSelectionTarget,
     TimelineSnapCandidateRequest, TimelineSnapSource, TimelineZoom, TransportControlIntent,
-    TransportControls, Ui, VectorComponentLayout, VectorScrubInputConfig, ViewportFit,
+    TransportControls, Ui, VectorComponentLayout, VectorScrubInputConfig, ViewportActionDescriptor,
+    ViewportActionKind, ViewportActionRequest, ViewportActionTarget, ViewportCursorMetadata,
+    ViewportCursorRequest, ViewportCursorRequestSource, ViewportCursorShape, ViewportFit,
     ViewportGuideDescriptor, ViewportGuideId, ViewportGuideOrientation, ViewportGuidePlacement,
+    ViewportOverlayDescriptor, ViewportOverlayId, ViewportOverlayKind, ViewportOverlaySpace,
     ViewportPanZoomHudDescriptor, ViewportRulerDescriptor, ViewportRulerEdge, ViewportRulerId,
     ViewportSafeAreaDescriptor, ViewportSafeAreaId, ViewportSafeAreaSpace, ViewportSurface,
-    classify_numeric_input_draft, component_metadata, components_by_category, numeric_input,
-    numeric_scrub_input, property_grid_row_affordance_controls, property_grid_row_affordance_rects,
+    ViewportToolDescriptor, ViewportToolId, classify_numeric_input_draft, component_metadata,
+    components_by_category, hit_test_viewport_overlays, numeric_input, numeric_scrub_input,
+    property_grid_row_affordance_controls, property_grid_row_affordance_rects,
     property_grid_row_status_semantics, slider_with_step, timeline_snap_candidates,
-    vector4_component_rects, viewport_guides, viewport_rulers, viewport_safe_areas,
+    vector4_component_rects, viewport_action_requests, viewport_cursor_request, viewport_guides,
+    viewport_rulers, viewport_safe_areas,
 };
 
 fn entry(name: &str) -> &'static ComponentMetadata {
@@ -65,6 +71,52 @@ fn assert_close(actual: f32, expected: f32) {
         (actual - expected).abs() < f32::EPSILON,
         "expected {actual} to equal {expected}"
     );
+}
+
+fn viewport_action_and_cursor_contracts(
+    surface: ViewportSurface,
+    viewport_id: WidgetId,
+) -> (Vec<ViewportActionRequest>, ViewportCursorRequest) {
+    let mut overlay_action = ActionDescriptor::new("viewport.overlay.grid", "Grid");
+    overlay_action.state.checked = Some(true);
+    let actions = [
+        ViewportActionDescriptor::new(
+            ActionDescriptor::new("viewport.fit.content", "Fit Content"),
+            ViewportActionKind::FitContent,
+            ViewportActionTarget::new(viewport_id),
+        ),
+        ViewportActionDescriptor::new(
+            overlay_action,
+            ViewportActionKind::ToggleOverlay,
+            ViewportActionTarget::new(viewport_id).with_overlay(ViewportOverlayId::from_raw(1)),
+        ),
+    ];
+    let action_requests = viewport_action_requests(
+        &actions,
+        ActionSource::Button,
+        &ActionContext::Widget(viewport_id),
+    );
+    let tool = ViewportToolDescriptor::new(ViewportToolId::from_raw(1), "Pan")
+        .active(true)
+        .with_cursor(ViewportCursorMetadata::new(ViewportCursorShape::Grab));
+    let overlay_hit = hit_test_viewport_overlays(
+        surface,
+        &[ViewportOverlayDescriptor::new(
+            ViewportOverlayId::from_raw(1),
+            ViewportOverlayKind::ToolRegion,
+            Rect::new(12.0, 22.0, 120.0, 80.0),
+            ViewportOverlaySpace::Screen,
+        )
+        .with_tool(ViewportToolId::from_raw(1))
+        .with_cursor(ViewportCursorMetadata::new(ViewportCursorShape::Crosshair))],
+        Point::new(20.0, 30.0),
+    )
+    .expect("taxonomy viewport overlay hit");
+    let cursor_request =
+        viewport_cursor_request(viewport_id, None, None, Some(&overlay_hit), Some(&tool))
+            .expect("taxonomy cursor request");
+
+    (action_requests, cursor_request)
 }
 
 #[test]
@@ -456,6 +508,16 @@ fn stage12_viewport_taxonomy_reports_partial_status_backed_by_public_contracts()
         ComponentConformanceStatus::Partial,
     );
     assert_entry(
+        "ViewportTools",
+        ComponentCategory::Viewport,
+        ComponentConformanceStatus::Partial,
+    );
+    assert_entry(
+        "ViewportActionRouting",
+        ComponentCategory::Viewport,
+        ComponentConformanceStatus::Partial,
+    );
+    assert_entry(
         "Ruler",
         ComponentCategory::Viewport,
         ComponentConformanceStatus::Partial,
@@ -495,6 +557,9 @@ fn stage12_viewport_taxonomy_reports_partial_status_backed_by_public_contracts()
     );
     let hud = ViewportPanZoomHudDescriptor::new(WidgetId::from_key("taxonomy-viewport-hud"), "HUD")
         .resolve(surface);
+    let viewport_id = WidgetId::from_key("taxonomy-viewport");
+    let (action_requests, cursor_request) =
+        viewport_action_and_cursor_contracts(surface, viewport_id);
 
     assert_eq!(guides.len(), 1);
     assert_eq!(safe_areas.len(), 1);
@@ -502,6 +567,17 @@ fn stage12_viewport_taxonomy_reports_partial_status_backed_by_public_contracts()
     assert!(!rulers[0].ticks.is_empty());
     assert_eq!(hud.fit, ViewportFit::Zoom);
     assert!(hud.value_text().contains("content 640.000x360.000"));
+    assert_eq!(action_requests.len(), 2);
+    assert_eq!(
+        action_requests[0].action_id,
+        ActionId::new("viewport.fit.content")
+    );
+    assert_eq!(action_requests[1].checked, Some(true));
+    assert_eq!(
+        cursor_request.source,
+        ViewportCursorRequestSource::HoveredOverlay
+    );
+    assert_eq!(cursor_request.cursor.shape, ViewportCursorShape::Crosshair);
     assert_eq!(
         guides[0]
             .semantics(WidgetId::from_key("taxonomy-viewport"))
