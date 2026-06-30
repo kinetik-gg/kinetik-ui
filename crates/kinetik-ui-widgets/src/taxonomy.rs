@@ -159,6 +159,13 @@ pub const COMPONENT_METADATA: &[ComponentMetadata] = &[
     ComponentMetadata::new("Tooltip", "tooltip", Overlay, Partial),
     ComponentMetadata::new("CommandPalette", "command-palette", Overlay, Partial),
     ComponentMetadata::new("Viewport", "viewport", Viewport, Partial),
+    ComponentMetadata::new("ViewportTools", "viewport-tools", Viewport, Partial),
+    ComponentMetadata::new(
+        "ViewportActionRouting",
+        "viewport-action-routing",
+        Viewport,
+        Partial,
+    ),
     ComponentMetadata::new("NodeGraph", "node-graph", Viewport, Partial),
     ComponentMetadata::new("Ruler", "ruler", Viewport, Partial),
     ComponentMetadata::new("Dropdown", "dropdown", Overlay, Partial),
