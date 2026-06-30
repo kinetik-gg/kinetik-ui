@@ -424,6 +424,12 @@ pub enum ViewportCursorShape {
     ResizeHorizontal,
     /// Vertical resize cursor.
     ResizeVertical,
+    /// Top-left to bottom-right diagonal resize cursor.
+    ResizeTopLeftBottomRight,
+    /// Top-right to bottom-left diagonal resize cursor.
+    ResizeTopRightBottomLeft,
+    /// Rotate cursor.
+    Rotate,
     /// Application-defined cursor token interpreted outside the toolkit.
     Custom(String),
 }
@@ -449,6 +455,263 @@ impl ViewportCursorMetadata {
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self
+    }
+}
+
+/// Stable identity for a viewport selection target supplied by the application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ViewportSelectionTargetId(u64);
+
+impl ViewportSelectionTargetId {
+    /// Creates a viewport selection target ID from raw bits.
+    #[must_use]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// Returns the raw ID bits.
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+/// Generic 2D transform handle kind for viewport selection targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ViewportTransformHandleKind {
+    /// Move the selected target.
+    Move,
+    /// Resize from the top-left corner.
+    ResizeTopLeft,
+    /// Resize from the top edge.
+    ResizeTop,
+    /// Resize from the top-right corner.
+    ResizeTopRight,
+    /// Resize from the right edge.
+    ResizeRight,
+    /// Resize from the bottom-right corner.
+    ResizeBottomRight,
+    /// Resize from the bottom edge.
+    ResizeBottom,
+    /// Resize from the bottom-left corner.
+    ResizeBottomLeft,
+    /// Resize from the left edge.
+    ResizeLeft,
+    /// Rotate around the target's pivot.
+    Rotate,
+    /// Move the target pivot or anchor.
+    Pivot,
+}
+
+impl ViewportTransformHandleKind {
+    /// Returns the backend-neutral cursor shape normally associated with this handle.
+    #[must_use]
+    pub fn cursor_shape(self) -> ViewportCursorShape {
+        match self {
+            Self::Move => ViewportCursorShape::Move,
+            Self::ResizeTopLeft | Self::ResizeBottomRight => {
+                ViewportCursorShape::ResizeTopLeftBottomRight
+            }
+            Self::ResizeTop | Self::ResizeBottom => ViewportCursorShape::ResizeVertical,
+            Self::ResizeTopRight | Self::ResizeBottomLeft => {
+                ViewportCursorShape::ResizeTopRightBottomLeft
+            }
+            Self::ResizeRight | Self::ResizeLeft => ViewportCursorShape::ResizeHorizontal,
+            Self::Rotate => ViewportCursorShape::Rotate,
+            Self::Pivot => ViewportCursorShape::Crosshair,
+        }
+    }
+
+    const fn hit_priority(self) -> i32 {
+        match self {
+            Self::ResizeTopLeft
+            | Self::ResizeTopRight
+            | Self::ResizeBottomRight
+            | Self::ResizeBottomLeft => 90,
+            Self::Rotate => 80,
+            Self::Pivot => 70,
+            Self::ResizeTop | Self::ResizeRight | Self::ResizeBottom | Self::ResizeLeft => 60,
+            Self::Move => 10,
+        }
+    }
+}
+
+/// Stable identity for a transform handle on an application-supplied selection target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ViewportTransformHandleId {
+    /// Stable selection target identity.
+    pub target: ViewportSelectionTargetId,
+    /// Stable handle kind on the target.
+    pub kind: ViewportTransformHandleKind,
+}
+
+impl ViewportTransformHandleId {
+    /// Creates a stable transform handle identity.
+    #[must_use]
+    pub const fn new(target: ViewportSelectionTargetId, kind: ViewportTransformHandleKind) -> Self {
+        Self { target, kind }
+    }
+}
+
+/// Set of generic 2D transform handles exposed for a selection target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewportTransformHandleSet {
+    bits: u16,
+}
+
+impl ViewportTransformHandleSet {
+    const MOVE: u16 = 1 << 0;
+    const RESIZE_EDGES: u16 = 1 << 1;
+    const RESIZE_CORNERS: u16 = 1 << 2;
+    const ROTATE: u16 = 1 << 3;
+    const PIVOT: u16 = 1 << 4;
+
+    /// Creates a handle set containing every generic 2D handle.
+    #[must_use]
+    pub const fn all_2d() -> Self {
+        Self {
+            bits: Self::MOVE
+                | Self::RESIZE_EDGES
+                | Self::RESIZE_CORNERS
+                | Self::ROTATE
+                | Self::PIVOT,
+        }
+    }
+
+    /// Creates a handle set containing only the move handle.
+    #[must_use]
+    pub const fn move_only() -> Self {
+        Self { bits: Self::MOVE }
+    }
+
+    /// Returns true when this set contains the requested handle kind.
+    #[must_use]
+    pub const fn contains(self, kind: ViewportTransformHandleKind) -> bool {
+        let bit = match kind {
+            ViewportTransformHandleKind::Move => Self::MOVE,
+            ViewportTransformHandleKind::ResizeTop
+            | ViewportTransformHandleKind::ResizeRight
+            | ViewportTransformHandleKind::ResizeBottom
+            | ViewportTransformHandleKind::ResizeLeft => Self::RESIZE_EDGES,
+            ViewportTransformHandleKind::ResizeTopLeft
+            | ViewportTransformHandleKind::ResizeTopRight
+            | ViewportTransformHandleKind::ResizeBottomRight
+            | ViewportTransformHandleKind::ResizeBottomLeft => Self::RESIZE_CORNERS,
+            ViewportTransformHandleKind::Rotate => Self::ROTATE,
+            ViewportTransformHandleKind::Pivot => Self::PIVOT,
+        };
+        self.bits & bit != 0
+    }
+
+    fn kinds(self) -> impl Iterator<Item = ViewportTransformHandleKind> {
+        [
+            ViewportTransformHandleKind::Move,
+            ViewportTransformHandleKind::ResizeTopLeft,
+            ViewportTransformHandleKind::ResizeTop,
+            ViewportTransformHandleKind::ResizeTopRight,
+            ViewportTransformHandleKind::ResizeRight,
+            ViewportTransformHandleKind::ResizeBottomRight,
+            ViewportTransformHandleKind::ResizeBottom,
+            ViewportTransformHandleKind::ResizeBottomLeft,
+            ViewportTransformHandleKind::ResizeLeft,
+            ViewportTransformHandleKind::Rotate,
+            ViewportTransformHandleKind::Pivot,
+        ]
+        .into_iter()
+        .filter(move |kind| self.contains(*kind))
+    }
+}
+
+impl Default for ViewportTransformHandleSet {
+    fn default() -> Self {
+        Self::all_2d()
+    }
+}
+
+/// Compact selection and interactivity state for a viewport selection target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewportSelectionTargetState {
+    bits: u8,
+}
+
+impl ViewportSelectionTargetState {
+    const SELECTED: u8 = 1 << 0;
+    const ENABLED: u8 = 1 << 1;
+    const AVAILABLE: u8 = 1 << 2;
+    const READ_ONLY: u8 = 1 << 3;
+
+    /// Creates selected, enabled, available target state.
+    #[must_use]
+    pub const fn interactive_selected() -> Self {
+        Self {
+            bits: Self::SELECTED | Self::ENABLED | Self::AVAILABLE,
+        }
+    }
+
+    /// Returns true when the target is part of the current selection.
+    #[must_use]
+    pub const fn selected(self) -> bool {
+        self.bits & Self::SELECTED != 0
+    }
+
+    /// Returns true when the target can currently emit interaction requests.
+    #[must_use]
+    pub const fn enabled(self) -> bool {
+        self.bits & Self::ENABLED != 0
+    }
+
+    /// Returns true when the target exists in the current application context.
+    #[must_use]
+    pub const fn available(self) -> bool {
+        self.bits & Self::AVAILABLE != 0
+    }
+
+    /// Returns true when transform requests should be suppressed.
+    #[must_use]
+    pub const fn read_only(self) -> bool {
+        self.bits & Self::READ_ONLY != 0
+    }
+
+    /// Returns state with the selected flag changed.
+    #[must_use]
+    pub const fn with_selected(mut self, selected: bool) -> Self {
+        self.set_flag(Self::SELECTED, selected);
+        self
+    }
+
+    /// Returns state with the enabled flag changed.
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.set_flag(Self::ENABLED, enabled);
+        self
+    }
+
+    /// Returns state with the available flag changed.
+    #[must_use]
+    pub const fn with_available(mut self, available: bool) -> Self {
+        self.set_flag(Self::AVAILABLE, available);
+        self
+    }
+
+    /// Returns state with the read-only flag changed.
+    #[must_use]
+    pub const fn with_read_only(mut self, read_only: bool) -> Self {
+        self.set_flag(Self::READ_ONLY, read_only);
+        self
+    }
+
+    const fn set_flag(&mut self, flag: u8, enabled: bool) {
+        if enabled {
+            self.bits |= flag;
+        } else {
+            self.bits &= !flag;
+        }
+    }
+}
+
+impl Default for ViewportSelectionTargetState {
+    fn default() -> Self {
+        Self::interactive_selected()
     }
 }
 
@@ -616,6 +879,423 @@ pub fn viewport_tool_semantics(
         tool.label
     )));
     node
+}
+
+/// Application-supplied data-only selection target descriptor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewportSelectionTargetDescriptor {
+    /// Stable target identity supplied by the application.
+    pub id: ViewportSelectionTargetId,
+    /// Target bounds in viewport content coordinates.
+    pub content_rect: Rect,
+    /// Selection and interactivity state.
+    pub state: ViewportSelectionTargetState,
+    /// Explicit target priority. Higher priority is treated as visually topmost.
+    pub priority: i32,
+    /// Generic 2D transform handles exposed for this target.
+    pub handles: ViewportTransformHandleSet,
+    /// Logical handle size in screen-space units.
+    pub handle_size: f32,
+    /// Logical distance from the top edge to the rotate handle center.
+    pub rotate_offset: f32,
+    /// Optional accessible/debug label.
+    pub label: Option<String>,
+}
+
+impl ViewportSelectionTargetDescriptor {
+    /// Creates a selected, enabled, available target descriptor with all generic 2D handles.
+    #[must_use]
+    pub fn new(id: ViewportSelectionTargetId, content_rect: Rect) -> Self {
+        Self {
+            id,
+            content_rect,
+            state: ViewportSelectionTargetState::interactive_selected(),
+            priority: 0,
+            handles: ViewportTransformHandleSet::all_2d(),
+            handle_size: 9.0,
+            rotate_offset: 20.0,
+            label: None,
+        }
+    }
+
+    /// Marks the target as selected or unselected.
+    #[must_use]
+    pub const fn selected(mut self, selected: bool) -> Self {
+        self.state = self.state.with_selected(selected);
+        self
+    }
+
+    /// Marks the target as enabled or disabled.
+    #[must_use]
+    pub const fn enabled(mut self, enabled: bool) -> Self {
+        self.state = self.state.with_enabled(enabled);
+        self
+    }
+
+    /// Marks the target as available or unavailable in the current app context.
+    #[must_use]
+    pub const fn available(mut self, available: bool) -> Self {
+        self.state = self.state.with_available(available);
+        self
+    }
+
+    /// Marks the target as read-only.
+    #[must_use]
+    pub const fn read_only(mut self, read_only: bool) -> Self {
+        self.state = self.state.with_read_only(read_only);
+        self
+    }
+
+    /// Sets explicit hit-test priority. Higher priority is topmost.
+    #[must_use]
+    pub const fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Sets the generic transform handles exposed for this target.
+    #[must_use]
+    pub const fn with_handles(mut self, handles: ViewportTransformHandleSet) -> Self {
+        self.handles = handles;
+        self
+    }
+
+    /// Sets logical transform handle size in screen-space units.
+    #[must_use]
+    pub const fn with_handle_size(mut self, handle_size: f32) -> Self {
+        self.handle_size = handle_size;
+        self
+    }
+
+    /// Sets logical rotate handle offset from the target top edge.
+    #[must_use]
+    pub const fn with_rotate_offset(mut self, rotate_offset: f32) -> Self {
+        self.rotate_offset = rotate_offset;
+        self
+    }
+
+    /// Adds an accessible/debug label.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Returns true when the target can expose selection outline metadata.
+    #[must_use]
+    pub const fn can_show_selection(&self) -> bool {
+        self.state.selected() && self.state.available()
+    }
+
+    /// Returns true when this target can emit transform handle requests.
+    #[must_use]
+    pub const fn can_request_transform(&self) -> bool {
+        self.state.selected()
+            && self.state.enabled()
+            && self.state.available()
+            && !self.state.read_only()
+    }
+
+    /// Returns the target bounds transformed into UI logical screen space.
+    #[must_use]
+    pub fn screen_rect(&self, surface: ViewportSurface, scale_factor: ScaleFactor) -> Option<Rect> {
+        finite_positive_rect(self.content_rect)
+            .and_then(|rect| surface.content_rect_to_screen_at(rect, scale_factor))
+            .and_then(finite_positive_rect)
+    }
+
+    fn effective_handle_size(&self) -> f32 {
+        finite_positive(self.handle_size).unwrap_or(9.0)
+    }
+
+    fn effective_rotate_offset(&self) -> f32 {
+        finite_positive(self.rotate_offset).unwrap_or(20.0)
+    }
+}
+
+/// Data-only selection outline descriptor resolved into screen space.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewportSelectionOutlineDescriptor {
+    /// Stable target identity.
+    pub target: ViewportSelectionTargetId,
+    /// Source target bounds in content coordinates.
+    pub content_rect: Rect,
+    /// Selection outline rectangle in UI logical screen space.
+    pub screen_rect: Rect,
+    /// Whether the target can currently emit interaction requests.
+    pub enabled: bool,
+    /// Whether the target exists in the current application context.
+    pub available: bool,
+    /// Whether transform requests are suppressed for this target.
+    pub read_only: bool,
+    /// Target priority used for deterministic ordering.
+    pub priority: i32,
+    /// Optional accessible/debug label.
+    pub label: Option<String>,
+}
+
+impl ViewportSelectionOutlineDescriptor {
+    fn from_target(
+        target: &ViewportSelectionTargetDescriptor,
+        surface: ViewportSurface,
+        scale_factor: ScaleFactor,
+    ) -> Option<Self> {
+        target.can_show_selection().then_some(())?;
+        Some(Self {
+            target: target.id,
+            content_rect: finite_positive_rect(target.content_rect)?,
+            screen_rect: target.screen_rect(surface, scale_factor)?,
+            enabled: target.state.enabled(),
+            available: target.state.available(),
+            read_only: target.state.read_only(),
+            priority: target.priority,
+            label: target.label.clone(),
+        })
+    }
+}
+
+/// Data-only transform handle descriptor resolved into screen space.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewportTransformHandleDescriptor {
+    /// Stable handle identity.
+    pub id: ViewportTransformHandleId,
+    /// Stable selection target identity.
+    pub target: ViewportSelectionTargetId,
+    /// Generic handle kind.
+    pub kind: ViewportTransformHandleKind,
+    /// Source target bounds in content coordinates.
+    pub source_content_rect: Rect,
+    /// Source target bounds in UI logical screen space.
+    pub target_screen_rect: Rect,
+    /// Handle hit rectangle in UI logical screen space.
+    pub handle_screen_rect: Rect,
+    /// Target priority used for deterministic topmost resolution.
+    pub target_priority: i32,
+    /// Handle-specific hit priority.
+    pub handle_priority: i32,
+    /// Cursor request metadata associated with this handle.
+    pub cursor: ViewportCursorMetadata,
+    /// Optional accessible/debug label.
+    pub label: Option<String>,
+}
+
+/// Data-only result of viewport transform handle hit testing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewportTransformHandleHit {
+    /// Stable handle identity.
+    pub handle: ViewportTransformHandleId,
+    /// Stable selection target identity.
+    pub target: ViewportSelectionTargetId,
+    /// Generic handle kind.
+    pub kind: ViewportTransformHandleKind,
+    /// Source target bounds in content coordinates.
+    pub source_content_rect: Rect,
+    /// Source target bounds in UI logical screen space.
+    pub target_screen_rect: Rect,
+    /// Handle hit rectangle in UI logical screen space.
+    pub handle_screen_rect: Rect,
+    /// Hit point in UI logical screen space.
+    pub point: Point,
+    /// Hit point transformed into content coordinates when possible.
+    pub content_point: Option<Point>,
+    /// Target priority used for deterministic topmost resolution.
+    pub target_priority: i32,
+    /// Handle-specific hit priority.
+    pub handle_priority: i32,
+    /// Cursor request metadata associated with the hit handle.
+    pub cursor: ViewportCursorMetadata,
+    /// Optional accessible/debug label.
+    pub label: Option<String>,
+}
+
+impl ViewportTransformHandleHit {
+    fn from_descriptor(
+        descriptor: &ViewportTransformHandleDescriptor,
+        point: Point,
+        surface: ViewportSurface,
+        scale_factor: ScaleFactor,
+    ) -> Self {
+        Self {
+            handle: descriptor.id,
+            target: descriptor.target,
+            kind: descriptor.kind,
+            source_content_rect: descriptor.source_content_rect,
+            target_screen_rect: descriptor.target_screen_rect,
+            handle_screen_rect: descriptor.handle_screen_rect,
+            point,
+            content_point: surface.screen_to_content_at(point, scale_factor),
+            target_priority: descriptor.target_priority,
+            handle_priority: descriptor.handle_priority,
+            cursor: descriptor.cursor.clone(),
+            label: descriptor.label.clone(),
+        }
+    }
+}
+
+/// Pointer capture metadata for a viewport transform handle drag.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewportTransformDragCapture {
+    /// Stable handle identity captured at drag start.
+    pub handle: ViewportTransformHandleId,
+    /// Stable selection target identity captured at drag start.
+    pub target: ViewportSelectionTargetId,
+    /// Generic handle kind captured at drag start.
+    pub kind: ViewportTransformHandleKind,
+    /// Source target bounds in content coordinates at drag start.
+    pub source_content_rect: Rect,
+    /// Source target bounds in UI logical screen space at drag start.
+    pub target_screen_rect: Rect,
+    /// Handle hit rectangle in UI logical screen space at drag start.
+    pub handle_screen_rect: Rect,
+    /// Pointer position in UI logical screen space at drag start.
+    pub pointer_origin_screen: Point,
+    /// Pointer position in content coordinates at drag start, when conversion is possible.
+    pub pointer_origin_content: Option<Point>,
+}
+
+impl ViewportTransformDragCapture {
+    /// Creates pointer capture metadata from a handle hit.
+    #[must_use]
+    pub fn from_hit(hit: &ViewportTransformHandleHit) -> Self {
+        Self {
+            handle: hit.handle,
+            target: hit.target,
+            kind: hit.kind,
+            source_content_rect: hit.source_content_rect,
+            target_screen_rect: hit.target_screen_rect,
+            handle_screen_rect: hit.handle_screen_rect,
+            pointer_origin_screen: hit.point,
+            pointer_origin_content: hit.content_point,
+        }
+    }
+}
+
+/// Status for a viewport transform drag request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ViewportTransformDragStatus {
+    /// The target is present and can receive transform request metadata.
+    Active,
+    /// The captured target ID no longer appears in the current target descriptors.
+    StaleTarget,
+    /// The target is disabled, unavailable, read-only, unselected, or no longer exposes the handle.
+    UnavailableTarget,
+    /// The current pointer position was not finite and was replaced by the capture origin.
+    InvalidPointer,
+    /// The viewport could not convert screen deltas into content deltas.
+    InvalidScale,
+}
+
+/// Data-only transform drag update request metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewportTransformDragRequest {
+    /// Drag request status.
+    pub status: ViewportTransformDragStatus,
+    /// Stable handle identity captured at drag start.
+    pub handle: ViewportTransformHandleId,
+    /// Stable selection target identity captured at drag start.
+    pub target: ViewportSelectionTargetId,
+    /// Generic handle kind captured at drag start.
+    pub kind: ViewportTransformHandleKind,
+    /// Source target bounds in content coordinates at drag start.
+    pub source_content_rect: Rect,
+    /// Current target bounds in content coordinates, when the target is present.
+    pub current_content_rect: Option<Rect>,
+    /// Pointer position in UI logical screen space at drag start.
+    pub pointer_origin_screen: Point,
+    /// Current pointer position in UI logical screen space.
+    pub pointer_current_screen: Point,
+    /// Pointer position in content coordinates at drag start, when conversion is possible.
+    pub pointer_origin_content: Option<Point>,
+    /// Current pointer position in content coordinates, when conversion is possible.
+    pub pointer_current_content: Option<Point>,
+    /// Pointer delta in UI logical screen space from drag start.
+    pub screen_delta: Vec2,
+    /// Pointer delta in content coordinates from drag start.
+    pub content_delta: Vec2,
+}
+
+impl ViewportTransformDragRequest {
+    /// Creates drag update metadata from an existing pointer capture.
+    #[must_use]
+    pub fn update(
+        surface: ViewportSurface,
+        targets: &[ViewportSelectionTargetDescriptor],
+        capture: &ViewportTransformDragCapture,
+        pointer_current_screen: Point,
+    ) -> Self {
+        Self::update_at(
+            surface,
+            targets,
+            capture,
+            pointer_current_screen,
+            ScaleFactor::ONE,
+        )
+    }
+
+    /// Creates drag update metadata from an existing pointer capture for a viewport scale factor.
+    #[must_use]
+    pub fn update_at(
+        surface: ViewportSurface,
+        targets: &[ViewportSelectionTargetDescriptor],
+        capture: &ViewportTransformDragCapture,
+        pointer_current_screen: Point,
+        scale_factor: ScaleFactor,
+    ) -> Self {
+        let pointer_is_valid = finite_point(pointer_current_screen).is_some();
+        let pointer_current_screen = if pointer_is_valid {
+            pointer_current_screen
+        } else {
+            capture.pointer_origin_screen
+        };
+        let screen_delta = Vec2::new(
+            pointer_current_screen.x - capture.pointer_origin_screen.x,
+            pointer_current_screen.y - capture.pointer_origin_screen.y,
+        );
+        let scale = finite_positive(surface.content_scale_at(scale_factor));
+        let content_delta = scale.map_or(Vec2::ZERO, |scale| {
+            Vec2::new(screen_delta.x / scale, screen_delta.y / scale)
+        });
+        let target = targets.iter().find(|target| target.id == capture.target);
+        let current_content_rect =
+            target.and_then(|target| finite_positive_rect(target.content_rect));
+        let status = if !pointer_is_valid {
+            ViewportTransformDragStatus::InvalidPointer
+        } else if scale.is_none() {
+            ViewportTransformDragStatus::InvalidScale
+        } else {
+            match target {
+                None => ViewportTransformDragStatus::StaleTarget,
+                Some(target)
+                    if target.can_request_transform() && target.handles.contains(capture.kind) =>
+                {
+                    ViewportTransformDragStatus::Active
+                }
+                Some(_) => ViewportTransformDragStatus::UnavailableTarget,
+            }
+        };
+
+        Self {
+            status,
+            handle: capture.handle,
+            target: capture.target,
+            kind: capture.kind,
+            source_content_rect: capture.source_content_rect,
+            current_content_rect,
+            pointer_origin_screen: capture.pointer_origin_screen,
+            pointer_current_screen,
+            pointer_origin_content: capture.pointer_origin_content,
+            pointer_current_content: surface
+                .screen_to_content_at(pointer_current_screen, scale_factor),
+            screen_delta,
+            content_delta,
+        }
+    }
+
+    /// Returns true when this request is deterministic no-op/error metadata.
+    #[must_use]
+    pub const fn is_noop(&self) -> bool {
+        !matches!(self.status, ViewportTransformDragStatus::Active)
+    }
 }
 
 /// Viewport overlay target category.
@@ -865,6 +1545,164 @@ pub fn hit_test_viewport_overlays_at(
                 .cmp(&right.priority)
                 .then_with(|| right.overlay.cmp(&left.overlay))
         })
+}
+
+/// Resolves selected target outlines into UI logical screen space.
+#[must_use]
+pub fn viewport_selection_outlines(
+    surface: ViewportSurface,
+    targets: &[ViewportSelectionTargetDescriptor],
+) -> Vec<ViewportSelectionOutlineDescriptor> {
+    viewport_selection_outlines_at(surface, targets, ScaleFactor::ONE)
+}
+
+/// Resolves selected target outlines into UI logical screen space for a viewport scale factor.
+#[must_use]
+pub fn viewport_selection_outlines_at(
+    surface: ViewportSurface,
+    targets: &[ViewportSelectionTargetDescriptor],
+    scale_factor: ScaleFactor,
+) -> Vec<ViewportSelectionOutlineDescriptor> {
+    let mut outlines = targets
+        .iter()
+        .filter_map(|target| {
+            ViewportSelectionOutlineDescriptor::from_target(target, surface, scale_factor)
+        })
+        .collect::<Vec<_>>();
+    outlines.sort_by(|left, right| {
+        left.priority
+            .cmp(&right.priority)
+            .then_with(|| left.target.cmp(&right.target))
+    });
+    outlines
+}
+
+/// Resolves selected target transform handles into UI logical screen space.
+#[must_use]
+pub fn viewport_transform_handles(
+    surface: ViewportSurface,
+    targets: &[ViewportSelectionTargetDescriptor],
+) -> Vec<ViewportTransformHandleDescriptor> {
+    viewport_transform_handles_at(surface, targets, ScaleFactor::ONE)
+}
+
+/// Resolves selected target transform handles into UI logical screen space for a scale factor.
+#[must_use]
+pub fn viewport_transform_handles_at(
+    surface: ViewportSurface,
+    targets: &[ViewportSelectionTargetDescriptor],
+    scale_factor: ScaleFactor,
+) -> Vec<ViewportTransformHandleDescriptor> {
+    let mut handles = targets
+        .iter()
+        .filter(|target| target.can_request_transform())
+        .filter_map(|target| {
+            let source_content_rect = finite_positive_rect(target.content_rect)?;
+            let target_screen_rect = target.screen_rect(surface, scale_factor)?;
+            Some((target, source_content_rect, target_screen_rect))
+        })
+        .flat_map(|(target, source_content_rect, target_screen_rect)| {
+            target.handles.kinds().filter_map(move |kind| {
+                let handle_screen_rect = transform_handle_rect(target, target_screen_rect, kind)?;
+                Some(ViewportTransformHandleDescriptor {
+                    id: ViewportTransformHandleId::new(target.id, kind),
+                    target: target.id,
+                    kind,
+                    source_content_rect,
+                    target_screen_rect,
+                    handle_screen_rect,
+                    target_priority: target.priority,
+                    handle_priority: kind.hit_priority(),
+                    cursor: ViewportCursorMetadata::new(kind.cursor_shape()),
+                    label: target.label.clone(),
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    handles.sort_by(|left, right| {
+        left.target_priority
+            .cmp(&right.target_priority)
+            .then_with(|| left.handle_priority.cmp(&right.handle_priority))
+            .then_with(|| left.target.cmp(&right.target))
+            .then_with(|| left.kind.cmp(&right.kind))
+    });
+    handles
+}
+
+/// Resolves a UI-space point to the highest-priority viewport transform handle.
+///
+/// Disabled, unavailable, read-only, and unselected targets are skipped.
+/// Higher target priority is treated as topmost. Within one target, more
+/// specific handles win over broad move regions. Stable target and handle IDs
+/// break remaining ties so descriptor order does not affect the result.
+#[must_use]
+pub fn hit_test_viewport_transform_handles(
+    surface: ViewportSurface,
+    targets: &[ViewportSelectionTargetDescriptor],
+    point: Point,
+) -> Option<ViewportTransformHandleHit> {
+    hit_test_viewport_transform_handles_at(surface, targets, point, ScaleFactor::ONE)
+}
+
+/// Resolves a UI-space point to the highest-priority viewport transform handle
+/// for a viewport scale factor.
+#[must_use]
+pub fn hit_test_viewport_transform_handles_at(
+    surface: ViewportSurface,
+    targets: &[ViewportSelectionTargetDescriptor],
+    point: Point,
+    scale_factor: ScaleFactor,
+) -> Option<ViewportTransformHandleHit> {
+    let point = finite_point(point)?;
+    viewport_transform_handles_at(surface, targets, scale_factor)
+        .into_iter()
+        .filter(|handle| handle.handle_screen_rect.contains_point(point))
+        .map(|handle| {
+            ViewportTransformHandleHit::from_descriptor(&handle, point, surface, scale_factor)
+        })
+        .max_by(|left, right| {
+            left.target_priority
+                .cmp(&right.target_priority)
+                .then_with(|| left.handle_priority.cmp(&right.handle_priority))
+                .then_with(|| right.target.cmp(&left.target))
+                .then_with(|| right.kind.cmp(&left.kind))
+        })
+}
+
+fn transform_handle_rect(
+    target: &ViewportSelectionTargetDescriptor,
+    target_screen_rect: Rect,
+    kind: ViewportTransformHandleKind,
+) -> Option<Rect> {
+    if kind == ViewportTransformHandleKind::Move {
+        return finite_positive_rect(target_screen_rect);
+    }
+
+    let size = target.effective_handle_size();
+    let half = size * 0.5;
+    let center =
+        transform_handle_center(target_screen_rect, target.effective_rotate_offset(), kind);
+    finite_positive_rect(Rect::new(center.x - half, center.y - half, size, size))
+}
+
+fn transform_handle_center(
+    rect: Rect,
+    rotate_offset: f32,
+    kind: ViewportTransformHandleKind,
+) -> Point {
+    let center = rect.center();
+    match kind {
+        ViewportTransformHandleKind::Move | ViewportTransformHandleKind::Pivot => center,
+        ViewportTransformHandleKind::ResizeTopLeft => Point::new(rect.x, rect.y),
+        ViewportTransformHandleKind::ResizeTop => Point::new(center.x, rect.y),
+        ViewportTransformHandleKind::ResizeTopRight => Point::new(rect.max_x(), rect.y),
+        ViewportTransformHandleKind::ResizeRight => Point::new(rect.max_x(), center.y),
+        ViewportTransformHandleKind::ResizeBottomRight => Point::new(rect.max_x(), rect.max_y()),
+        ViewportTransformHandleKind::ResizeBottom => Point::new(center.x, rect.max_y()),
+        ViewportTransformHandleKind::ResizeBottomLeft => Point::new(rect.x, rect.max_y()),
+        ViewportTransformHandleKind::ResizeLeft => Point::new(rect.x, center.y),
+        ViewportTransformHandleKind::Rotate => Point::new(center.x, rect.y - rotate_offset),
+    }
 }
 
 fn fit_scale(source: Size, bounds: Size) -> f32 {
