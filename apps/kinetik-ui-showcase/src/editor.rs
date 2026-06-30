@@ -51,6 +51,13 @@ pub const ACTION_PLAY: &str = "editor.play";
 pub const ACTION_STOP: &str = "editor.stop";
 /// Toggles viewport grid overlays.
 pub const ACTION_GRID: &str = "editor.grid";
+const ACTION_VIEWPORT_FOCUS_SELECTED: &str = "editor.viewport.focus-selected";
+const ACTION_VIEWPORT_FIT_CONTENT: &str = "editor.viewport.fit-content";
+const ACTION_VIEWPORT_FIT_SELECTION: &str = "editor.viewport.fit-selection";
+const ACTION_VIEWPORT_ACTUAL_SIZE: &str = "editor.viewport.actual-size";
+const ACTION_VIEWPORT_ZOOM_IN: &str = "editor.viewport.zoom-in";
+const ACTION_VIEWPORT_ZOOM_OUT: &str = "editor.viewport.zoom-out";
+const ACTION_VIEWPORT_PAN: &str = "editor.viewport.pan";
 /// Queues a project build.
 pub const ACTION_BUILD: &str = "editor.build";
 /// Requests the command palette.
@@ -547,6 +554,34 @@ impl EditorShowcase {
                 status.clone_into(&mut self.status);
                 true
             }
+            ACTION_VIEWPORT_FOCUS_SELECTED => {
+                "Viewport focus selected requested".clone_into(&mut self.status);
+                true
+            }
+            ACTION_VIEWPORT_FIT_CONTENT => {
+                "Viewport fit content requested".clone_into(&mut self.status);
+                true
+            }
+            ACTION_VIEWPORT_FIT_SELECTION => {
+                "Viewport fit selection requested".clone_into(&mut self.status);
+                true
+            }
+            ACTION_VIEWPORT_ACTUAL_SIZE => {
+                "Viewport actual size requested".clone_into(&mut self.status);
+                true
+            }
+            ACTION_VIEWPORT_ZOOM_IN => {
+                "Viewport zoom in requested".clone_into(&mut self.status);
+                true
+            }
+            ACTION_VIEWPORT_ZOOM_OUT => {
+                "Viewport zoom out requested".clone_into(&mut self.status);
+                true
+            }
+            ACTION_VIEWPORT_PAN => {
+                "Viewport pan mode requested".clone_into(&mut self.status);
+                true
+            }
             ACTION_BUILD => {
                 "Build queued for Windows x64".clone_into(&mut self.status);
                 true
@@ -646,14 +681,14 @@ impl EditorShowcase {
                 true,
             )),
             ToolbarItem::new(toolbar_action(
-                ACTION_PALETTE,
+                ACTION_VIEWPORT_FIT_SELECTION,
                 "Frame selected",
                 ToolbarIcon::Crosshair,
                 None,
                 true,
             )),
             ToolbarItem::new(toolbar_action(
-                ACTION_PALETTE,
+                ACTION_VIEWPORT_FIT_CONTENT,
                 "Reset view",
                 ToolbarIcon::Reset,
                 None,
@@ -1163,7 +1198,7 @@ impl EditorShowcase {
             EditorMenuKind::View => menu([
                 menu_action(ACTION_PALETTE, "Perspective View", None, Some(true), true),
                 menu_action(
-                    ACTION_PALETTE,
+                    ACTION_VIEWPORT_FOCUS_SELECTED,
                     "Frame Selected",
                     Some(shortcut(Key::Character("f".to_owned()))),
                     None,
@@ -1177,7 +1212,7 @@ impl EditorShowcase {
                     true,
                 ),
                 menu_action(ACTION_PALETTE, "Show Overlays", None, Some(true), true),
-                menu_action(ACTION_PALETTE, "Reset View", None, None, true),
+                menu_action(ACTION_VIEWPORT_FIT_CONTENT, "Reset View", None, None, true),
             ]),
             EditorMenuKind::Project => menu([
                 menu_action(
@@ -1346,8 +1381,16 @@ impl EditorShowcase {
             .visible_items();
         for ((icon, _label, action), item) in [
             (ToolbarIcon::Grid, "Toggle grid", ACTION_GRID),
-            (ToolbarIcon::Crosshair, "Frame selected", ACTION_PALETTE),
-            (ToolbarIcon::Reset, "Reset view", ACTION_PALETTE),
+            (
+                ToolbarIcon::Crosshair,
+                "Frame selected",
+                ACTION_VIEWPORT_FIT_SELECTION,
+            ),
+            (
+                ToolbarIcon::Reset,
+                "Reset view",
+                ACTION_VIEWPORT_FIT_CONTENT,
+            ),
         ]
         .into_iter()
         .zip(viewport_items)
@@ -3406,11 +3449,13 @@ fn run_toolbar_buttons(
 #[allow(clippy::float_cmp, clippy::items_after_test_module)]
 mod tests {
     use super::{
-        ACTION_GRID, ACTION_PLAY, ACTION_SAVE, ACTION_STOP, EditorChromeMetrics, EditorMenuKind,
-        EditorShowcase, EditorStatusItemKind, EditorTool, EditorToolbarGroupKind, FRAME_BOTTOM,
-        FRAME_INSPECTOR, FRAME_VIEWPORT, PANEL_TIMELINE, TOOLBAR_Y, VIEWPORT_SIZE, frame_tab_rects,
-        frame_tab_strip, icon_atlas_image, inspector_label_width, item_id, phosphor_icons,
-        register_resources, rgb, rgba,
+        ACTION_GRID, ACTION_PLAY, ACTION_SAVE, ACTION_STOP, ACTION_VIEWPORT_ACTUAL_SIZE,
+        ACTION_VIEWPORT_FIT_CONTENT, ACTION_VIEWPORT_FIT_SELECTION, ACTION_VIEWPORT_FOCUS_SELECTED,
+        ACTION_VIEWPORT_PAN, ACTION_VIEWPORT_ZOOM_IN, ACTION_VIEWPORT_ZOOM_OUT,
+        EditorChromeMetrics, EditorMenuKind, EditorShowcase, EditorStatusItemKind, EditorTool,
+        EditorToolbarGroupKind, FRAME_BOTTOM, FRAME_INSPECTOR, FRAME_VIEWPORT, PANEL_TIMELINE,
+        TOOLBAR_Y, VIEWPORT_SIZE, frame_tab_rects, frame_tab_strip, icon_atlas_image,
+        inspector_label_width, item_id, phosphor_icons, register_resources, rgb, rgba,
     };
     use kinetik_ui::core::{
         ActionContext, ActionDescriptor, ActionId, ActionSource, Brush, CursorShape, FrameContext,
@@ -3423,16 +3468,22 @@ mod tests {
         DockSplitterContextActionKind, GraphVector, MenuItem, ModalActionRole, NodeFrameId,
         NodeGraphContextActionKind, NodeGraphContextTarget, NodeGraphHitTarget,
         NodeGraphLinkEditRequest, NodeGraphSelection, NodeGraphSelectionTarget, NodeId,
-        OverlayDismissal, OverlayKind, PanelOpenDecision, PanelTypeCategory, PortEndpoint, PortId,
-        StatusItemKind, TimelineDescriptor, TimelineFrameRate, TimelineId, TimelineItemDescriptor,
-        TimelineItemId, TimelineKeyframeDescriptor, TimelineKeyframeId, TimelineLaneDescriptor,
-        TimelineLaneId, TimelineLayout, TimelineMarkerDescriptor, TimelineMarkerId, TimelineRange,
-        TimelineScale, TimelineSelection, TimelineSelectionTarget, TimelineSnapCandidate,
-        TimelineSnapCandidateRequest, TimelineSnapSource, TimelineTime, TimelineTransportContext,
-        TimelineViewportState, TimelineZoom, TransportActionRequest, TransportControlDescriptor,
-        TransportControlId, TransportControlIntent, TransportControls, Ui, ViewportSurface,
+        OverlayDismissal, OverlayKind, PanZoom, PanelOpenDecision, PanelTypeCategory, PortEndpoint,
+        PortId, StatusItemKind, TimelineDescriptor, TimelineFrameRate, TimelineId,
+        TimelineItemDescriptor, TimelineItemId, TimelineKeyframeDescriptor, TimelineKeyframeId,
+        TimelineLaneDescriptor, TimelineLaneId, TimelineLayout, TimelineMarkerDescriptor,
+        TimelineMarkerId, TimelineRange, TimelineScale, TimelineSelection, TimelineSelectionTarget,
+        TimelineSnapCandidate, TimelineSnapCandidateRequest, TimelineSnapSource, TimelineTime,
+        TimelineTransportContext, TimelineViewportState, TimelineZoom, TransportActionRequest,
+        TransportControlDescriptor, TransportControlId, TransportControlIntent, TransportControls,
+        Ui, ViewportActionDescriptor, ViewportActionKind, ViewportActionRequest,
+        ViewportActionTarget, ViewportCursorMetadata, ViewportCursorRequest,
+        ViewportCursorRequestSource, ViewportCursorShape, ViewportOverlayDescriptor,
+        ViewportOverlayId, ViewportOverlayKind, ViewportOverlaySpace, ViewportSelectionTargetId,
+        ViewportSurface, ViewportToolDescriptor, ViewportToolId, hit_test_viewport_overlays,
         resolve_dock_splitter_context_actions_with_policy, solve_dock_layout,
         solve_dock_splitters_with_style, timeline_semantics, timeline_snap_candidates,
+        viewport_action_requests, viewport_actions_semantics, viewport_cursor_request,
     };
 
     struct EditorTimelineFixture {
@@ -3440,6 +3491,13 @@ mod tests {
         candidates: Vec<TimelineSnapCandidate>,
         transport_request: TransportActionRequest,
         state: TimelineViewportState,
+        semantic_roles: Vec<SemanticRole>,
+    }
+
+    struct EditorViewportToolFixture {
+        actions: Vec<ViewportActionDescriptor>,
+        requests: Vec<ViewportActionRequest>,
+        cursor_request: ViewportCursorRequest,
         semantic_roles: Vec<SemanticRole>,
     }
 
@@ -3540,6 +3598,121 @@ mod tests {
             candidates,
             transport_request,
             state,
+            semantic_roles,
+        }
+    }
+
+    fn editor_viewport_tool_fixture() -> EditorViewportToolFixture {
+        let viewport = WidgetId::from_key("editor.viewport.fixture");
+        let selected = ViewportSelectionTargetId::from_raw(70);
+        let overlay = ViewportOverlayId::from_raw(12);
+        let select_tool = ViewportToolId::from_raw(1);
+        let pan_tool = ViewportToolId::from_raw(2);
+        let mut select_action = ActionDescriptor::new(super::ACTION_TOOL_SELECT, "Select");
+        select_action.state.checked = Some(true);
+        let mut pan_action = ActionDescriptor::new(ACTION_VIEWPORT_PAN, "Pan");
+        pan_action.state.checked = Some(false);
+        let mut grid_action = ActionDescriptor::new(ACTION_GRID, "Show Grid");
+        grid_action.state.checked = Some(true);
+        let actions = vec![
+            ViewportActionDescriptor::new(
+                select_action,
+                ViewportActionKind::ActivateTool,
+                ViewportActionTarget::new(viewport).with_tool(select_tool),
+            ),
+            ViewportActionDescriptor::new(
+                ActionDescriptor::new(ACTION_VIEWPORT_FOCUS_SELECTED, "Focus Selected"),
+                ViewportActionKind::FocusSelected,
+                ViewportActionTarget::new(viewport).with_selection(selected),
+            ),
+            ViewportActionDescriptor::new(
+                ActionDescriptor::new(ACTION_VIEWPORT_FIT_CONTENT, "Fit Content"),
+                ViewportActionKind::FitContent,
+                ViewportActionTarget::new(viewport),
+            ),
+            ViewportActionDescriptor::new(
+                ActionDescriptor::new(ACTION_VIEWPORT_FIT_SELECTION, "Fit Selection"),
+                ViewportActionKind::FitSelection,
+                ViewportActionTarget::new(viewport).with_selection(selected),
+            ),
+            ViewportActionDescriptor::new(
+                ActionDescriptor::new(ACTION_VIEWPORT_ACTUAL_SIZE, "Actual Size"),
+                ViewportActionKind::ActualSize,
+                ViewportActionTarget::new(viewport),
+            ),
+            ViewportActionDescriptor::new(
+                ActionDescriptor::new(ACTION_VIEWPORT_ZOOM_IN, "Zoom In"),
+                ViewportActionKind::ZoomIn,
+                ViewportActionTarget::new(viewport),
+            ),
+            ViewportActionDescriptor::new(
+                ActionDescriptor::new(ACTION_VIEWPORT_ZOOM_OUT, "Zoom Out"),
+                ViewportActionKind::ZoomOut,
+                ViewportActionTarget::new(viewport),
+            ),
+            ViewportActionDescriptor::new(
+                pan_action,
+                ViewportActionKind::PanMode,
+                ViewportActionTarget::new(viewport).with_tool(pan_tool),
+            ),
+            ViewportActionDescriptor::new(
+                grid_action,
+                ViewportActionKind::ToggleOverlay,
+                ViewportActionTarget::new(viewport).with_overlay(overlay),
+            ),
+        ];
+        let requests = viewport_action_requests(
+            &actions,
+            ActionSource::Button,
+            &ActionContext::Widget(viewport),
+        );
+        let semantic_roles = viewport_actions_semantics(
+            viewport.child("actions"),
+            Rect::new(0.0, 0.0, 280.0, 28.0),
+            "Viewport tool actions",
+            &actions,
+            actions.iter().enumerate().map(|(index, action)| {
+                (
+                    action.action.id.clone(),
+                    Rect::new(index as f32 * 28.0, 0.0, 24.0, 24.0),
+                )
+            }),
+        )
+        .into_iter()
+        .map(|node| node.role)
+        .collect::<Vec<_>>();
+        let mut pan_zoom = PanZoom::default();
+        pan_zoom.set_zoom(1.0);
+        let surface = ViewportSurface {
+            texture: super::VIEWPORT_TEXTURE,
+            source_size: VIEWPORT_SIZE,
+            bounds: Rect::new(0.0, 0.0, 320.0, 180.0),
+            pan_zoom,
+        };
+        let overlay_hit = hit_test_viewport_overlays(
+            surface,
+            &[ViewportOverlayDescriptor::new(
+                overlay,
+                ViewportOverlayKind::ToolRegion,
+                Rect::new(12.0, 12.0, 80.0, 40.0),
+                ViewportOverlaySpace::Screen,
+            )
+            .with_tool(pan_tool)
+            .with_cursor(ViewportCursorMetadata::new(ViewportCursorShape::Crosshair))],
+            Point::new(24.0, 20.0),
+        )
+        .expect("editor viewport fixture overlay hit");
+        let tool = ViewportToolDescriptor::new(pan_tool, "Pan")
+            .active(true)
+            .with_cursor(ViewportCursorMetadata::new(ViewportCursorShape::Grab));
+        let cursor_request =
+            viewport_cursor_request(viewport, None, None, Some(&overlay_hit), Some(&tool))
+                .expect("editor viewport fixture cursor request");
+
+        EditorViewportToolFixture {
+            actions,
+            requests,
+            cursor_request,
             semantic_roles,
         }
     }
@@ -3786,6 +3959,69 @@ mod tests {
                 .state
                 .selection
                 .contains(TimelineSelectionTarget::Item(TimelineItemId::from_raw(11)))
+        );
+    }
+
+    #[test]
+    fn editor_viewport_tool_fixture_exercises_app_owned_action_routing() {
+        let fixture = editor_viewport_tool_fixture();
+
+        assert_eq!(fixture.actions.len(), 9);
+        assert_eq!(
+            fixture
+                .requests
+                .iter()
+                .map(|request| request.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                ViewportActionKind::ActivateTool,
+                ViewportActionKind::FocusSelected,
+                ViewportActionKind::FitContent,
+                ViewportActionKind::FitSelection,
+                ViewportActionKind::ActualSize,
+                ViewportActionKind::ZoomIn,
+                ViewportActionKind::ZoomOut,
+                ViewportActionKind::PanMode,
+                ViewportActionKind::ToggleOverlay,
+            ]
+        );
+        assert!(fixture.requests.iter().all(|request| {
+            request.source == ActionSource::Button
+                && matches!(request.context, ActionContext::Widget(_))
+        }));
+        assert_eq!(
+            fixture.requests[0].action_id,
+            ActionId::new(super::ACTION_TOOL_SELECT)
+        );
+        assert_eq!(fixture.requests[0].checked, Some(true));
+        assert_eq!(
+            fixture.requests[1].target.selection,
+            Some(ViewportSelectionTargetId::from_raw(70))
+        );
+        assert_eq!(
+            fixture.requests[8].target.overlay,
+            Some(ViewportOverlayId::from_raw(12))
+        );
+        assert_eq!(fixture.requests[8].checked, Some(true));
+        assert!(
+            fixture
+                .semantic_roles
+                .iter()
+                .any(|role| *role == SemanticRole::Custom("viewport-actions".to_owned()))
+        );
+        assert!(fixture.semantic_roles.contains(&SemanticRole::Toggle));
+        assert!(fixture.semantic_roles.contains(&SemanticRole::Button));
+        assert_eq!(
+            fixture.cursor_request.source,
+            ViewportCursorRequestSource::HoveredOverlay
+        );
+        assert_eq!(
+            fixture.cursor_request.cursor.shape,
+            ViewportCursorShape::Crosshair
+        );
+        assert_eq!(
+            fixture.cursor_request.overlay,
+            Some(ViewportOverlayId::from_raw(12))
         );
     }
 
