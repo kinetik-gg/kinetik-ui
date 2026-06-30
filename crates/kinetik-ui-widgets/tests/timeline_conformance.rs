@@ -2,10 +2,11 @@
 
 mod timeline_conformance {
     use kinetik_ui_widgets::{
-        TimelineFrame, TimelineFrameRate, TimelineFrameRounding, TimelineId, TimelineRange,
-        TimelineRulerId, TimelineRulerTickKind, TimelineRulerTickRequest, TimelineScale,
-        TimelineTime, TimelineZoom, TransportControlId, clamp_timeline_scroll_offset,
-        max_timeline_scroll_offset, sanitize_timeline_zoom, timeline_timecode_label,
+        DEFAULT_TIMELINE_RULER_MAX_TICKS, TimelineFrame, TimelineFrameRate, TimelineFrameRounding,
+        TimelineId, TimelineRange, TimelineRulerId, TimelineRulerTickKind,
+        TimelineRulerTickRequest, TimelineScale, TimelineTime, TimelineZoom, TransportControlId,
+        clamp_timeline_scroll_offset, max_timeline_scroll_offset, sanitize_timeline_zoom,
+        timeline_timecode_label,
     };
 
     fn assert_close(actual: f32, expected: f32) {
@@ -199,6 +200,49 @@ mod timeline_conformance {
 
         assert!(ticks.len() <= 128);
         assert!(ticks.windows(2).all(|pair| pair[0].frame < pair[1].frame));
+    }
+
+    #[test]
+    fn ruler_ticks_bound_saturated_finite_ranges_with_small_max_ticks() {
+        let request = TimelineRulerTickRequest::new(
+            TimelineRange::seconds(-1.0e20, 1.0e20),
+            TimelineFrameRate::integer(24),
+            TimelineZoom::default(),
+        )
+        .with_max_ticks(2);
+
+        let ticks = request.ticks();
+        let repeated = request.ticks();
+
+        assert_eq!(ticks, repeated);
+        assert!(ticks.len() <= 2);
+        assert!(ticks.windows(2).all(|pair| pair[0].frame < pair[1].frame));
+        assert!(
+            ticks
+                .iter()
+                .all(|tick| tick.time(request.frame_rate).seconds().is_finite())
+        );
+    }
+
+    #[test]
+    fn ruler_ticks_bound_saturated_finite_ranges_with_default_max_ticks() {
+        let request = TimelineRulerTickRequest::new(
+            TimelineRange::seconds(-1.0e20, 1.0e20),
+            TimelineFrameRate::integer(24),
+            TimelineZoom::default(),
+        );
+
+        let ticks = request.ticks();
+        let repeated = request.ticks();
+
+        assert_eq!(ticks, repeated);
+        assert!(ticks.len() <= DEFAULT_TIMELINE_RULER_MAX_TICKS);
+        assert!(ticks.windows(2).all(|pair| pair[0].frame < pair[1].frame));
+        assert!(
+            ticks
+                .iter()
+                .all(|tick| tick.time(request.frame_rate).seconds().is_finite())
+        );
     }
 
     #[test]

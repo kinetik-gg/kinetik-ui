@@ -510,7 +510,11 @@ pub fn timeline_ruler_ticks(request: TimelineRulerTickRequest) -> Vec<TimelineRu
     while tick_count(start_frame, end_frame, minor_step) > request.max_ticks {
         minor_step = major_step;
         if tick_count(start_frame, end_frame, minor_step) > request.max_ticks {
-            major_step = nice_frame_step(major_step.saturating_mul(2));
+            let next_major_step = nice_frame_step(major_step.saturating_mul(2));
+            if next_major_step <= major_step {
+                break;
+            }
+            major_step = next_major_step;
             minor_step = major_step;
         }
     }
@@ -534,10 +538,16 @@ pub fn timeline_ruler_ticks(request: TimelineRulerTickRequest) -> Vec<TimelineRu
                 String::new()
             },
         });
-        frame = frame.saturating_add(minor_step);
         if minor_step <= 0 {
             break;
         }
+        let Some(next_frame) = frame.checked_add(minor_step) else {
+            break;
+        };
+        if next_frame <= frame {
+            break;
+        }
+        frame = next_frame;
     }
     ticks
 }
@@ -631,7 +641,6 @@ fn ceil_to_step(value: i64, step: i64) -> i64 {
     }
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn tick_count(start_frame: i64, end_frame: i64, step: i64) -> usize {
     let step = step.max(1);
     let first = floor_to_step(start_frame, step);
@@ -639,6 +648,8 @@ fn tick_count(start_frame: i64, end_frame: i64, step: i64) -> usize {
     if last < first {
         0
     } else {
-        ((last - first) / step).saturating_add(1) as usize
+        let span = i128::from(last) - i128::from(first);
+        let count = span / i128::from(step) + 1;
+        usize::try_from(count).unwrap_or(usize::MAX)
     }
 }
