@@ -2170,7 +2170,7 @@ impl ViewportResolvedRuler {
         let origin_content = finite_or_zero(descriptor.origin_content);
         let origin_screen_position =
             ruler_axis_screen_position(surface, descriptor.edge, origin_content, scale_factor)?;
-        let max_ticks = descriptor.max_ticks.clamp(1, 4096);
+        let max_ticks = descriptor.max_ticks.min(4096);
         let ticks = viewport_ruler_ticks(
             surface,
             descriptor.edge,

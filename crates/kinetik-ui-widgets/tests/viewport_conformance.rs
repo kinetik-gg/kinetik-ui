@@ -415,6 +415,29 @@ fn ruler_overlay_descriptors_emit_bounded_ticks_labels_and_origin_metadata() {
 }
 
 #[test]
+fn ruler_overlay_zero_max_ticks_emits_no_ticks_or_labels() {
+    let surface = surface();
+    let rulers = viewport_rulers(
+        surface,
+        &[
+            ViewportRulerDescriptor::new(ViewportRulerId::from_raw(12), ViewportRulerEdge::Top)
+                .with_max_ticks(0),
+        ],
+    );
+
+    assert_eq!(rulers.len(), 1);
+    assert!(rulers[0].ticks.is_empty());
+
+    let primitives = rulers[0].primitives(Color::WHITE, Color::WHITE, Color::WHITE);
+    assert_eq!(primitives.len(), 1);
+    assert!(
+        !primitives
+            .iter()
+            .any(|primitive| matches!(primitive, kinetik_ui_core::Primitive::Text(_)))
+    );
+}
+
+#[test]
 fn pan_zoom_hud_reports_state_and_target_metadata_without_actions() {
     let surface = surface();
     let hud = ViewportPanZoomHudDescriptor::new(WidgetId::from_key("viewport-hud"), "Viewport HUD")
