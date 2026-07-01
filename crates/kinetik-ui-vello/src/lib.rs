@@ -1,6 +1,10 @@
 //! Vello renderer boundary for Kinetik UI render primitives.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    hash::Hash,
+    sync::Arc,
+};
 
 use kinetik_ui_core::{
     Brush, ClipId, Color, CornerRadius, ImageId, LayerId, LinearGradient, PathElement, Point,
@@ -24,6 +28,8 @@ use vello::{
     },
 };
 
+const MAX_CACHED_IMAGE_ENTRIES: usize = 512;
+const MAX_CACHED_TEXTURE_ENTRIES: usize = 256;
 const MAX_TINTED_IMAGE_CACHE_ENTRIES: usize = 64;
 const MAX_CACHED_TINTED_IMAGE_BYTES: usize = 512 * 1024;
 
@@ -249,13 +255,22 @@ impl ImageSignature {
 #[derive(Debug, Default)]
 struct ImageDataCache {
     images: HashMap<ImageId, CachedImageData>,
+    image_order: VecDeque<ImageId>,
     tinted_images: HashMap<(ImageId, PackedTint), CachedImageData>,
+    tinted_image_order: VecDeque<(ImageId, PackedTint)>,
     textures: HashMap<TextureId, CachedImageData>,
+    texture_order: VecDeque<TextureId>,
 }
 
 impl ImageDataCache {
     fn image_data(&mut self, id: ImageId, image: &RenderImage) -> ImageData {
-        cached_image_data(&mut self.images, id, image)
+        cached_image_data(
+            &mut self.images,
+            &mut self.image_order,
+            MAX_CACHED_IMAGE_ENTRIES,
+            id,
+            image,
+        )
     }
 
     fn image_data_with_tint(
@@ -269,6 +284,7 @@ impl ImageDataCache {
         };
         cached_tinted_image_data(
             &mut self.tinted_images,
+            &mut self.tinted_image_order,
             id,
             image,
             PackedTint::from_color(tint),
@@ -276,7 +292,13 @@ impl ImageDataCache {
     }
 
     fn texture_data(&mut self, id: TextureId, image: &RenderImage) -> ImageData {
-        cached_image_data(&mut self.textures, id, image)
+        cached_image_data(
+            &mut self.textures,
+            &mut self.texture_order,
+            MAX_CACHED_TEXTURE_ENTRIES,
+            id,
+            image,
+        )
     }
 
     #[cfg(test)]
@@ -290,19 +312,26 @@ impl ImageDataCache {
     }
 }
 
-fn cached_image_data<Id: Eq + std::hash::Hash>(
+fn cached_image_data<Id>(
     cache: &mut HashMap<Id, CachedImageData>,
+    order: &mut VecDeque<Id>,
+    capacity: usize,
     id: Id,
     image: &RenderImage,
-) -> ImageData {
+) -> ImageData
+where
+    Id: Copy + Eq + Hash,
+{
     let signature = image_signature(image);
     if let Some(cached) = cache.get(&id)
         && cached.signature.matches(image)
     {
+        touch_cache_key(order, id);
         return cached.data.clone();
     }
 
     let data = image_data_from_render_image(image);
+    remember_cache_key(cache, order, capacity, id);
     cache.insert(
         id,
         CachedImageData {
@@ -315,6 +344,7 @@ fn cached_image_data<Id: Eq + std::hash::Hash>(
 
 fn cached_tinted_image_data(
     cache: &mut HashMap<(ImageId, PackedTint), CachedImageData>,
+    order: &mut VecDeque<(ImageId, PackedTint)>,
     id: ImageId,
     image: &RenderImage,
     tint: PackedTint,
@@ -324,6 +354,7 @@ fn cached_tinted_image_data(
     if let Some(cached) = cache.get(&key)
         && cached.signature.matches(image)
     {
+        touch_cache_key(order, key);
         return cached.data.clone();
     }
 
@@ -331,9 +362,7 @@ fn cached_tinted_image_data(
     if image.data.len() > MAX_CACHED_TINTED_IMAGE_BYTES {
         return data;
     }
-    if cache.len() >= MAX_TINTED_IMAGE_CACHE_ENTRIES {
-        cache.clear();
-    }
+    remember_cache_key(cache, order, MAX_TINTED_IMAGE_CACHE_ENTRIES, key);
     cache.insert(
         key,
         CachedImageData {
@@ -342,6 +371,37 @@ fn cached_tinted_image_data(
         },
     );
     data
+}
+
+fn remember_cache_key<Id, Value>(
+    cache: &mut HashMap<Id, Value>,
+    order: &mut VecDeque<Id>,
+    capacity: usize,
+    id: Id,
+) where
+    Id: Copy + Eq + Hash,
+{
+    touch_cache_key(order, id);
+    if cache.contains_key(&id) {
+        return;
+    }
+
+    while cache.len() >= capacity {
+        let Some(evicted) = order.pop_front() else {
+            break;
+        };
+        cache.remove(&evicted);
+    }
+}
+
+fn touch_cache_key<Id>(order: &mut VecDeque<Id>, id: Id)
+where
+    Id: Copy + Eq,
+{
+    if let Some(position) = order.iter().position(|existing| *existing == id) {
+        order.remove(position);
+    }
+    order.push_back(id);
 }
 
 fn image_signature(image: &RenderImage) -> ImageSignature {
@@ -449,6 +509,7 @@ const VIEWPORT_SCALE_EPSILON: f64 = 0.001;
 #[derive(Debug, Default)]
 struct ShapedTextCache {
     layouts: HashMap<TextLayoutKey, Arc<ShapedTextLayout>>,
+    layout_order: VecDeque<TextLayoutKey>,
 }
 
 impl ShapedTextCache {
@@ -458,14 +519,19 @@ impl ShapedTextCache {
         key: TextLayoutKey,
     ) -> Arc<ShapedTextLayout> {
         if let Some(layout) = self.layouts.get(&key) {
+            touch_owned_cache_key(&mut self.layout_order, &key);
             return Arc::clone(layout);
         }
 
-        if self.layouts.len() >= MAX_CACHED_TEXT_LAYOUTS {
-            self.layouts.clear();
+        while self.layouts.len() >= MAX_CACHED_TEXT_LAYOUTS {
+            let Some(evicted) = self.layout_order.pop_front() else {
+                break;
+            };
+            self.layouts.remove(&evicted);
         }
 
         let layout = Arc::new(shape_text_with_key(text_engine, &key));
+        self.layout_order.push_back(key.clone());
         self.layouts.insert(key, Arc::clone(&layout));
         layout
     }
@@ -473,6 +539,17 @@ impl ShapedTextCache {
     #[cfg(test)]
     fn len(&self) -> usize {
         self.layouts.len()
+    }
+}
+
+fn touch_owned_cache_key<Id>(order: &mut VecDeque<Id>, id: &Id)
+where
+    Id: Eq,
+{
+    if let Some(position) = order.iter().position(|existing| existing == id)
+        && let Some(id) = order.remove(position)
+    {
+        order.push_back(id);
     }
 }
 
@@ -2774,20 +2851,20 @@ fn vello_gradient(gradient: &LinearGradient) -> PenikoGradient {
 #[cfg(test)]
 mod tests {
     use super::{
-        ImageAtlasRegion, ImageDataCache, ImageResource, RenderCommand, RenderCommandKind,
-        RenderDiagnostic, RenderFrameInput, RenderImage, RenderImageSampling, RenderResources,
-        RendererBackend, ShapedTextCache, TextLayoutResource, TextureResource, VelloRenderer,
-        VelloRendererError, crisp_rect_border_segments, image_quality, image_region_transform,
-        physical_text_layout, physical_text_layout_for_key, quantize_physical_text_extent,
-        quantize_stroke_width_to_device, render_translation_snapshot, root_transform,
-        snap_axis_aligned_translation, snap_filled_path_elements_to_device,
-        snap_image_rect_to_device, snap_point_to_device, snap_radius_to_device,
-        snap_rect_to_device, snap_stroke_center_to_device, snap_stroked_line_to_device,
-        snap_stroked_path_elements_to_device, snap_stroked_rect_to_device,
-        snap_text_glyph_baseline_to_device, snap_text_glyph_position_to_device,
-        snap_text_origin_to_device, snap_text_transform_origin_to_device,
-        snapped_image_region_transform, transform_point, translate_primitives,
-        viewport_device_scale, viewport_size_device_scale,
+        ImageAtlasRegion, ImageDataCache, ImageResource, PackedTint, RenderCommand,
+        RenderCommandKind, RenderDiagnostic, RenderFrameInput, RenderImage, RenderImageSampling,
+        RenderResources, RendererBackend, ShapedTextCache, TextLayoutResource, TextureResource,
+        VelloRenderer, VelloRendererError, crisp_rect_border_segments, image_quality,
+        image_region_transform, physical_text_layout, physical_text_layout_for_key,
+        quantize_physical_text_extent, quantize_stroke_width_to_device,
+        render_translation_snapshot, root_transform, snap_axis_aligned_translation,
+        snap_filled_path_elements_to_device, snap_image_rect_to_device, snap_point_to_device,
+        snap_radius_to_device, snap_rect_to_device, snap_stroke_center_to_device,
+        snap_stroked_line_to_device, snap_stroked_path_elements_to_device,
+        snap_stroked_rect_to_device, snap_text_glyph_baseline_to_device,
+        snap_text_glyph_position_to_device, snap_text_origin_to_device,
+        snap_text_transform_origin_to_device, snapped_image_region_transform, transform_point,
+        translate_primitives, viewport_device_scale, viewport_size_device_scale,
     };
     use kinetik_ui_core::render::TexturePrimitive;
     use kinetik_ui_core::{
@@ -4228,6 +4305,67 @@ mod tests {
     }
 
     #[test]
+    fn image_cache_evicts_least_recent_entry_at_capacity() {
+        let image = RenderImage::rgba8(2, 2, vec![1; 16]).expect("valid image");
+        let first = ImageId::from_raw(1);
+        let second = ImageId::from_raw(2);
+        let mut cache = ImageDataCache::default();
+
+        for raw in 1..=super::MAX_CACHED_IMAGE_ENTRIES {
+            cache.image_data(
+                ImageId::from_raw(u64::try_from(raw).expect("cache id fits u64")),
+                &image,
+            );
+        }
+        cache.image_data(first, &image);
+        cache.image_data(
+            ImageId::from_raw(
+                u64::try_from(super::MAX_CACHED_IMAGE_ENTRIES + 1).expect("cache id fits u64"),
+            ),
+            &image,
+        );
+
+        assert_eq!(cache.images.len(), super::MAX_CACHED_IMAGE_ENTRIES);
+        assert!(cache.images.contains_key(&first));
+        assert!(!cache.images.contains_key(&second));
+    }
+
+    #[test]
+    fn tinted_image_cache_evicts_one_old_entry_at_capacity() {
+        let image = RenderImage::rgba8(2, 2, vec![255; 16]).expect("valid image");
+        let first = ImageId::from_raw(1);
+        let second = ImageId::from_raw(2);
+        let tint_color = Color::rgb(1.0, 0.0, 0.0);
+        let tint = Some(tint_color);
+        let tint_key = PackedTint::from_color(tint_color);
+        let mut cache = ImageDataCache::default();
+
+        for raw in 1..=super::MAX_TINTED_IMAGE_CACHE_ENTRIES {
+            cache.image_data_with_tint(
+                ImageId::from_raw(u64::try_from(raw).expect("cache id fits u64")),
+                &image,
+                tint,
+            );
+        }
+        cache.image_data_with_tint(first, &image, tint);
+        cache.image_data_with_tint(
+            ImageId::from_raw(
+                u64::try_from(super::MAX_TINTED_IMAGE_CACHE_ENTRIES + 1)
+                    .expect("cache id fits u64"),
+            ),
+            &image,
+            tint,
+        );
+
+        assert_eq!(
+            cache.tinted_images.len(),
+            super::MAX_TINTED_IMAGE_CACHE_ENTRIES
+        );
+        assert!(cache.tinted_images.contains_key(&(first, tint_key)));
+        assert!(!cache.tinted_images.contains_key(&(second, tint_key)));
+    }
+
+    #[test]
     fn frame_submission_reuses_cached_texture_snapshot_payload() {
         let texture = TextureId::from_raw(77);
         let snapshot = RenderImage::rgba8(4, 4, vec![64; 64]).expect("valid texture snapshot");
@@ -4266,6 +4404,32 @@ mod tests {
         assert!(output.diagnostics.is_empty());
         assert_eq!(renderer.cached_texture_count(), 1);
         assert_eq!(renderer.cached_image_count(), 0);
+    }
+
+    #[test]
+    fn texture_cache_evicts_least_recent_entry_at_capacity() {
+        let image = RenderImage::rgba8(2, 2, vec![1; 16]).expect("valid texture");
+        let first = TextureId::from_raw(1);
+        let second = TextureId::from_raw(2);
+        let mut cache = ImageDataCache::default();
+
+        for raw in 1..=super::MAX_CACHED_TEXTURE_ENTRIES {
+            cache.texture_data(
+                TextureId::from_raw(u64::try_from(raw).expect("cache id fits u64")),
+                &image,
+            );
+        }
+        cache.texture_data(first, &image);
+        cache.texture_data(
+            TextureId::from_raw(
+                u64::try_from(super::MAX_CACHED_TEXTURE_ENTRIES + 1).expect("cache id fits u64"),
+            ),
+            &image,
+        );
+
+        assert_eq!(cache.textures.len(), super::MAX_CACHED_TEXTURE_ENTRIES);
+        assert!(cache.textures.contains_key(&first));
+        assert!(!cache.textures.contains_key(&second));
     }
 
     #[test]
@@ -5264,6 +5428,58 @@ mod tests {
             resources: &resources,
         });
         assert_eq!(renderer.cached_text_layout_count(), 1);
+    }
+
+    #[test]
+    fn shaped_text_cache_evicts_least_recent_entry_at_capacity() {
+        let first = TextLayoutKey::new(
+            "layout 1",
+            TextStyle::new("sans-serif", 12.0, 16.0),
+            200.0,
+            false,
+        );
+        let second = TextLayoutKey::new(
+            "layout 2",
+            TextStyle::new("sans-serif", 12.0, 16.0),
+            200.0,
+            false,
+        );
+        let dummy_layout = std::sync::Arc::new(ShapedTextLayout {
+            size: Size::new(0.0, 0.0),
+            line_count: 0,
+            lines: Vec::new(),
+            runs: Vec::new(),
+        });
+        let mut cache = ShapedTextCache::default();
+
+        for index in 1..=super::MAX_CACHED_TEXT_LAYOUTS {
+            let key = TextLayoutKey::new(
+                format!("layout {index}"),
+                TextStyle::new("sans-serif", 12.0, 16.0),
+                200.0,
+                false,
+            );
+            cache.layout_order.push_back(key.clone());
+            cache
+                .layouts
+                .insert(key, std::sync::Arc::clone(&dummy_layout));
+        }
+
+        let mut engine = CosmicTextEngine::new();
+        cache.layout(&mut engine, first.clone());
+        cache.layout(
+            &mut engine,
+            TextLayoutKey::new(
+                "layout overflow",
+                TextStyle::new("sans-serif", 12.0, 16.0),
+                200.0,
+                false,
+            ),
+        );
+
+        assert_eq!(cache.layouts.len(), super::MAX_CACHED_TEXT_LAYOUTS);
+        assert!(cache.layouts.contains_key(&first));
+        assert!(!cache.layouts.contains_key(&second));
     }
 
     #[test]
