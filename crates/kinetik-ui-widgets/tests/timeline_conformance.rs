@@ -85,6 +85,70 @@ mod timeline_conformance {
         )
     }
 
+    fn timeline_layout_indexing_descriptor() -> TimelineDescriptor {
+        let lanes = (0..6)
+            .map(|raw| TimelineLaneDescriptor::new(TimelineLaneId::from_raw(raw), "Lane"))
+            .collect::<Vec<_>>();
+        TimelineDescriptor::new(
+            lanes,
+            [
+                TimelineItemDescriptor::new(
+                    TimelineItemId::from_raw(10),
+                    TimelineLaneId::from_raw(1),
+                    TimelineRange::seconds(1.0, 2.0),
+                    "Off lane",
+                ),
+                TimelineItemDescriptor::new(
+                    TimelineItemId::from_raw(11),
+                    TimelineLaneId::from_raw(2),
+                    TimelineRange::seconds(1.0, 2.0),
+                    "Visible item",
+                ),
+                TimelineItemDescriptor::new(
+                    TimelineItemId::from_raw(12),
+                    TimelineLaneId::from_raw(4),
+                    TimelineRange::seconds(12.0, 13.0),
+                    "Off time",
+                ),
+                TimelineItemDescriptor::new(
+                    TimelineItemId::from_raw(13),
+                    TimelineLaneId::from_raw(3),
+                    TimelineRange::seconds(4.0, 5.0),
+                    "Visible parent",
+                ),
+            ],
+            [
+                TimelineMarkerDescriptor::new(
+                    TimelineMarkerId::from_raw(20),
+                    TimelineTime::from_seconds(-2.0),
+                    "Off time",
+                ),
+                TimelineMarkerDescriptor::new(
+                    TimelineMarkerId::from_raw(21),
+                    TimelineTime::from_seconds(6.0),
+                    "Visible marker",
+                ),
+            ],
+            [
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(30),
+                    TimelineItemId::from_raw(10),
+                    TimelineTime::from_seconds(1.5),
+                ),
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(31),
+                    TimelineItemId::from_raw(11),
+                    TimelineTime::from_seconds(12.0),
+                ),
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(32),
+                    TimelineItemId::from_raw(13),
+                    TimelineTime::from_seconds(4.5),
+                ),
+            ],
+        )
+    }
+
     #[test]
     fn timeline_ids_round_trip_raw_bits() {
         assert_eq!(TimelineId::from_raw(1).raw(), 1);
@@ -552,6 +616,244 @@ mod timeline_conformance {
             vec![
                 TimelineMarkerId::from_raw(3),
                 TimelineMarkerId::from_raw(12)
+            ]
+        );
+    }
+
+    #[test]
+    fn timeline_layout_indexing_culls_off_lane_and_off_time_entities() {
+        let descriptor = timeline_layout_indexing_descriptor();
+        let result = TimelineLayout::new(10.0)
+            .resolve(
+                Rect::new(0.0, 0.0, 100.0, 20.0),
+                TimelineScale::new(
+                    0.0,
+                    100.0,
+                    TimelineRange::seconds(0.0, 20.0),
+                    TimelineZoom::new(10.0),
+                    0.0,
+                ),
+                &descriptor,
+                20.0,
+            )
+            .expect("timeline layout resolves");
+
+        assert_eq!(result.visible_lane_range, 2..4);
+        assert_eq!(result.materialized_lane_range, 2..5);
+        assert_eq!(
+            result
+                .items
+                .iter()
+                .map(|item| item.descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![TimelineItemId::from_raw(11), TimelineItemId::from_raw(13)]
+        );
+        assert_eq!(
+            result
+                .markers
+                .iter()
+                .map(|marker| marker.descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![TimelineMarkerId::from_raw(21)]
+        );
+        assert_eq!(
+            result
+                .keyframes
+                .iter()
+                .map(|keyframe| keyframe.descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![TimelineKeyframeId::from_raw(32)]
+        );
+    }
+
+    #[test]
+    fn timeline_layout_indexing_keeps_boundary_visible_hit_targets() {
+        let descriptor = TimelineDescriptor::new(
+            [TimelineLaneDescriptor::new(
+                TimelineLaneId::from_raw(1),
+                "Video",
+            )],
+            [TimelineItemDescriptor::new(
+                TimelineItemId::from_raw(10),
+                TimelineLaneId::from_raw(1),
+                TimelineRange::seconds(0.0, 10.0),
+                "Item",
+            )],
+            [
+                TimelineMarkerDescriptor::new(
+                    TimelineMarkerId::from_raw(20),
+                    TimelineTime::from_seconds(-0.51),
+                    "Outside left",
+                ),
+                TimelineMarkerDescriptor::new(
+                    TimelineMarkerId::from_raw(21),
+                    TimelineTime::from_seconds(-0.49),
+                    "Touches left",
+                ),
+                TimelineMarkerDescriptor::new(
+                    TimelineMarkerId::from_raw(22),
+                    TimelineTime::from_seconds(10.49),
+                    "Touches right",
+                ),
+                TimelineMarkerDescriptor::new(
+                    TimelineMarkerId::from_raw(23),
+                    TimelineTime::from_seconds(10.51),
+                    "Outside right",
+                ),
+            ],
+            [
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(30),
+                    TimelineItemId::from_raw(10),
+                    TimelineTime::from_seconds(-0.51),
+                ),
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(31),
+                    TimelineItemId::from_raw(10),
+                    TimelineTime::from_seconds(-0.49),
+                ),
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(32),
+                    TimelineItemId::from_raw(10),
+                    TimelineTime::from_seconds(10.49),
+                ),
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(33),
+                    TimelineItemId::from_raw(10),
+                    TimelineTime::from_seconds(10.51),
+                ),
+            ],
+        );
+        let result = TimelineLayout::new(20.0)
+            .with_marker_hit_width(10.0)
+            .with_keyframe_hit_size(10.0)
+            .resolve(
+                Rect::new(0.0, 0.0, 100.0, 20.0),
+                TimelineScale::new(
+                    0.0,
+                    100.0,
+                    TimelineRange::seconds(-2.0, 12.0),
+                    TimelineZoom::new(10.0),
+                    20.0,
+                ),
+                &descriptor,
+                0.0,
+            )
+            .expect("timeline layout resolves");
+
+        assert_eq!(
+            result
+                .markers
+                .iter()
+                .map(|marker| marker.descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![
+                TimelineMarkerId::from_raw(21),
+                TimelineMarkerId::from_raw(22)
+            ]
+        );
+        assert_eq!(
+            result
+                .keyframes
+                .iter()
+                .map(|keyframe| keyframe.descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![
+                TimelineKeyframeId::from_raw(31),
+                TimelineKeyframeId::from_raw(32)
+            ]
+        );
+    }
+
+    #[test]
+    fn timeline_layout_indexing_preserves_visible_tie_breaking() {
+        let descriptor = TimelineDescriptor::new(
+            [TimelineLaneDescriptor::new(
+                TimelineLaneId::from_raw(1),
+                "Video",
+            )],
+            [
+                TimelineItemDescriptor::new(
+                    TimelineItemId::from_raw(12),
+                    TimelineLaneId::from_raw(1),
+                    TimelineRange::seconds(1.0, 3.0),
+                    "Later item",
+                ),
+                TimelineItemDescriptor::new(
+                    TimelineItemId::from_raw(4),
+                    TimelineLaneId::from_raw(1),
+                    TimelineRange::seconds(1.0, 3.0),
+                    "Earlier item",
+                ),
+            ],
+            [
+                TimelineMarkerDescriptor::new(
+                    TimelineMarkerId::from_raw(22),
+                    TimelineTime::from_seconds(2.0),
+                    "Later marker",
+                ),
+                TimelineMarkerDescriptor::new(
+                    TimelineMarkerId::from_raw(3),
+                    TimelineTime::from_seconds(2.0),
+                    "Earlier marker",
+                ),
+            ],
+            [
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(42),
+                    TimelineItemId::from_raw(12),
+                    TimelineTime::from_seconds(2.0),
+                ),
+                TimelineKeyframeDescriptor::new(
+                    TimelineKeyframeId::from_raw(7),
+                    TimelineItemId::from_raw(12),
+                    TimelineTime::from_seconds(2.0),
+                ),
+            ],
+        );
+        let result = TimelineLayout::new(20.0)
+            .resolve(
+                Rect::new(0.0, 0.0, 100.0, 20.0),
+                TimelineScale::new(
+                    0.0,
+                    100.0,
+                    TimelineRange::seconds(0.0, 10.0),
+                    TimelineZoom::new(10.0),
+                    0.0,
+                ),
+                &descriptor,
+                0.0,
+            )
+            .expect("timeline layout resolves");
+
+        assert_eq!(
+            result
+                .items
+                .iter()
+                .map(|item| item.descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![TimelineItemId::from_raw(4), TimelineItemId::from_raw(12)]
+        );
+        assert_eq!(
+            result
+                .markers
+                .iter()
+                .map(|marker| marker.descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![
+                TimelineMarkerId::from_raw(3),
+                TimelineMarkerId::from_raw(22)
+            ]
+        );
+        assert_eq!(
+            result
+                .keyframes
+                .iter()
+                .map(|keyframe| keyframe.descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![
+                TimelineKeyframeId::from_raw(7),
+                TimelineKeyframeId::from_raw(42)
             ]
         );
     }
