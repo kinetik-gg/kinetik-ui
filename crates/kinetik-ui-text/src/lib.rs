@@ -1345,87 +1345,132 @@ impl EditSnapshot {
 }
 
 fn clamp_boundary(text: &str, offset: usize) -> usize {
-    let offset = offset.min(text.len());
-    if text.is_char_boundary(offset) {
-        offset
-    } else {
-        text.char_indices()
-            .map(|(index, _)| index)
-            .take_while(|index| *index < offset)
-            .last()
-            .unwrap_or(0)
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
     }
+    offset
 }
 
 fn previous_boundary(text: &str, offset: usize) -> Option<usize> {
-    text.char_indices()
-        .map(|(index, _)| index)
-        .take_while(|index| *index < offset)
-        .last()
+    let offset = offset.min(text.len());
+    if offset == 0 {
+        return None;
+    }
+
+    let mut previous = offset - 1;
+    while !text.is_char_boundary(previous) {
+        previous -= 1;
+    }
+    Some(previous)
 }
 
 fn next_boundary(text: &str, offset: usize) -> Option<usize> {
-    text.char_indices()
-        .map(|(index, _)| index)
-        .find(|index| *index > offset)
-        .or_else(|| (offset < text.len()).then_some(text.len()))
+    if offset >= text.len() {
+        return None;
+    }
+
+    let mut next = offset + 1;
+    while !text.is_char_boundary(next) {
+        next += 1;
+    }
+    Some(next)
 }
 
-fn line_ranges(text: &str) -> Vec<core::ops::Range<usize>> {
-    let mut ranges = Vec::new();
-    let mut start = 0;
-    for segment in text.split_inclusive('\n') {
-        let line = segment.strip_suffix('\n').unwrap_or(segment);
-        ranges.push(start..start + line.len());
-        start += segment.len();
-    }
-    if ranges.is_empty() || text.ends_with('\n') {
-        ranges.push(start..start);
-    }
-    ranges
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExplicitLineCursor<'a> {
+    text: &'a str,
+    range: core::ops::Range<usize>,
 }
 
-fn line_index_at_offset(text: &str, offset: usize) -> usize {
-    let offset = clamp_boundary(text, offset);
-    let ranges = line_ranges(text);
-    ranges
-        .iter()
-        .position(|range| offset >= range.start && offset <= range.end)
-        .unwrap_or(ranges.len().saturating_sub(1))
+impl<'a> ExplicitLineCursor<'a> {
+    fn at(text: &'a str, offset: usize) -> Self {
+        let offset = clamp_boundary(text, offset);
+        let start = text[..offset]
+            .rfind('\n')
+            .map_or(0, |index| index + '\n'.len_utf8());
+        let end = text[offset..]
+            .find('\n')
+            .map_or(text.len(), |index| offset + index);
+
+        Self {
+            text,
+            range: start..end,
+        }
+    }
+
+    fn column_at(&self, offset: usize) -> usize {
+        let offset = clamp_boundary(self.text, offset).clamp(self.range.start, self.range.end);
+        self.text[self.range.start..offset].chars().count()
+    }
+
+    fn offset_at_column(&self, column: usize) -> usize {
+        let mut offset = self.range.start;
+        let mut remaining = column;
+        for character in self.text[self.range.clone()].chars() {
+            if remaining == 0 {
+                break;
+            }
+            offset += character.len_utf8();
+            remaining -= 1;
+        }
+        offset.min(self.range.end)
+    }
+
+    fn previous_range(&self) -> Option<core::ops::Range<usize>> {
+        if self.range.start == 0 {
+            return None;
+        }
+
+        let end = self.range.start - '\n'.len_utf8();
+        let start = self.text[..end]
+            .rfind('\n')
+            .map_or(0, |index| index + '\n'.len_utf8());
+        Some(start..end)
+    }
+
+    fn next_range(&self) -> Option<core::ops::Range<usize>> {
+        if self.range.end >= self.text.len() {
+            return None;
+        }
+
+        let start = self.range.end + '\n'.len_utf8();
+        let end = self.text[start..]
+            .find('\n')
+            .map_or(self.text.len(), |index| start + index);
+        Some(start..end)
+    }
+
+    fn shifted(&self, delta: isize) -> Self {
+        let mut cursor = self.clone();
+        let mut remaining = delta;
+
+        while remaining < 0 {
+            if let Some(range) = cursor.previous_range() {
+                cursor.range = range;
+            }
+            remaining += 1;
+        }
+
+        while remaining > 0 {
+            if let Some(range) = cursor.next_range() {
+                cursor.range = range;
+            }
+            remaining -= 1;
+        }
+
+        cursor
+    }
 }
 
 fn line_range_at_offset(text: &str, offset: usize) -> core::ops::Range<usize> {
-    let ranges = line_ranges(text);
-    ranges[line_index_at_offset(text, offset)].clone()
-}
-
-fn line_column_at_offset(text: &str, line: &core::ops::Range<usize>, offset: usize) -> usize {
-    let offset = clamp_boundary(text, offset).clamp(line.start, line.end);
-    text[line.start..offset].chars().count()
-}
-
-fn offset_at_line_column(text: &str, line: &core::ops::Range<usize>, column: usize) -> usize {
-    let mut offset = line.start;
-    let mut remaining = column;
-    for character in text[line.clone()].chars() {
-        if remaining == 0 {
-            break;
-        }
-        offset += character.len_utf8();
-        remaining -= 1;
-    }
-    offset.min(line.end)
+    ExplicitLineCursor::at(text, offset).range
 }
 
 fn vertical_line_target(text: &str, offset: usize, delta: isize) -> usize {
-    let ranges = line_ranges(text);
-    let current_index = line_index_at_offset(text, offset);
-    let current_line = &ranges[current_index];
-    let column = line_column_at_offset(text, current_line, offset);
-    let target_index = current_index
-        .saturating_add_signed(delta)
-        .min(ranges.len().saturating_sub(1));
-    offset_at_line_column(text, &ranges[target_index], column)
+    let current = ExplicitLineCursor::at(text, offset);
+    let column = current.column_at(offset);
+    current.shifted(delta).offset_at_column(column)
 }
 
 fn clamp_text_range(text: &str, range: TextRange) -> TextRange {
@@ -1441,7 +1486,8 @@ mod tests {
     use super::{
         CosmicTextEngine, DEFAULT_FONT_FAMILY, DEFAULT_MONOSPACE_FONT_FAMILY, INTER_FONTDB_FAMILY,
         ShapedTextLayout, TextComposition, TextEditState, TextLayoutCache, TextLayoutId,
-        TextLayoutKey, TextLayoutStore, TextSelection, TextStyle, fontdb, fonts,
+        TextLayoutKey, TextLayoutStore, TextSelection, TextStyle, clamp_boundary, fontdb, fonts,
+        next_boundary, previous_boundary,
     };
     use kinetik_ui_core::{Key, KeyEvent, KeyState, Modifiers, TextInputEvent, TextRange};
 
@@ -2016,6 +2062,20 @@ mod tests {
     }
 
     #[test]
+    fn boundary_helpers_clamp_inside_multibyte_characters() {
+        let text = "aé中z";
+
+        assert_eq!(clamp_boundary(text, 2), 1);
+        assert_eq!(clamp_boundary(text, 5), 3);
+        assert_eq!(previous_boundary(text, 2), Some(1));
+        assert_eq!(previous_boundary(text, 5), Some(3));
+        assert_eq!(next_boundary(text, 2), Some(3));
+        assert_eq!(next_boundary(text, 5), Some("aé中".len()));
+        assert_eq!(previous_boundary(text, text.len() + 8), Some("aé中".len()));
+        assert_eq!(next_boundary(text, text.len() + 8), None);
+    }
+
+    #[test]
     fn movement_collapses_selection_and_supports_home_end() {
         let mut state = TextEditState::new("abcd");
         state.set_selection(TextSelection::new(1, 3));
@@ -2059,6 +2119,24 @@ mod tests {
 
         state.move_line_down();
         assert_eq!(state.caret(), "wide\né\nβ".len());
+        assert!(state.text.is_char_boundary(state.caret()));
+    }
+
+    #[test]
+    fn multiline_vertical_navigation_preserves_columns_through_trailing_empty_line() {
+        let mut state = TextEditState::new("ab\né\nwide\n");
+        state.set_caret(1);
+
+        state.move_line_down();
+        assert_eq!(state.caret(), "ab\né".len());
+        assert!(state.text.is_char_boundary(state.caret()));
+
+        state.move_line_down();
+        assert_eq!(state.caret(), "ab\né\nw".len());
+        assert!(state.text.is_char_boundary(state.caret()));
+
+        state.move_line_down();
+        assert_eq!(state.caret(), state.text.len());
         assert!(state.text.is_char_boundary(state.caret()));
     }
 
