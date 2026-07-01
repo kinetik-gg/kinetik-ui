@@ -1,0 +1,204 @@
+use super::{
+    Brush, ComponentState, CornerRadius, CursorShape, Point, Primitive, Rect, RectPrimitive,
+    SemanticAction, SemanticActionKind, SemanticNode, SemanticRole, TextPrimitive, TextRole, Theme,
+    UiInput, UiMemory, WidgetId, WidgetOutput, button_semantics, clicked_select_state,
+    control_text_origin, focusable, label_baseline, response_reported_focus,
+    response_reported_pressed, selectable, suppress_disabled_interaction_reporting,
+    with_hover_cursor, with_response_state,
+};
+
+/// Emits a text label.
+#[must_use]
+pub fn label(rect: Rect, text: impl Into<String>, theme: &Theme) -> WidgetOutput {
+    let recipe = theme.label(TextRole::Body, false);
+    WidgetOutput::new(
+        None,
+        vec![Primitive::Text(TextPrimitive {
+            layout: None,
+            origin: Point::new(rect.x, label_baseline(rect, theme, TextRole::Body)),
+            text: text.into(),
+            family: recipe.font.family.to_owned(),
+            size: recipe.font.size,
+            line_height: recipe.font.line_height,
+            brush: Brush::Solid(recipe.foreground),
+        })],
+    )
+}
+
+/// Emits a push button.
+pub fn button(
+    id: WidgetId,
+    rect: Rect,
+    text: impl Into<String>,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    let mut response = focusable(id, rect, input, memory, disabled);
+    suppress_disabled_interaction_reporting(&mut response);
+    let recipe = theme.button(ComponentState {
+        hovered: response.state.hovered,
+        pressed: response_reported_pressed(&response),
+        focused: response_reported_focus(&response),
+        disabled,
+        selected: false,
+    });
+    let text = text.into();
+
+    with_hover_cursor(
+        WidgetOutput::new(
+            Some(response),
+            vec![
+                Primitive::Rect(RectPrimitive {
+                    rect,
+                    fill: Some(recipe.background),
+                    stroke: Some(recipe.border),
+                    radius: recipe.radius,
+                }),
+                Primitive::Text(TextPrimitive {
+                    layout: None,
+                    origin: control_text_origin(rect, theme),
+                    text: text.clone(),
+                    family: theme.font(TextRole::Label).family.to_owned(),
+                    size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
+                    brush: Brush::Solid(recipe.foreground),
+                }),
+            ],
+        )
+        .with_semantic(with_response_state(
+            button_semantics(id, rect, text, disabled),
+            &response,
+        )),
+        &response,
+        CursorShape::PointingHand,
+    )
+}
+
+/// Emits a tab header.
+#[allow(clippy::too_many_arguments)]
+pub fn tab_button(
+    id: WidgetId,
+    rect: Rect,
+    text: impl Into<String>,
+    selected: bool,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    let mut response = selectable(id, rect, input, memory, selected, disabled);
+    let selected = clicked_select_state(selected, response.clicked);
+    response.state.selected = selected;
+    let recipe = theme.tab(ComponentState {
+        hovered: response.state.hovered,
+        pressed: response.state.pressed,
+        focused: response.state.focused,
+        disabled,
+        selected,
+    });
+    let text = text.into();
+
+    let mut semantics = SemanticNode::new(id, SemanticRole::Tab, rect)
+        .with_label(text.clone())
+        .focusable(!disabled)
+        .with_action(SemanticAction::new(SemanticActionKind::Invoke, "Select"));
+    semantics.state.disabled = disabled;
+    semantics.state.selected = selected;
+
+    with_hover_cursor(
+        WidgetOutput::new(
+            Some(response),
+            vec![
+                Primitive::Rect(RectPrimitive {
+                    rect,
+                    fill: Some(recipe.background),
+                    stroke: Some(recipe.border),
+                    radius: recipe.radius,
+                }),
+                Primitive::Text(TextPrimitive {
+                    layout: None,
+                    origin: control_text_origin(rect, theme),
+                    text,
+                    family: theme.font(TextRole::Label).family.to_owned(),
+                    size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
+                    brush: Brush::Solid(recipe.foreground),
+                }),
+                Primitive::Rect(RectPrimitive {
+                    rect: Rect::new(
+                        rect.x,
+                        rect.max_y() - recipe.indicator_thickness,
+                        rect.width,
+                        recipe.indicator_thickness,
+                    ),
+                    fill: recipe.indicator,
+                    stroke: None,
+                    radius: CornerRadius::all(0.0),
+                }),
+            ],
+        )
+        .with_semantic(with_response_state(semantics, &response)),
+        &response,
+        CursorShape::PointingHand,
+    )
+}
+
+/// Emits a selectable list or table row surface.
+#[allow(clippy::too_many_arguments)]
+pub fn list_row(
+    id: WidgetId,
+    rect: Rect,
+    text: impl Into<String>,
+    selected: bool,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    theme: &Theme,
+    disabled: bool,
+) -> WidgetOutput {
+    let mut response = selectable(id, rect, input, memory, selected, disabled);
+    let selected = clicked_select_state(selected, response.clicked);
+    response.state.selected = selected;
+    let recipe = theme.row(ComponentState {
+        hovered: response.state.hovered,
+        pressed: response.state.pressed,
+        focused: response.state.focused,
+        disabled,
+        selected,
+    });
+    let text = text.into();
+
+    let mut semantics = SemanticNode::new(id, SemanticRole::ListItem, rect)
+        .with_label(text.clone())
+        .focusable(!disabled)
+        .with_action(SemanticAction::new(SemanticActionKind::Invoke, "Select"));
+    semantics.state.disabled = disabled;
+    semantics.state.selected = selected;
+
+    with_hover_cursor(
+        WidgetOutput::new(
+            Some(response),
+            vec![
+                Primitive::Rect(RectPrimitive {
+                    rect,
+                    fill: Some(recipe.background),
+                    stroke: Some(recipe.border),
+                    radius: recipe.radius,
+                }),
+                Primitive::Text(TextPrimitive {
+                    layout: None,
+                    origin: control_text_origin(rect, theme),
+                    text,
+                    family: theme.font(TextRole::Label).family.to_owned(),
+                    size: theme.font(TextRole::Label).size,
+                    line_height: theme.font(TextRole::Label).line_height,
+                    brush: Brush::Solid(recipe.foreground),
+                }),
+            ],
+        )
+        .with_semantic(with_response_state(semantics, &response)),
+        &response,
+        CursorShape::PointingHand,
+    )
+}
