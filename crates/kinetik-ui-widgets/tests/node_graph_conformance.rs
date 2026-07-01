@@ -1395,6 +1395,276 @@ mod node_graph_conformance {
         );
     }
 
+    fn visible_projection_node(
+        node: u64,
+        title: &str,
+        rect: GraphRect,
+        port: u64,
+        direction: PortDirection,
+        port_label: &str,
+        port_type: PortTypeId,
+    ) -> NodeDescriptor {
+        NodeDescriptor::new(NodeId::from_raw(node), title, rect).with_ports(vec![
+            PortDescriptor::new(PortId::from_raw(port), direction, port_label, port_type),
+        ])
+    }
+
+    fn visible_projection_nodes(number: PortTypeId) -> Vec<NodeDescriptor> {
+        vec![
+            visible_projection_node(
+                1,
+                "Left Endpoint",
+                GraphRect::new(-160.0, 120.0, 80.0, 40.0),
+                1,
+                PortDirection::Output,
+                "Out",
+                number,
+            ),
+            visible_projection_node(
+                2,
+                "Right Endpoint",
+                GraphRect::new(260.0, 120.0, 80.0, 40.0),
+                2,
+                PortDirection::Input,
+                "In",
+                number,
+            ),
+            visible_projection_node(
+                3,
+                "Visible Node",
+                GraphRect::new(20.0, 20.0, 80.0, 60.0),
+                3,
+                PortDirection::Input,
+                "Visible In",
+                number,
+            ),
+            visible_projection_node(
+                4,
+                "Far Node",
+                GraphRect::new(800.0, 20.0, 80.0, 60.0),
+                4,
+                PortDirection::Input,
+                "Far In",
+                number,
+            ),
+            visible_projection_node(
+                5,
+                "Upper Source",
+                GraphRect::new(700.0, -220.0, 80.0, 40.0),
+                5,
+                PortDirection::Output,
+                "Out",
+                number,
+            ),
+            visible_projection_node(
+                6,
+                "Upper Target",
+                GraphRect::new(900.0, -220.0, 80.0, 40.0),
+                6,
+                PortDirection::Input,
+                "In",
+                number,
+            ),
+        ]
+    }
+
+    fn visible_projection_graph() -> NodeGraphDescriptor {
+        let number = PortTypeId::from_raw(10);
+        NodeGraphDescriptor {
+            nodes: visible_projection_nodes(number),
+            edges: vec![
+                EdgeDescriptor::new(
+                    EdgeId::from_raw(50),
+                    PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
+                    PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
+                )
+                .with_route_points(vec![NodeGraphEdgeRoutePoint::point(
+                    GraphPoint::new(100.0, 140.0),
+                )]),
+                EdgeDescriptor::new(
+                    EdgeId::from_raw(51),
+                    PortEndpoint::new(NodeId::from_raw(5), PortId::from_raw(5)),
+                    PortEndpoint::new(NodeId::from_raw(6), PortId::from_raw(6)),
+                ),
+            ],
+            reroutes: vec![
+                RerouteDescriptor::new(
+                    RerouteId::from_raw(10),
+                    "Visible Bend",
+                    GraphPoint::new(120.0, 40.0),
+                ),
+                RerouteDescriptor::new(
+                    RerouteId::from_raw(11),
+                    "Far Bend",
+                    GraphPoint::new(820.0, 40.0),
+                ),
+            ],
+            frames: vec![
+                NodeFrameDescriptor::new(
+                    NodeFrameId::from_raw(20),
+                    "Visible Frame",
+                    GraphRect::new(150.0, 100.0, 80.0, 60.0),
+                ),
+                NodeFrameDescriptor::new(
+                    NodeFrameId::from_raw(21),
+                    "Far Frame",
+                    GraphRect::new(800.0, 100.0, 80.0, 60.0),
+                ),
+            ],
+            groups: vec![
+                NodeGroupDescriptor::new(
+                    NodeGroupId::from_raw(30),
+                    "Visible Group",
+                    GraphRect::new(-20.0, 0.0, 40.0, 40.0),
+                ),
+                NodeGroupDescriptor::new(
+                    NodeGroupId::from_raw(31),
+                    "Far Group",
+                    GraphRect::new(800.0, 0.0, 40.0, 40.0),
+                ),
+            ],
+        }
+    }
+
+    #[test]
+    fn node_graph_visible_static_projection_culls_off_viewport_items_and_keeps_order() {
+        let graph = visible_projection_graph();
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 200.0, 180.0),
+            NodeGraphPanZoom::default(),
+        );
+
+        let output = NodeGraphStaticView::new(WidgetId::from_key("graph"), viewport, &graph)
+            .emit()
+            .expect("visible static output");
+        let line_count = output
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Line(_)))
+            .count();
+        let edge_labels = output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticRole::Custom("edge".to_owned()))
+            .filter_map(|node| node.label.as_deref())
+            .collect::<Vec<_>>();
+        let reroute_labels = output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticRole::Custom("reroute".to_owned()))
+            .filter_map(|node| node.label.as_deref())
+            .collect::<Vec<_>>();
+        let node_labels = output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticRole::Custom("node".to_owned()))
+            .filter_map(|node| node.label.as_deref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(line_count, 2);
+        assert_eq!(
+            edge_labels,
+            vec!["Edge 50: Left Endpoint Out to Right Endpoint In"]
+        );
+        assert_eq!(reroute_labels, vec!["Visible Bend"]);
+        assert_eq!(node_labels, vec!["Visible Node"]);
+        assert!(output.primitives.iter().all(|primitive| match primitive {
+            Primitive::Rect(rect) => rect.rect.x < 500.0,
+            Primitive::Text(text) => text.origin.x < 500.0,
+            _ => true,
+        }));
+    }
+
+    #[test]
+    fn node_graph_visible_hit_testing_keeps_routed_edges_with_offscreen_endpoints() {
+        let graph = visible_projection_graph();
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 200.0, 180.0),
+            NodeGraphPanZoom::default(),
+        );
+        let config = NodeGraphHitTestConfig::new().with_edge_tolerance(5.0);
+
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(100.0, 140.0), config),
+            Ok(NodeGraphHitTarget::Edge(EdgeId::from_raw(50)))
+        );
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(100.0, 10.0), config),
+            Ok(NodeGraphHitTarget::Canvas)
+        );
+    }
+
+    #[test]
+    fn node_graph_visible_hit_testing_keeps_edge_positive_tolerance_boundary() {
+        let number = PortTypeId::from_raw(10);
+        let graph = NodeGraphDescriptor {
+            nodes: vec![
+                NodeDescriptor::new(
+                    NodeId::from_raw(1),
+                    "Top",
+                    GraphRect::new(0.0, 0.0, 100.0, 8.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(1),
+                    PortDirection::Output,
+                    "Out",
+                    number,
+                )]),
+                NodeDescriptor::new(
+                    NodeId::from_raw(2),
+                    "Bottom",
+                    GraphRect::new(100.0, 100.0, 100.0, 8.0),
+                )
+                .with_ports(vec![PortDescriptor::new(
+                    PortId::from_raw(2),
+                    PortDirection::Input,
+                    "In",
+                    number,
+                )]),
+            ],
+            edges: vec![EdgeDescriptor::new(
+                EdgeId::from_raw(70),
+                PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1)),
+                PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2)),
+            )],
+            reroutes: Vec::new(),
+            frames: Vec::new(),
+            groups: Vec::new(),
+        };
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 240.0, 140.0),
+            NodeGraphPanZoom::default(),
+        );
+        let config = NodeGraphHitTestConfig::new().with_edge_tolerance(5.0);
+
+        assert_eq!(
+            graph.hit_test_with_config(viewport, Point::new(100.0, 109.0), config),
+            Ok(NodeGraphHitTarget::Edge(EdgeId::from_raw(70)))
+        );
+    }
+
+    #[test]
+    fn node_graph_visible_hit_testing_projects_frames_groups_and_culled_candidates() {
+        let graph = visible_projection_graph();
+        let viewport = NodeGraphViewport::new(
+            Rect::new(0.0, 0.0, 200.0, 180.0),
+            NodeGraphPanZoom::default(),
+        );
+
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(175.0, 125.0)),
+            Ok(NodeGraphHitTarget::Frame(NodeFrameId::from_raw(20)))
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(5.0, 20.0)),
+            Ok(NodeGraphHitTarget::Group(NodeGroupId::from_raw(30)))
+        );
+        assert_eq!(
+            graph.hit_test(viewport, Point::new(199.0, 20.0)),
+            Ok(NodeGraphHitTarget::Canvas)
+        );
+    }
+
     #[test]
     fn hit_testing_invalid_descriptors_return_structured_errors() {
         let duplicate = NodeId::from_raw(1);
@@ -3484,11 +3754,14 @@ mod node_graph_conformance {
                 PortId::from_raw(99),
             )),
         ]);
-        let output =
-            NodeGraphStaticView::new(WidgetId::from_key("graph"), static_viewport(), &graph)
-                .with_selection(selection)
-                .emit()
-                .expect("static graph output");
+        let viewport = NodeGraphViewport::new(
+            Rect::new(100.0, 50.0, 700.0, 300.0),
+            NodeGraphPanZoom::new(GraphVector::new(20.0, 10.0), 2.0),
+        );
+        let output = NodeGraphStaticView::new(WidgetId::from_key("graph"), viewport, &graph)
+            .with_selection(selection)
+            .emit()
+            .expect("static graph output");
 
         assert!(output.semantics.iter().any(|node| {
             node.role == SemanticRole::Custom("node".to_owned())
@@ -3765,14 +4038,14 @@ mod node_graph_conformance {
     fn static_view_port_state_metadata_is_deterministic() {
         let graph = static_graph();
         let style = NodeGraphStyle::default();
-        let output =
-            NodeGraphStaticView::new(WidgetId::from_key("graph"), static_viewport(), &graph)
-                .with_incompatible_ports([PortEndpoint::new(
-                    NodeId::from_raw(2),
-                    PortId::from_raw(3),
-                )])
-                .emit()
-                .expect("static graph output");
+        let viewport = NodeGraphViewport::new(
+            Rect::new(100.0, 50.0, 700.0, 300.0),
+            NodeGraphPanZoom::new(GraphVector::new(20.0, 10.0), 2.0),
+        );
+        let output = NodeGraphStaticView::new(WidgetId::from_key("graph"), viewport, &graph)
+            .with_incompatible_ports([PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(3))])
+            .emit()
+            .expect("static graph output");
 
         let port_fills = output
             .primitives
