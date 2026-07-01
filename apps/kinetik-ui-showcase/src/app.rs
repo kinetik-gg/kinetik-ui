@@ -32,6 +32,13 @@ use crate::editor::{self as editor_showcase, EditorShowcase};
 
 const MIN_VIEWPORT_WIDTH: f32 = 1.0;
 const MIN_VIEWPORT_HEIGHT: f32 = 1.0;
+const ACTION_COMPONENTS_RUN: &str = "components.run";
+const ACTION_SYSTEMS_DISPATCH: &str = "systems.dispatch";
+const ACTION_WORKSPACE_SAVE: &str = "workspace.save";
+const ACTION_COMMAND_PALETTE: &str = "command.palette";
+const ACTION_VIEWPORT_GRID: &str = "viewport.grid";
+const ACTION_EDITOR_DOCK_JOIN: &str = "editor.dock.join";
+const ACTION_EDITOR_DOCK_SWAP: &str = "editor.dock.swap";
 
 /// Available showcase pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,11 +305,11 @@ impl ShowcaseApp {
 
             ui.finish_output()
         };
-        let editor_invoked = !editor_invocations.is_empty();
-        for invocation in editor_invocations {
-            self.record_action(invocation.action_id.as_str(), invocation.source);
+        let mut editor_handled = false;
+        for invocation in &editor_invocations {
+            editor_handled |= self.handle_action_invocation(invocation);
         }
-        if editor_invoked {
+        if editor_handled {
             output.request_repaint(RepaintRequest::NextFrame);
         }
         self.memory = memory;
@@ -362,13 +369,47 @@ impl ShowcaseApp {
         }
     }
 
-    fn invoke_action(&mut self, id: &str, source: ActionSource) {
-        self.editor.apply_action(id);
-        self.record_action(id, source);
+    fn invoke_action(&mut self, id: &str, source: ActionSource) -> bool {
+        let handled = self.editor.apply_action(id) || Self::is_showcase_action(id);
+        self.finish_action_invocation(id, source, handled)
     }
 
-    fn handle_action_invocation(&mut self, invocation: &ActionInvocation) {
-        self.invoke_action(invocation.action_id.as_str(), invocation.source);
+    fn handle_applied_action_invocation(&mut self, invocation: &ActionInvocation) -> bool {
+        self.finish_action_invocation(
+            invocation.action_id.as_str(),
+            invocation.source,
+            Self::can_handle_action_id(invocation.action_id.as_str()),
+        )
+    }
+
+    fn finish_action_invocation(
+        &mut self,
+        action_id: &str,
+        source: ActionSource,
+        handled: bool,
+    ) -> bool {
+        if handled {
+            self.record_action(action_id, source);
+            true
+        } else {
+            self.ignore_action(action_id, source);
+            false
+        }
+    }
+
+    fn can_handle_action_id(action_id: &str) -> bool {
+        let mut editor = EditorShowcase::new();
+        editor.apply_action(action_id)
+            || Self::is_showcase_action(action_id)
+            || Self::is_editor_rendered_action(action_id)
+    }
+
+    fn handle_action_invocation(&mut self, invocation: &ActionInvocation) -> bool {
+        if invocation.context == ActionContext::Editor {
+            self.handle_applied_action_invocation(invocation)
+        } else {
+            self.invoke_action(invocation.action_id.as_str(), invocation.source)
+        }
     }
 
     fn handle_action_queue(&mut self, queue: &mut ActionQueue) -> Vec<ActionInvocation> {
@@ -382,6 +423,25 @@ impl ShowcaseApp {
     fn record_action(&mut self, action_id: &str, source: ActionSource) {
         self.action_count += 1;
         self.status = format!("{} via {:?} ({})", action_id, source, self.action_count);
+    }
+
+    fn ignore_action(&mut self, action_id: &str, source: ActionSource) {
+        self.status = format!("Ignored unhandled action {action_id} via {source:?}");
+    }
+
+    fn is_showcase_action(action_id: &str) -> bool {
+        matches!(
+            action_id,
+            ACTION_COMPONENTS_RUN
+                | ACTION_SYSTEMS_DISPATCH
+                | ACTION_WORKSPACE_SAVE
+                | ACTION_COMMAND_PALETTE
+                | ACTION_VIEWPORT_GRID
+        )
+    }
+
+    fn is_editor_rendered_action(action_id: &str) -> bool {
+        matches!(action_id, ACTION_EDITOR_DOCK_JOIN | ACTION_EDITOR_DOCK_SWAP)
     }
 
     fn resolve_shortcuts(&mut self, keyboard: &kinetik_ui::core::KeyboardInput) {
@@ -616,7 +676,7 @@ impl ShowcaseApp {
             false,
         );
         if run.clicked {
-            self.invoke_action("components.run", ActionSource::Button);
+            self.invoke_action(ACTION_COMPONENTS_RUN, ActionSource::Button);
         }
 
         let disabled = ui.button(
@@ -1496,7 +1556,7 @@ impl ShowcaseApp {
             ActionContext::Global,
         );
         let mut queue = ActionQueue::new();
-        let dispatch_action = ActionDescriptor::new("systems.dispatch", "Dispatch");
+        let dispatch_action = ActionDescriptor::new(ACTION_SYSTEMS_DISPATCH, "Dispatch");
         let x = panel.x + 20.0;
         let y = panel.y + 46.0;
         let dispatch = ui.button(
@@ -1855,11 +1915,11 @@ impl ShowcaseApp {
 }
 
 fn showcase_actions() -> Vec<ActionDescriptor> {
-    let mut save = ActionDescriptor::new("workspace.save", "Save Workspace");
+    let mut save = ActionDescriptor::new(ACTION_WORKSPACE_SAVE, "Save Workspace");
     save.keywords = vec!["write".to_owned(), "persist".to_owned()];
-    let mut palette = ActionDescriptor::new("command.palette", "Open Command Palette");
+    let mut palette = ActionDescriptor::new(ACTION_COMMAND_PALETTE, "Open Command Palette");
     palette.keywords = vec!["search".to_owned(), "actions".to_owned()];
-    let mut toggle_grid = ActionDescriptor::new("viewport.grid", "Toggle Viewport Grid");
+    let mut toggle_grid = ActionDescriptor::new(ACTION_VIEWPORT_GRID, "Toggle Viewport Grid");
     toggle_grid.keywords = vec!["guides".to_owned(), "overlay".to_owned()];
     vec![save, palette, toggle_grid]
 }
@@ -2103,14 +2163,17 @@ fn sanitize_viewport_size(size: Size) -> Size {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShowcaseApp, ShowcaseInput, ShowcasePage, frame_context, static_render_resources};
+    use super::{
+        ACTION_EDITOR_DOCK_JOIN, ACTION_SYSTEMS_DISPATCH, ShowcaseApp, ShowcaseInput, ShowcasePage,
+        frame_context, static_render_resources,
+    };
     use crate::editor::phosphor_icons;
     use kinetik_ui::{
         core::{
-            ImageId, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, PhysicalSize,
-            PlatformRequest, Point, Primitive, Rect, RepaintRequest, ScaleFactor,
-            SemanticActionKind, SemanticRole, SemanticValue, Size, TextureId, UiInput,
-            ViewportInfo, WidgetId,
+            ActionContext, ActionId, ActionInvocation, ActionSource, ImageId, Key, KeyEvent,
+            KeyState, KeyboardInput, Modifiers, PhysicalSize, PlatformRequest, Point, Primitive,
+            Rect, RepaintRequest, ScaleFactor, SemanticActionKind, SemanticRole, SemanticValue,
+            Size, TextureId, UiInput, ViewportInfo, WidgetId,
         },
         render::{RenderFrameInput, RenderImageSampling},
         render_vello::VelloRenderer,
@@ -2219,6 +2282,68 @@ mod tests {
         click(&mut app, Point::new(70.0, 154.0));
 
         assert_eq!(app.action_count(), 1);
+    }
+
+    #[test]
+    fn unknown_action_invocation_is_not_counted() {
+        let mut app = ShowcaseApp::new();
+        let invocation = ActionInvocation::new(
+            ActionId::new("showcase.unknown"),
+            ActionSource::Button,
+            ActionContext::Global,
+        );
+
+        app.handle_action_invocation(&invocation);
+
+        assert_eq!(app.action_count(), 0);
+        assert_eq!(
+            app.status,
+            "Ignored unhandled action showcase.unknown via Button"
+        );
+    }
+
+    #[test]
+    fn unhandled_editor_action_invocation_is_not_counted() {
+        let mut app = ShowcaseApp::new();
+        let invocation = ActionInvocation::new(
+            ActionId::new("editor.unknown"),
+            ActionSource::Button,
+            ActionContext::Editor,
+        );
+
+        assert!(!app.handle_action_invocation(&invocation));
+
+        assert_eq!(app.action_count(), 0);
+        assert_eq!(
+            app.status,
+            "Ignored unhandled action editor.unknown via Button"
+        );
+    }
+
+    #[test]
+    fn editor_rendered_dock_action_invocation_is_counted() {
+        let mut app = ShowcaseApp::new();
+        let invocation = ActionInvocation::new(
+            ActionId::new(ACTION_EDITOR_DOCK_JOIN),
+            ActionSource::Button,
+            ActionContext::Editor,
+        );
+
+        assert!(app.handle_action_invocation(&invocation));
+
+        assert_eq!(app.action_count(), 1);
+        assert_eq!(app.status, "editor.dock.join via Button (1)");
+        assert!(!app.status.contains("Ignored unhandled action"));
+    }
+
+    #[test]
+    fn explicit_showcase_demo_action_is_counted() {
+        let mut app = ShowcaseApp::new();
+
+        assert!(app.invoke_action(ACTION_SYSTEMS_DISPATCH, ActionSource::Button));
+
+        assert_eq!(app.action_count(), 1);
+        assert_eq!(app.status, "systems.dispatch via Button (1)");
     }
 
     #[test]
