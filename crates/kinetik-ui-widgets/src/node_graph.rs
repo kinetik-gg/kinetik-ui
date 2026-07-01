@@ -9,6 +9,7 @@ use kinetik_ui_core::{
 
 const DEFAULT_ZOOM: f32 = 1.0;
 const MIN_ZOOM: f32 = 0.01;
+const NODE_GRAPH_EDGE_HIT_BOUNDARY_MARGIN: f32 = 0.001;
 /// Default screen-space tolerance for node graph edge hit testing.
 pub const DEFAULT_NODE_GRAPH_EDGE_HIT_TOLERANCE: f32 = 6.0;
 /// Default screen-space square size for node graph port hit testing.
@@ -4694,6 +4695,153 @@ impl From<EdgeResolutionError> for NodeGraphHitTestError {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct NodeGraphVisibleProjection {
+    nodes: Vec<usize>,
+    reroutes: Vec<usize>,
+    edges: Vec<usize>,
+    frames: Vec<usize>,
+    groups: Vec<usize>,
+}
+
+impl NodeGraphVisibleProjection {
+    fn for_viewport(
+        viewport: NodeGraphViewport,
+        graph: &NodeGraphDescriptor,
+        resolved_edges: &[ResolvedEdge<'_>],
+        style: &NodeGraphStyle,
+    ) -> Self {
+        let bounds = viewport.effective_bounds();
+        if bounds.is_empty() {
+            return Self::default();
+        }
+
+        Self {
+            nodes: graph
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, node)| {
+                    node_static_screen_bounds(viewport, node, style)
+                        .intersection(bounds)
+                        .is_some()
+                        .then_some(index)
+                })
+                .collect(),
+            reroutes: graph
+                .reroutes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, reroute)| {
+                    reroute_hit_rect(viewport, reroute, style.reroute_size)
+                        .intersection(bounds)
+                        .is_some()
+                        .then_some(index)
+                })
+                .collect(),
+            edges: resolved_edges
+                .iter()
+                .enumerate()
+                .filter_map(|(index, edge)| {
+                    edge_screen_bounds(viewport, edge, style.edge_width * 0.5)
+                        .intersection(bounds)
+                        .is_some()
+                        .then_some(index)
+                })
+                .collect(),
+            frames: graph
+                .frames
+                .iter()
+                .enumerate()
+                .filter_map(|(index, frame)| {
+                    viewport
+                        .graph_rect_to_screen(frame.rect)
+                        .intersection(bounds)
+                        .is_some()
+                        .then_some(index)
+                })
+                .collect(),
+            groups: graph
+                .groups
+                .iter()
+                .enumerate()
+                .filter_map(|(index, group)| {
+                    viewport
+                        .graph_rect_to_screen(group.rect)
+                        .intersection(bounds)
+                        .is_some()
+                        .then_some(index)
+                })
+                .collect(),
+        }
+    }
+
+    fn for_hit(
+        viewport: NodeGraphViewport,
+        graph: &NodeGraphDescriptor,
+        resolved_edges: &[ResolvedEdge<'_>],
+        point: Point,
+        config: NodeGraphHitTestConfig,
+    ) -> Self {
+        Self {
+            nodes: graph
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, node)| {
+                    node_hit_candidate_contains_point(viewport, node, point, config)
+                        .then_some(index)
+                })
+                .collect(),
+            reroutes: graph
+                .reroutes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, reroute)| {
+                    reroute_hit_rect(viewport, reroute, config.reroute_size)
+                        .contains_point(point)
+                        .then_some(index)
+                })
+                .collect(),
+            edges: resolved_edges
+                .iter()
+                .enumerate()
+                .filter_map(|(index, edge)| {
+                    edge_screen_bounds(
+                        viewport,
+                        edge,
+                        finite_sum(config.edge_tolerance, NODE_GRAPH_EDGE_HIT_BOUNDARY_MARGIN),
+                    )
+                    .contains_point(point)
+                    .then_some(index)
+                })
+                .collect(),
+            frames: graph
+                .frames
+                .iter()
+                .enumerate()
+                .filter_map(|(index, frame)| {
+                    viewport
+                        .graph_rect_to_screen(frame.rect)
+                        .contains_point(point)
+                        .then_some(index)
+                })
+                .collect(),
+            groups: graph
+                .groups
+                .iter()
+                .enumerate()
+                .filter_map(|(index, group)| {
+                    viewport
+                        .graph_rect_to_screen(group.rect)
+                        .contains_point(point)
+                        .then_some(index)
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Resolves one UI logical screen-space point to a stable typed node graph target.
 ///
 /// Hit priority is deterministic: enabled ports, enabled node title/body,
@@ -4737,27 +4885,30 @@ pub fn hit_test_node_graph_with_config(
         return Ok(NodeGraphHitTarget::Canvas);
     }
 
-    if let Some(target) = hit_test_ports(viewport, graph, point, config) {
+    let projection =
+        NodeGraphVisibleProjection::for_hit(viewport, graph, &resolved_edges, point, config);
+
+    if let Some(target) = hit_test_ports(viewport, graph, &projection, point, config) {
         return Ok(target);
     }
 
-    if let Some(target) = hit_test_nodes(viewport, graph, point, config) {
+    if let Some(target) = hit_test_nodes(viewport, graph, &projection, point, config) {
         return Ok(target);
     }
 
-    if let Some(target) = hit_test_reroutes(viewport, graph, point, config) {
+    if let Some(target) = hit_test_reroutes(viewport, graph, &projection, point, config) {
         return Ok(target);
     }
 
-    if let Some(target) = hit_test_edges(viewport, &resolved_edges, point, config) {
+    if let Some(target) = hit_test_edges(viewport, &resolved_edges, &projection, point, config) {
         return Ok(target);
     }
 
-    if let Some(target) = hit_test_frames(viewport, graph, point) {
+    if let Some(target) = hit_test_frames(viewport, graph, &projection, point) {
         return Ok(target);
     }
 
-    if let Some(target) = hit_test_groups(viewport, graph, point) {
+    if let Some(target) = hit_test_groups(viewport, graph, &projection, point) {
         return Ok(target);
     }
 
@@ -4767,10 +4918,12 @@ pub fn hit_test_node_graph_with_config(
 fn hit_test_ports(
     viewport: NodeGraphViewport,
     graph: &NodeGraphDescriptor,
+    projection: &NodeGraphVisibleProjection,
     point: Point,
     config: NodeGraphHitTestConfig,
 ) -> Option<NodeGraphHitTarget> {
-    graph.nodes.iter().rev().find_map(|node| {
+    projection.nodes.iter().rev().find_map(|&node_index| {
+        let node = &graph.nodes[node_index];
         if !node.enabled {
             return None;
         }
@@ -4792,10 +4945,12 @@ fn hit_test_ports(
 fn hit_test_nodes(
     viewport: NodeGraphViewport,
     graph: &NodeGraphDescriptor,
+    projection: &NodeGraphVisibleProjection,
     point: Point,
     config: NodeGraphHitTestConfig,
 ) -> Option<NodeGraphHitTarget> {
-    graph.nodes.iter().rev().find_map(|node| {
+    projection.nodes.iter().rev().find_map(|&node_index| {
+        let node = &graph.nodes[node_index];
         if !node.enabled {
             return None;
         }
@@ -4816,10 +4971,12 @@ fn hit_test_nodes(
 fn hit_test_reroutes(
     viewport: NodeGraphViewport,
     graph: &NodeGraphDescriptor,
+    projection: &NodeGraphVisibleProjection,
     point: Point,
     config: NodeGraphHitTestConfig,
 ) -> Option<NodeGraphHitTarget> {
-    graph.reroutes.iter().rev().find_map(|reroute| {
+    projection.reroutes.iter().rev().find_map(|&reroute_index| {
+        let reroute = &graph.reroutes[reroute_index];
         if !reroute.enabled {
             return None;
         }
@@ -4833,10 +4990,12 @@ fn hit_test_reroutes(
 fn hit_test_edges(
     viewport: NodeGraphViewport,
     edges: &[ResolvedEdge<'_>],
+    projection: &NodeGraphVisibleProjection,
     point: Point,
     config: NodeGraphHitTestConfig,
 ) -> Option<NodeGraphHitTarget> {
-    edges.iter().rev().find_map(|edge| {
+    projection.edges.iter().rev().find_map(|&edge_index| {
+        let edge = &edges[edge_index];
         if !edge.edge.enabled || !edge.from.node.enabled || !edge.to.node.enabled {
             return None;
         }
@@ -4853,9 +5012,11 @@ fn hit_test_edges(
 fn hit_test_frames(
     viewport: NodeGraphViewport,
     graph: &NodeGraphDescriptor,
+    projection: &NodeGraphVisibleProjection,
     point: Point,
 ) -> Option<NodeGraphHitTarget> {
-    graph.frames.iter().rev().find_map(|frame| {
+    projection.frames.iter().rev().find_map(|&frame_index| {
+        let frame = &graph.frames[frame_index];
         if !frame.enabled {
             return None;
         }
@@ -4870,9 +5031,11 @@ fn hit_test_frames(
 fn hit_test_groups(
     viewport: NodeGraphViewport,
     graph: &NodeGraphDescriptor,
+    projection: &NodeGraphVisibleProjection,
     point: Point,
 ) -> Option<NodeGraphHitTarget> {
-    graph.groups.iter().rev().find_map(|group| {
+    projection.groups.iter().rev().find_map(|&group_index| {
+        let group = &graph.groups[group_index];
         if !group.enabled {
             return None;
         }
@@ -4909,6 +5072,49 @@ fn node_title_rect(
     let rect = node.rect.sanitized();
     let title_height = finite_non_negative(title_bar_height).min(rect.height);
     viewport.graph_rect_to_screen(GraphRect::new(rect.x, rect.y, rect.width, title_height))
+}
+
+fn node_hit_candidate_contains_point(
+    viewport: NodeGraphViewport,
+    node: &NodeDescriptor,
+    point: Point,
+    config: NodeGraphHitTestConfig,
+) -> bool {
+    viewport
+        .graph_rect_to_screen(node.rect)
+        .contains_point(point)
+        || node
+            .ports
+            .iter()
+            .any(|port| port_hit_rect(viewport, node, port, config.port_size).contains_point(point))
+}
+
+fn node_static_screen_bounds(
+    viewport: NodeGraphViewport,
+    node: &NodeDescriptor,
+    style: &NodeGraphStyle,
+) -> Rect {
+    let mut bounds = viewport.graph_rect_to_screen(node.rect);
+    for port in &node.ports {
+        let port_rect = port_hit_rect(viewport, node, port, style.port_size);
+        bounds = bounds.union(port_rect);
+        bounds = bounds.union(port_label_rect(port_rect, port, style));
+    }
+    bounds
+}
+
+fn port_label_rect(port_rect: Rect, port: &PortDescriptor, style: &NodeGraphStyle) -> Rect {
+    let width = port_label_width(&port.label, style);
+    let label_x = match port.direction {
+        PortDirection::Input => port_rect.max_x() + 4.0,
+        PortDirection::Output => port_rect.x - (width + 4.0),
+    };
+    Rect::new(
+        label_x,
+        port_rect.y,
+        width,
+        finite_non_negative(style.port_label_size + 3.0),
+    )
 }
 
 fn point_to_segment_distance(point: Point, from: Point, to: Point) -> f32 {
@@ -5227,14 +5433,24 @@ impl<'a> NodeGraphStaticView<'a> {
     pub fn emit(&self) -> Result<NodeGraphStaticOutput, NodeGraphEmissionError> {
         self.graph.validate()?;
         let resolved_edges = self.graph.resolve_edges()?;
+        let projection = NodeGraphVisibleProjection::for_viewport(
+            self.viewport,
+            self.graph,
+            &resolved_edges,
+            &self.style,
+        );
 
         Ok(NodeGraphStaticOutput {
-            primitives: self.primitives(&resolved_edges),
-            semantics: self.semantics(&resolved_edges),
+            primitives: self.primitives(&resolved_edges, &projection),
+            semantics: self.semantics(&resolved_edges, &projection),
         })
     }
 
-    fn primitives(&self, resolved_edges: &[ResolvedEdge<'_>]) -> Vec<Primitive> {
+    fn primitives(
+        &self,
+        resolved_edges: &[ResolvedEdge<'_>],
+        projection: &NodeGraphVisibleProjection,
+    ) -> Vec<Primitive> {
         let bounds = self.viewport.effective_bounds();
         let mut primitives = vec![Primitive::ClipBegin {
             id: self.clip,
@@ -5255,30 +5471,33 @@ impl<'a> NodeGraphStaticView<'a> {
         }
 
         primitives.extend(
-            resolved_edges
+            projection
+                .edges
                 .iter()
-                .flat_map(|edge| self.edge_primitives(edge)),
+                .flat_map(|&edge_index| self.edge_primitives(&resolved_edges[edge_index])),
         );
         primitives.extend(
-            self.graph
+            projection
                 .reroutes
                 .iter()
-                .map(|reroute| self.reroute_primitive(reroute)),
+                .map(|&reroute_index| self.reroute_primitive(&self.graph.reroutes[reroute_index])),
         );
         primitives.extend(
-            self.graph
+            projection
                 .nodes
                 .iter()
-                .map(|node| self.node_primitive(node)),
+                .map(|&node_index| self.node_primitive(&self.graph.nodes[node_index])),
         );
 
-        for node in &self.graph.nodes {
+        for &node_index in &projection.nodes {
+            let node = &self.graph.nodes[node_index];
             for port in &node.ports {
                 primitives.push(self.port_primitive(node, port));
             }
         }
 
-        for node in &self.graph.nodes {
+        for &node_index in &projection.nodes {
+            let node = &self.graph.nodes[node_index];
             primitives.push(self.node_label_primitive(node));
             for port in &node.ports {
                 primitives.push(self.port_label_primitive(node, port));
@@ -5385,20 +5604,23 @@ impl<'a> NodeGraphStaticView<'a> {
         })
     }
 
-    fn semantics(&self, resolved_edges: &[ResolvedEdge<'_>]) -> Vec<SemanticNode> {
-        let edge_ids = resolved_edges
+    fn semantics(
+        &self,
+        resolved_edges: &[ResolvedEdge<'_>],
+        projection: &NodeGraphVisibleProjection,
+    ) -> Vec<SemanticNode> {
+        let edge_ids = projection
+            .edges
             .iter()
-            .map(|edge| self.edge_semantic_id(edge.edge.id));
-        let reroute_ids = self
-            .graph
+            .map(|&edge_index| self.edge_semantic_id(resolved_edges[edge_index].edge.id));
+        let reroute_ids = projection
             .reroutes
             .iter()
-            .map(|reroute| self.reroute_semantic_id(reroute.id));
-        let node_ids = self
-            .graph
+            .map(|&reroute_index| self.reroute_semantic_id(self.graph.reroutes[reroute_index].id));
+        let node_ids = projection
             .nodes
             .iter()
-            .map(|node| self.node_semantic_id(node.id));
+            .map(|&node_index| self.node_semantic_id(self.graph.nodes[node_index].id));
         let mut semantics = vec![
             SemanticNode::new(
                 self.id,
@@ -5409,14 +5631,20 @@ impl<'a> NodeGraphStaticView<'a> {
             .with_children(edge_ids.chain(reroute_ids).chain(node_ids)),
         ];
 
-        semantics.extend(resolved_edges.iter().map(|edge| self.edge_semantics(edge)));
         semantics.extend(
-            self.graph
+            projection
+                .edges
+                .iter()
+                .map(|&edge_index| self.edge_semantics(&resolved_edges[edge_index])),
+        );
+        semantics.extend(
+            projection
                 .reroutes
                 .iter()
-                .map(|reroute| self.reroute_semantics(reroute)),
+                .map(|&reroute_index| self.reroute_semantics(&self.graph.reroutes[reroute_index])),
         );
-        for node in &self.graph.nodes {
+        for &node_index in &projection.nodes {
+            let node = &self.graph.nodes[node_index];
             semantics.push(self.node_semantics(node));
             semantics.extend(
                 node.ports
@@ -5593,6 +5821,27 @@ fn edge_screen_points(viewport: NodeGraphViewport, edge: &ResolvedEdge<'_>) -> V
     );
     points.push(viewport.graph_to_screen(edge.to.anchor));
     points
+}
+
+fn edge_screen_bounds(viewport: NodeGraphViewport, edge: &ResolvedEdge<'_>, outset: f32) -> Rect {
+    let first = viewport.graph_to_screen(edge.from.anchor);
+    let mut min = first;
+    let mut max = first;
+
+    for point in edge
+        .route_points
+        .iter()
+        .map(|route_point| viewport.graph_to_screen(route_point.position))
+        .chain(std::iter::once(viewport.graph_to_screen(edge.to.anchor)))
+    {
+        let point = sanitize_point(point);
+        min = Point::new(min.x.min(point.x), min.y.min(point.y));
+        max = Point::new(max.x.max(point.x), max.y.max(point.y));
+    }
+
+    Rect::from_min_max(min, max)
+        .outset(finite_non_negative(outset).max(1.0))
+        .max_zero()
 }
 
 fn polyline_bounds(points: &[Point]) -> Rect {
