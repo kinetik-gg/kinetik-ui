@@ -3381,12 +3381,22 @@ fn resolve_timeline_layout(
         .enumerate()
         .map(|(index, lane)| (lane.id, index))
         .collect::<BTreeMap<_, _>>();
-    let item_indices = descriptor
+    let item_lane_indices = descriptor
         .items
         .iter()
-        .enumerate()
-        .map(|(index, item)| (item.id, index))
+        .filter_map(|item| {
+            lane_indices
+                .get(&item.lane)
+                .map(|lane_index| (item.id, *lane_index))
+        })
         .collect::<BTreeMap<_, _>>();
+    let projection = TimelineLayoutProjection::new(
+        bounds,
+        scale,
+        window.materialized_range.clone(),
+        layout.marker_hit_width,
+        layout.keyframe_hit_size,
+    );
 
     let lanes = descriptor
         .lanes
@@ -3407,23 +3417,13 @@ fn resolve_timeline_layout(
         })
         .collect::<Vec<_>>();
 
-    let materialized_lanes = window
-        .materialized_range
-        .clone()
-        .collect::<BTreeSet<usize>>();
-    let mut items = descriptor
-        .items
-        .iter()
-        .enumerate()
-        .filter_map(|(source_index, item)| {
-            let lane_index = *lane_indices.get(&item.lane)?;
-            if !materialized_lanes.contains(&lane_index) {
-                return None;
-            }
+    let mut items = project_timeline_items(descriptor, &lane_indices, &projection)
+        .into_iter()
+        .filter_map(|projected| {
             resolve_timeline_item(
-                source_index,
-                item,
-                lane_index,
+                projected.source_index,
+                projected.descriptor,
+                projected.lane_index,
                 bounds,
                 row_height,
                 window.clamped_scroll_offset,
@@ -3433,31 +3433,27 @@ fn resolve_timeline_layout(
         .collect::<Vec<_>>();
     items.sort_by(compare_resolved_timeline_items);
 
-    let mut markers = descriptor
-        .markers
-        .iter()
-        .enumerate()
-        .filter_map(|(source_index, marker)| {
-            resolve_timeline_marker(source_index, marker, bounds, scale, layout.marker_hit_width)
+    let mut markers = project_timeline_markers(descriptor, &projection)
+        .into_iter()
+        .filter_map(|projected| {
+            resolve_timeline_marker(
+                projected.source_index,
+                projected.descriptor,
+                bounds,
+                scale,
+                layout.marker_hit_width,
+            )
         })
         .collect::<Vec<_>>();
     markers.sort_by(compare_resolved_timeline_markers);
 
-    let mut keyframes = descriptor
-        .keyframes
-        .iter()
-        .enumerate()
-        .filter_map(|(source_index, keyframe)| {
-            let item_index = *item_indices.get(&keyframe.item)?;
-            let item = descriptor.items.get(item_index)?;
-            let lane_index = *lane_indices.get(&item.lane)?;
-            if !materialized_lanes.contains(&lane_index) {
-                return None;
-            }
+    let mut keyframes = project_timeline_keyframes(descriptor, &item_lane_indices, &projection)
+        .into_iter()
+        .filter_map(|projected| {
             resolve_timeline_keyframe(
-                source_index,
-                keyframe,
-                lane_index,
+                projected.source_index,
+                projected.descriptor,
+                projected.lane_index,
                 bounds,
                 row_height,
                 window.clamped_scroll_offset,
@@ -3565,6 +3561,159 @@ fn resolve_timeline_keyframe(
         x,
         hit_rect,
     })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct TimelineLayoutProjection {
+    materialized_lane_range: Range<usize>,
+    item_time_window: TimelineRange,
+    marker_time_window: TimelineRange,
+    keyframe_time_window: TimelineRange,
+}
+
+impl TimelineLayoutProjection {
+    fn new(
+        bounds: Rect,
+        scale: TimelineScale,
+        materialized_lane_range: Range<usize>,
+        marker_hit_width: f32,
+        keyframe_hit_size: f32,
+    ) -> Self {
+        Self {
+            materialized_lane_range,
+            item_time_window: timeline_screen_time_window(bounds, scale, 0.0),
+            marker_time_window: timeline_screen_time_window(
+                bounds,
+                scale,
+                finite_positive(marker_hit_width).unwrap_or(1.0) * 0.5,
+            ),
+            keyframe_time_window: timeline_screen_time_window(
+                bounds,
+                scale,
+                finite_positive(keyframe_hit_size).unwrap_or(1.0) * 0.5,
+            ),
+        }
+    }
+
+    fn contains_lane(&self, lane_index: usize) -> bool {
+        self.materialized_lane_range.contains(&lane_index)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectedTimelineItem<'a> {
+    source_index: usize,
+    descriptor: &'a TimelineItemDescriptor,
+    lane_index: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectedTimelineMarker<'a> {
+    source_index: usize,
+    descriptor: &'a TimelineMarkerDescriptor,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectedTimelineKeyframe<'a> {
+    source_index: usize,
+    descriptor: &'a TimelineKeyframeDescriptor,
+    lane_index: usize,
+}
+
+fn project_timeline_items<'a>(
+    descriptor: &'a TimelineDescriptor,
+    lane_indices: &BTreeMap<TimelineLaneId, usize>,
+    projection: &TimelineLayoutProjection,
+) -> Vec<ProjectedTimelineItem<'a>> {
+    descriptor
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(source_index, item)| {
+            let lane_index = *lane_indices.get(&item.lane)?;
+            (projection.contains_lane(lane_index)
+                && timeline_ranges_overlap(item.time_range, projection.item_time_window))
+            .then_some(ProjectedTimelineItem {
+                source_index,
+                descriptor: item,
+                lane_index,
+            })
+        })
+        .collect()
+}
+
+fn project_timeline_markers<'a>(
+    descriptor: &'a TimelineDescriptor,
+    projection: &TimelineLayoutProjection,
+) -> Vec<ProjectedTimelineMarker<'a>> {
+    descriptor
+        .markers
+        .iter()
+        .enumerate()
+        .filter_map(|(source_index, marker)| {
+            timeline_time_overlaps(marker.time, projection.marker_time_window).then_some(
+                ProjectedTimelineMarker {
+                    source_index,
+                    descriptor: marker,
+                },
+            )
+        })
+        .collect()
+}
+
+fn project_timeline_keyframes<'a>(
+    descriptor: &'a TimelineDescriptor,
+    item_lane_indices: &BTreeMap<TimelineItemId, usize>,
+    projection: &TimelineLayoutProjection,
+) -> Vec<ProjectedTimelineKeyframe<'a>> {
+    descriptor
+        .keyframes
+        .iter()
+        .enumerate()
+        .filter_map(|(source_index, keyframe)| {
+            let lane_index = *item_lane_indices.get(&keyframe.item)?;
+            (projection.contains_lane(lane_index)
+                && timeline_time_overlaps(keyframe.time, projection.keyframe_time_window))
+            .then_some(ProjectedTimelineKeyframe {
+                source_index,
+                descriptor: keyframe,
+                lane_index,
+            })
+        })
+        .collect()
+}
+
+fn timeline_screen_time_window(
+    bounds: Rect,
+    scale: TimelineScale,
+    horizontal_padding: f32,
+) -> TimelineRange {
+    let bounds = finite_rect(bounds);
+    if bounds.width <= 0.0 {
+        return TimelineRange::seconds(0.0, 0.0);
+    }
+
+    let padding = finite_f32_non_negative(horizontal_padding);
+    TimelineRange::new(
+        scale.screen_x_to_time(bounds.x - padding),
+        scale.screen_x_to_time(rect_max_x(bounds) + padding),
+    )
+    .sanitized()
+}
+
+fn timeline_ranges_overlap(range: TimelineRange, window: TimelineRange) -> bool {
+    let range = range.sanitized();
+    let window = window.sanitized();
+    !range.is_empty()
+        && !window.is_empty()
+        && range.start.seconds() < window.end.seconds()
+        && range.end.seconds() > window.start.seconds()
+}
+
+fn timeline_time_overlaps(time: TimelineTime, window: TimelineRange) -> bool {
+    let time = time.sanitized().seconds();
+    let window = window.sanitized();
+    !window.is_empty() && time > window.start.seconds() && time < window.end.seconds()
 }
 
 fn apply_timeline_semantic_state(node: &mut SemanticNode, state: TimelineDescriptorState) {
