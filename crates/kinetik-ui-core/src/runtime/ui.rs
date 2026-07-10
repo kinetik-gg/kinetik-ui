@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::input::{InputStreamConflict, UiInput};
+use crate::input::UiInput;
 use crate::memory::UiMemory;
 use crate::render::Primitive;
 use crate::{
@@ -401,7 +401,7 @@ impl<'a> Ui<'a> {
             &self.root_input,
             self.memory.pointer_capture().is_some(),
             self.memory.secondary_pressed().is_some(),
-            self.memory.root_input_conflict() == Some(InputStreamConflict::Pointer),
+            self.memory.root_input_conflict().is_some(),
         );
     }
 }

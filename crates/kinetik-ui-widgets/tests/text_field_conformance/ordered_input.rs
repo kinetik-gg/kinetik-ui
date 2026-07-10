@@ -1,7 +1,7 @@
 use kinetik_ui_core::{
     ClipId, FrameWarning, InputStreamConflict, Key, KeyEvent, KeyState, Modifiers, MouseButton,
-    PhysicalKey, Point, Primitive, Rect, TextInputEvent, UiInput, UiInputEvent, UiMemory,
-    UiTestHarness, Vec2, WidgetId, default_dark_theme,
+    PhysicalKey, Point, Primitive, Rect, TextInputEvent, Transform, UiInput, UiInputEvent,
+    UiMemory, UiTestHarness, Vec2, WidgetId, default_dark_theme,
 };
 use kinetik_ui_text::TextEditState;
 use kinetik_ui_widgets::{multi_line_text_field, text_field};
@@ -315,6 +315,93 @@ fn root_conflict_warns_once_and_blocks_all_text_owner_claims() {
         frame.warnings,
         vec![FrameWarning::InputStreamConflict {
             conflict: InputStreamConflict::Pointer,
+        }]
+    );
+}
+
+#[test]
+fn combined_text_and_pointer_conflict_preserves_scoped_snapshot_and_fails_closed() {
+    let id = WidgetId::from_key("combined-conflict");
+    let theme = default_dark_theme();
+    let mut input = UiInput::default();
+    input.push_event(UiInputEvent::PointerMoved {
+        position: Point::new(12.0, 12.0),
+        delta: Vec2::new(4.0, 6.0),
+    });
+    input.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: true,
+        click_count: 1,
+        position: Some(Point::new(12.0, 12.0)),
+    });
+    input.push_event(hardware_event(Key::Character("x".to_owned()), "x"));
+    input
+        .text_events
+        .push(TextInputEvent::Commit("legacy".to_owned()));
+    input.pointer.delta = Vec2::new(50.0, 90.0);
+    input.pointer.click_count = 7;
+    assert_eq!(
+        input.validate_event_stream(),
+        Err(InputStreamConflict::TextEvents)
+    );
+
+    let mut harness = UiTestHarness::new();
+    *harness.input_mut() = input;
+    harness.memory_mut().focus(id);
+    harness.memory_mut().set_text_input_owner(id);
+    let mut state = TextEditState::new("base");
+
+    let ((localized, changed), frame) = harness.run_frame(|ui| {
+        ui.register_id(id);
+        ui.push_primitive(Primitive::TransformBegin(Transform::scale(Vec2::new(
+            2.0, 3.0,
+        ))));
+        ui.push_primitive(Primitive::ClipBegin {
+            id: ClipId::from_raw(92),
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+        });
+        let localized = ui.input().clone();
+        let (input, memory) = ui.input_and_memory_mut();
+        let field = text_field(
+            id,
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            &mut state,
+            input,
+            memory,
+            &theme,
+            false,
+        );
+        ui.push_primitive(Primitive::ClipEnd {
+            id: ClipId::from_raw(92),
+        });
+        ui.push_primitive(Primitive::TransformEnd);
+        (localized, field.changed)
+    });
+
+    assert_eq!(localized.pointer.position, Some(Point::new(6.0, 4.0)));
+    assert_eq!(localized.pointer.delta, Vec2::new(25.0, 30.0));
+    assert_eq!(localized.pointer.click_count, 7);
+    assert!(localized.events.iter().any(|event| matches!(
+        event,
+        UiInputEvent::PointerMoved {
+            position: Point { x: 6.0, y: 4.0 },
+            delta: Vec2 { x: 2.0, y: 2.0 },
+        }
+    )));
+    assert!(localized.events.iter().any(|event| matches!(
+        event,
+        UiInputEvent::PointerButton {
+            click_count: 1,
+            position: Some(Point { x: 6.0, y: 4.0 }),
+            ..
+        }
+    )));
+    assert!(!changed);
+    assert_eq!(state.text, "base");
+    assert_eq!(
+        frame.warnings,
+        vec![FrameWarning::InputStreamConflict {
+            conflict: InputStreamConflict::TextEvents,
         }]
     );
 }

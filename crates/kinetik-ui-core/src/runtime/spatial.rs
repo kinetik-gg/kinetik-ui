@@ -33,7 +33,7 @@ impl SpatialStack {
         root: &UiInput,
         preserve_primary_release: bool,
         preserve_secondary_release: bool,
-        root_pointer_conflict: bool,
+        root_input_conflict: bool,
     ) -> UiInput {
         let mut input = root.clone();
         let local_position = root.pointer.position.and_then(|position| {
@@ -85,7 +85,7 @@ impl SpatialStack {
                 self.localize_event(event, preserve_primary_release, preserve_secondary_release)
             })
             .collect();
-        if root_pointer_conflict {
+        if root_input_conflict {
             return input;
         }
 
