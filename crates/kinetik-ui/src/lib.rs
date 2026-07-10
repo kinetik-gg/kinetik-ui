@@ -1,8 +1,17 @@
 //! Application-facing facade for the Kinetik UI toolkit.
 //!
-//! This crate re-exports the common application stack so apps can start from a
+//! This crate re-exports the current application stack so apps can start from a
 //! single dependency while the implementation remains split across core,
-//! widget, text, platform, and renderer crates.
+//! widget, text, platform, and renderer crates. During the alpha-readiness
+//! campaign, this facade and its [`prelude`] are provisional Experimental
+//! surfaces: an item being reachable here is a convenience decision, not a
+//! Stable conformance claim. Stable status requires accepted behavioral proof
+//! for every capability axis required by that API.
+//!
+//! Advanced editor APIs should be imported through their qualified modules.
+//! The exact provisional policy and compatibility rules are recorded in the
+//! repository's `docs/public-api-policy.md`; final facade curation is gated on
+//! the `SHOW-02` public-API editor workflow.
 
 /// Platform-independent runtime, input, layout, actions, semantics, theme, and render primitives.
 pub mod core {
@@ -132,7 +141,14 @@ impl Default for UiState {
     }
 }
 
-/// Common imports for application UI code.
+/// Provisional common imports for application UI code.
+///
+/// Prelude inclusion does not imply Stable conformance. This current surface is
+/// classified Experimental until its required capability axes have accepted
+/// behavioral proof. Planned APIs do not enter this prelude, and advanced
+/// editor models should be imported from their qualified modules. The final
+/// alpha prelude will be curated only after the `SHOW-02` public-API vertical
+/// slice proves which imports form a coherent application path.
 pub mod prelude {
     pub use crate::UiState;
     pub use crate::core::{
