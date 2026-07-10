@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::input::UiInput;
+use crate::input::{InputStreamConflict, UiInput};
 use crate::memory::UiMemory;
 use crate::render::Primitive;
 use crate::{
@@ -31,25 +31,32 @@ pub struct Ui<'a> {
     output: FrameOutput,
     spatial: SpatialStack,
     pointer_plan_installed: bool,
+    root_input_conflict: Option<InputStreamConflict>,
 }
 
 impl<'a> Ui<'a> {
     /// Starts a UI frame and clears transient retained memory.
     #[must_use]
     pub fn begin_frame(context: FrameContext, memory: &'a mut UiMemory) -> Self {
+        let input_conflict = context.input.validate_event_stream().err();
         memory.begin_frame();
         if !context.input.window_focused || pointer_release_all_cancelled(&context.input) {
             memory.cancel_pointer_interaction();
         }
         let root_input = context.input.clone();
+        let mut output = FrameOutput::new();
+        if let Some(conflict) = input_conflict {
+            output.push_warning(FrameWarning::InputStreamConflict { conflict });
+        }
         Self {
             context,
             root_input,
             memory,
             ids: IdStack::new(),
-            output: FrameOutput::new(),
+            output,
             spatial: SpatialStack::default(),
             pointer_plan_installed: false,
+            root_input_conflict: input_conflict,
         }
     }
 
@@ -394,6 +401,7 @@ impl<'a> Ui<'a> {
             &self.root_input,
             self.memory.pointer_capture().is_some(),
             self.memory.secondary_pressed().is_some(),
+            self.root_input_conflict == Some(InputStreamConflict::Pointer),
         );
     }
 }

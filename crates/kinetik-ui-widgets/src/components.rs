@@ -7,11 +7,12 @@ use kinetik_ui_core::{
     ImagePrimitive, Insets, Key, KeyState, LinePrimitive, PathElement, PathPrimitive,
     PlatformRequest, Point, Primitive, Rect, RectPrimitive, Response, SemanticAction,
     SemanticActionKind, SemanticNode, SemanticRole, SemanticState, SemanticValue, Stroke,
-    TextFieldRecipe, TextInputEvent, TextPrimitive, TextRole, Theme, UiInput, UiMemory, WidgetId,
-    draggable, drop_target, fit_box, focusable, pad_rect, pressable, selectable,
+    TextFieldRecipe, TextPrimitive, TextRole, Theme, UiInput, UiMemory, WidgetId, draggable,
+    drop_target, fit_box, focusable, pad_rect, pressable, selectable,
 };
 use kinetik_ui_text::{
-    ShapedTextLayout, TextEditState, TextLayoutKey, TextLayoutStore, TextSelection, TextStyle,
+    ShapedTextLayout, TextEditMode, TextEditState, TextLayoutKey, TextLayoutStore, TextSelection,
+    TextStyle,
 };
 
 use crate::{
@@ -54,10 +55,9 @@ use common::{
 };
 use field_helpers::{field_text_primitive, finite_widget_extent};
 use text_support::{
-    apply_clipboard_shortcuts, display_text_with_composition, multi_line_hit_offset,
-    multi_line_text_primitives, single_line_hit_offset, single_line_text_primitives,
-    text_events_for_text_field, text_field_layout, text_input_platform_requests,
-    text_line_fragments,
+    display_text_with_composition, multi_line_hit_offset, multi_line_text_primitives,
+    single_line_hit_offset, single_line_text_primitives, text_field_layout,
+    text_input_platform_requests, text_line_fragments,
 };
 
 pub use basic::*;

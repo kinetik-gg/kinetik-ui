@@ -76,6 +76,8 @@ pub struct UiMemory {
     released_drag_source: Option<WidgetId>,
     /// Text-editing widget currently owning platform text input or IME.
     text_input_owner: Option<WidgetId>,
+    /// Text-input owner that claimed this frame's ordered editing stream.
+    text_input_event_claim: Option<WidgetId>,
     /// Text-editing widget whose platform text input should be stopped.
     pending_text_input_stop: Option<WidgetId>,
     scroll_offsets: HashMap<WidgetId, Vec2>,
@@ -100,6 +102,7 @@ impl UiMemory {
         self.pointer_interaction_cancelled = false;
         self.pointer_routes = PointerRoutes::default();
         self.pointer_cursor_equivalents.clear();
+        self.text_input_event_claim = None;
         self.liveness.begin_frame();
         self.observers.prune_inactive_subscriptions();
     }
@@ -282,6 +285,18 @@ impl UiMemory {
     #[must_use]
     pub fn owns_text_input(&self, id: WidgetId) -> bool {
         self.text_input_owner == Some(id)
+    }
+
+    /// Claims the current frame's ordered text-editing stream for its owner.
+    ///
+    /// A frame has at most one successful claim. Changing ownership after a
+    /// successful claim never replays the stream for the new owner.
+    pub fn claim_text_input_events(&mut self, id: WidgetId) -> bool {
+        if self.text_input_owner != Some(id) || self.text_input_event_claim.is_some() {
+            return false;
+        }
+        self.text_input_event_claim = Some(id);
+        true
     }
 
     /// Marks the widget as hovered for this frame.

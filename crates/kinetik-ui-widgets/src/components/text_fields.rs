@@ -1,11 +1,9 @@
 use super::{
-    ComponentState, CursorShape, Key, KeyState, Primitive, Rect, RectPrimitive, TextEditState,
-    TextInputEvent, TextLayoutStore, TextSelection, Theme, UiInput, UiMemory, WidgetId,
-    WidgetOutput, apply_clipboard_shortcuts, display_text_with_composition, focusable,
-    multi_line_hit_offset, multi_line_text_primitives, single_line_hit_offset,
-    single_line_text_primitives, text_events_for_text_field, text_field_layout,
-    text_field_semantics, text_input_platform_requests, text_line_fragments, with_hover_cursor,
-    with_response_state,
+    ComponentState, CursorShape, Primitive, Rect, RectPrimitive, TextEditMode, TextEditState,
+    TextLayoutStore, TextSelection, Theme, UiInput, UiMemory, WidgetId, WidgetOutput,
+    display_text_with_composition, focusable, multi_line_hit_offset, multi_line_text_primitives,
+    single_line_hit_offset, single_line_text_primitives, text_field_layout, text_field_semantics,
+    text_input_platform_requests, text_line_fragments, with_hover_cursor, with_response_state,
 };
 
 /// Output emitted by editable text widgets.
@@ -101,10 +99,12 @@ pub(crate) fn text_field_with_text_layouts_and_caret_visibility(
         response.state.focused = true;
     }
     let mut platform_requests = text_input_platform_requests(id, rect, &response, memory);
-    if response.state.focused && !disabled {
-        apply_clipboard_shortcuts(id, state, input, &mut platform_requests);
-        let text_events = text_events_for_text_field(id, input, false);
-        state.apply_input(&text_events, &input.keyboard.events);
+    if response.state.focused
+        && !disabled
+        && memory.claim_text_input_events(id)
+        && let Ok(events) = input.effective_text_events()
+    {
+        platform_requests.extend(state.apply_ordered_input(&events, id, TextEditMode::SingleLine));
     }
     let recipe = theme.text_field(ComponentState {
         hovered: response.state.hovered,
@@ -329,17 +329,12 @@ pub(crate) fn multi_line_text_field_with_text_layouts_and_caret_visibility(
         response.state.focused = true;
     }
     let mut platform_requests = text_input_platform_requests(id, rect, &response, memory);
-    if response.state.focused && !disabled {
-        apply_clipboard_shortcuts(id, state, input, &mut platform_requests);
-        let mut text_events = text_events_for_text_field(id, input, true);
-        if input.keyboard.events.iter().any(|event| {
-            event.state == KeyState::Pressed
-                && event.key == Key::Enter
-                && event.modifiers.is_empty()
-        }) {
-            text_events.push(TextInputEvent::Commit("\n".to_owned()));
-        }
-        state.apply_multiline_input(&text_events, &input.keyboard.events);
+    if response.state.focused
+        && !disabled
+        && memory.claim_text_input_events(id)
+        && let Ok(events) = input.effective_text_events()
+    {
+        platform_requests.extend(state.apply_ordered_input(&events, id, TextEditMode::MultiLine));
     }
     let recipe = theme.text_field(ComponentState {
         hovered: response.state.hovered,
