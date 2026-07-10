@@ -1,7 +1,36 @@
 use super::helpers::{
-    Point, Primitive, SemanticActionKind, SemanticRole, ShowcaseApp, ShowcasePage, click,
-    contains_text_in_order, count_primitives, count_semantic_role, has_text, semantic_node,
+    Point, Primitive, Rect, SemanticActionKind, SemanticRole, ShowcaseApp, ShowcasePage, Size,
+    UiInput, click, contains_text_in_order, count_primitives, count_semantic_role, frame_context,
+    has_text, semantic_node,
 };
+use kinetik_ui::{
+    core::{CornerRadius, FrameOutput, RectPrimitive, UiMemory, default_dark_theme},
+    widgets::Ui,
+};
+
+fn prior_frame_with_rects(count: usize) -> FrameOutput {
+    let mut output = FrameOutput::new();
+    for index in 0..count {
+        output.push_primitive(Primitive::Rect(RectPrimitive {
+            rect: Rect::new(index as f32, 0.0, 1.0, 1.0),
+            fill: None,
+            stroke: None,
+            radius: CornerRadius::all(0.0),
+        }));
+    }
+    output
+}
+
+fn primitive_texts(output: &FrameOutput) -> Vec<&str> {
+    output
+        .primitives
+        .iter()
+        .filter_map(|primitive| match primitive {
+            Primitive::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
 
 #[test]
 fn systems_palette_invokes_actions() {
@@ -24,6 +53,59 @@ fn systems_page_exposes_runtime_diagnostics() {
     );
 
     assert!(has_snapshot);
+}
+
+#[test]
+fn current_frame_diagnostics_runtime_snapshot_reads_ui_prefix() {
+    let mut app = ShowcaseApp::new();
+    app.output = prior_frame_with_rects(4);
+    let theme = default_dark_theme();
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::begin_frame(
+        frame_context(Size::new(1440.0, 900.0), UiInput::default()),
+        &mut memory,
+        &theme,
+    );
+    ui.label(Rect::new(0.0, 0.0, 80.0, 20.0), "current prefix");
+
+    assert_eq!(ui.output().primitives.len(), 1);
+
+    app.draw_runtime_snapshot(&mut ui, Rect::new(20.0, 20.0, 320.0, 188.0), true);
+    let output = ui.finish_output();
+    let texts = primitive_texts(&output);
+
+    assert!(texts.contains(&"Primitive count: 1"));
+    assert!(texts.contains(&"#0 Text"));
+    assert!(!texts.contains(&"Primitive count: 4"));
+    assert!(!texts.contains(&"#0 Rect"));
+}
+
+#[test]
+fn current_frame_diagnostics_chrome_badge_reads_ui_prefix() {
+    let mut app = ShowcaseApp::new();
+    app.output = prior_frame_with_rects(5);
+    let theme = default_dark_theme();
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::begin_frame(
+        frame_context(Size::new(1440.0, 900.0), UiInput::default()),
+        &mut memory,
+        &theme,
+    );
+    ui.label(Rect::new(0.0, 0.0, 80.0, 20.0), "current prefix A");
+    ui.label(Rect::new(0.0, 22.0, 80.0, 20.0), "current prefix B");
+
+    assert_eq!(ui.output().primitives.len(), 2);
+
+    app.chrome_status(&mut ui);
+    let output = ui.finish_output();
+    let texts = primitive_texts(&output);
+    let primitive_label = texts
+        .iter()
+        .position(|text| *text == "Primitives")
+        .expect("primitive status label");
+
+    assert_eq!(texts.get(primitive_label + 1), Some(&"2"));
+    assert!(!texts.contains(&"5"));
 }
 
 #[test]
