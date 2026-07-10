@@ -116,12 +116,13 @@ impl ShowcaseApp {
 
     pub(in crate::app) fn chrome_status(&self, ui: &mut Ui<'_>) {
         let viewport = rect_from_size(ui.viewport().logical_size);
+        let current_primitive_count = ui.output().primitives.len();
         if viewport.width >= 1200.0 {
             Self::status_badge(
                 ui,
                 Rect::new(viewport.width - 434.0, 12.0, 128.0, 28.0),
                 "Primitives",
-                &self.output.primitives.len().to_string(),
+                &current_primitive_count.to_string(),
                 rgb(82, 150, 132),
             );
             Self::status_badge(
