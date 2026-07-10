@@ -389,6 +389,12 @@ impl ShowcaseApp {
         snapshot: Rect,
         wide: bool,
     ) {
+        let current_primitive_count = ui.output().primitives.len();
+        let current_primitive_inspection = inspect_primitives(&ui.output().primitives)
+            .into_iter()
+            .take(if wide { 4 } else { 1 })
+            .collect::<Vec<_>>();
+
         rect(ui, snapshot, rgb(18, 18, 20), Some(rgb(58, 58, 62)));
         text(
             ui,
@@ -402,7 +408,7 @@ impl ShowcaseApp {
             ui,
             snapshot.x + 20.0,
             snapshot.y + 58.0,
-            &format!("Primitive count: {}", self.output.primitives.len()),
+            &format!("Primitive count: {current_primitive_count}"),
             10.0,
             rgb(190, 190, 194),
         );
@@ -422,11 +428,7 @@ impl ShowcaseApp {
             10.0,
             rgb(190, 190, 194),
         );
-        for (row, primitive) in inspect_primitives(&self.output.primitives)
-            .into_iter()
-            .take(if wide { 4 } else { 1 })
-            .enumerate()
-        {
+        for (row, primitive) in current_primitive_inspection.into_iter().enumerate() {
             text(
                 ui,
                 snapshot.x + 20.0,
