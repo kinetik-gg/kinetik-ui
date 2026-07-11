@@ -272,3 +272,25 @@ fn second_same_owner_claim_does_not_replay_modifier_actions() {
     assert_eq!(first.actions[0].modifiers, SHIFT);
     assert!(second.actions.is_empty());
 }
+
+#[test]
+fn different_owner_claim_retains_per_owner_compatibility() {
+    let mut harness = UiTestHarness::new();
+    harness.set_modifiers(SHIFT);
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Primary);
+
+    let ((missed, hit), _) = harness.run_frame(|ui| {
+        let missed_id = ui.id("missed-selection");
+        let missed =
+            ui.captured_selection_gesture(missed_id, Rect::new(200.0, 0.0, 40.0, 40.0), false);
+        let hit_id = ui.id("hit-selection");
+        let hit = ui.captured_selection_gesture(hit_id, FULL, false);
+        (missed, hit)
+    });
+
+    assert!(missed.actions.is_empty());
+    assert_eq!(hit.actions.len(), 1);
+    assert_eq!(hit.actions[0].phase, SelectionGesturePhase::Press);
+    assert_eq!(hit.actions[0].modifiers, SHIFT);
+}

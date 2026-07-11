@@ -837,7 +837,8 @@ an accepted provisional alpha source break with a changelog migration note.
 
 #### Tests run and results
 
-- New selection-modifier conformance: 10/10 passed.
+- New selection-modifier conformance: 11/11 passed after a depth-one
+  evidence-only remedy pinned different-owner same-frame claim compatibility.
 - Existing drag-threshold conformance: 46/46 passed.
 - Facade public API surface: 5/5 passed.
 - The complete six-command workspace gate passed; independent exact-SHA audit,
