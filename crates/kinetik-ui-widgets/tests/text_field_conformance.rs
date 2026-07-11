@@ -281,6 +281,8 @@ fn assert_f32_slice_eq(actual: &[f32], expected: &[f32]) {
 
 #[path = "text_field_conformance/access_modes.rs"]
 mod access_modes;
+#[path = "text_field_conformance/b4_wrappers.rs"]
+mod b4_wrappers;
 #[path = "text_field_conformance/desktop_selection.rs"]
 mod desktop_selection;
 #[path = "text_field_conformance/focus_and_clipboard.rs"]

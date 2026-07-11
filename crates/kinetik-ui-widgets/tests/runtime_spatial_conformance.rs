@@ -5,7 +5,11 @@ use kinetik_ui_core::{
     WidgetId, default_dark_theme, inspect_primitives,
 };
 use kinetik_ui_text::TextEditState;
-use kinetik_ui_widgets::{ItemId, PropertyGridLayout, PropertyGridRow, TreeLayout, TreeRow, Ui};
+use kinetik_ui_widgets::{
+    ItemId, NumericScrubInputConfig, PathFieldConfig, PropertyGridLayout, PropertyGridRow,
+    TreeLayout, TreeRow, Ui, VectorComponentLayout, VectorScrubInputConfig,
+    vector3_component_rects,
+};
 
 fn assert_close(actual: f32, expected: f32) {
     assert!((actual - expected).abs() < 1.0e-4, "{actual} != {expected}");
@@ -188,6 +192,153 @@ fn nested_scroll_projects_focused_text_semantics_and_ime_to_one_screen_rect() {
             _ => None,
         });
     assert_eq!(ime_rect, Some(expected_caret_screen));
+}
+
+#[test]
+fn nested_scroll_projects_vector_component_caret_once_and_clips_it() {
+    let root = WidgetId::from_key("root");
+    let scroll_id = root.child("wrapper-scroll");
+    let offset = Vec2::new(10.0, 20.0);
+    let outer_rect = Rect::new(0.0, 0.0, 160.0, 50.0);
+    let vector_rect = Rect::new(20.0, 30.0, 220.0, 24.0);
+    let component_rects = vector3_component_rects(vector_rect, VectorComponentLayout::default());
+    let local_target = component_rects[0].value_rect.center();
+    let screen_target = Point::new(local_target.x - offset.x, local_target.y - offset.y);
+    let input = UiInput {
+        pointer: PointerInput {
+            position: Some(screen_target),
+            primary: PointerButtonState::new(false, true, true),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    };
+    let mut memory = UiMemory::new();
+    memory.set_scroll_offset(scroll_id, offset);
+    let theme = default_dark_theme();
+    let mut values = [1.0, 2.0, 3.0];
+    let mut states = [
+        TextEditState::new("1"),
+        TextEditState::new("2"),
+        TextEditState::new("3"),
+    ];
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+
+    let vector = ui.scroll_area(
+        "wrapper-scroll",
+        outer_rect,
+        Size::new(260.0, 100.0),
+        false,
+        |ui, retained| {
+            assert_eq!(retained, offset);
+            ui.vector3_scrub_input(
+                "vector",
+                vector_rect,
+                "Position",
+                &mut values,
+                &mut states,
+                VectorScrubInputConfig::new(NumericScrubInputConfig::default()),
+            )
+        },
+    );
+    let frame = ui.finish_output();
+
+    assert!(!vector.inner.components[0].scrubbed);
+    let caret = frame
+        .platform_requests
+        .iter()
+        .find_map(|request| match request {
+            PlatformRequest::StartTextInput { rect: Some(rect) } => Some(*rect),
+            _ => None,
+        })
+        .expect("nested vector component starts IME");
+    let projected_field = Rect::new(
+        component_rects[0].value_rect.x - offset.x,
+        component_rects[0].value_rect.y - offset.y,
+        component_rects[0].value_rect.width,
+        component_rects[0].value_rect.height,
+    );
+    assert_close(caret.width, 1.0);
+    assert_ne!(caret, projected_field);
+    assert!(outer_rect.contains_point(caret.center()));
+    assert!(projected_field.contains_point(caret.center()));
+    assert!(frame.warnings.is_empty());
+}
+
+#[test]
+fn nested_scroll_projects_search_numeric_and_path_child_carets_once() {
+    let root = WidgetId::from_key("root");
+    let outer_rect = Rect::new(0.0, 0.0, 100.0, 40.0);
+    let field_rect = Rect::new(20.0, 20.0, 140.0, 24.0);
+    let offset = Vec2::new(10.0, 8.0);
+    let theme = default_dark_theme();
+
+    for kind in ["search", "numeric", "path"] {
+        let scroll_key = format!("{kind}-scroll");
+        let scroll_id = root.child(&scroll_key);
+        let scope = root.child(("scroll_area_content", scroll_id.raw()));
+        let field_id = if kind == "path" {
+            scope.child(kind).child("text")
+        } else {
+            scope.child(kind)
+        };
+        let mut memory = UiMemory::new();
+        memory.set_scroll_offset(scroll_id, offset);
+        memory.focus(field_id);
+        let input = UiInput::default();
+        let mut state = TextEditState::new("long wrapper text");
+        state.set_caret(0);
+        let mut ui = Ui::new(&input, &mut memory, &theme);
+        ui.scroll_area(
+            &scroll_key,
+            outer_rect,
+            Size::new(180.0, 80.0),
+            false,
+            |ui, retained| {
+                assert_eq!(retained, offset);
+                match kind {
+                    "search" => {
+                        let _ = ui.search_field(kind, field_rect, &mut state, false);
+                    }
+                    "numeric" => {
+                        let _ = ui.numeric_input(kind, field_rect, &mut state, false);
+                    }
+                    "path" => {
+                        let _ = ui.path_field(
+                            kind,
+                            field_rect,
+                            "Source",
+                            &mut state,
+                            PathFieldConfig::new().browse(false),
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+            },
+        );
+        let frame = ui.finish_output();
+        assert_eq!(memory.focused(), Some(field_id));
+        let carets = frame
+            .platform_requests
+            .iter()
+            .filter_map(|request| match request {
+                PlatformRequest::StartTextInput { rect: Some(rect) } => Some(*rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(carets.len(), 1, "{kind}");
+        let caret = carets[0];
+        let projected_field = Rect::new(
+            field_rect.x - offset.x,
+            field_rect.y - offset.y,
+            field_rect.width,
+            field_rect.height,
+        );
+        assert_close(caret.width, 1.0);
+        assert_ne!(caret, projected_field);
+        assert!(outer_rect.contains_point(caret.center()));
+        assert!(projected_field.contains_point(caret.center()));
+        assert!(frame.warnings.is_empty());
+    }
 }
 
 #[test]

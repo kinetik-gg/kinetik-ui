@@ -6,7 +6,10 @@ use super::{
     text_field_layout, text_field_semantics, text_input_platform_requests, text_line_fragments,
     with_hover_cursor, with_response_state,
 };
-use kinetik_ui_core::{RepaintRequest, TextInputOwnerMode, Ui as CoreUi};
+use kinetik_ui_core::{
+    CapturedDomainDragGesture, DomainDragGesturePhase, RepaintRequest, TextInputOwnerMode,
+    Ui as CoreUi,
+};
 use kinetik_ui_text::TextViewport;
 
 use super::semantics::text_field_semantics_with_access;
@@ -61,6 +64,63 @@ pub(crate) fn text_field_with_access_runtime(
     text_layouts: Option<&mut TextLayoutStore>,
     caret_visible: bool,
 ) -> (TextFieldOutput, OrderedTextInputResult) {
+    let (field, ordered, _) = text_field_with_access_runtime_metadata(
+        runtime,
+        id,
+        rect,
+        state,
+        theme,
+        access,
+        text_layouts,
+        caret_visible,
+    );
+    (field, ordered)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn text_field_with_access_runtime_metadata(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> (
+    TextFieldOutput,
+    OrderedTextInputResult,
+    TextFieldPointerMetadata,
+) {
+    text_field_with_access_runtime_metadata_and_fence(
+        runtime,
+        id,
+        rect,
+        state,
+        theme,
+        access,
+        text_layouts,
+        caret_visible,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn text_field_with_access_runtime_metadata_and_fence(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+    interaction_fenced: bool,
+) -> (
+    TextFieldOutput,
+    OrderedTextInputResult,
+    TextFieldPointerMetadata,
+) {
     let result = canonical_text_field_runtime(
         runtime,
         id,
@@ -72,6 +132,71 @@ pub(crate) fn text_field_with_access_runtime(
         caret_visible,
         TextFieldKind::SingleLine,
         TextEditMode::SingleLine,
+        interaction_fenced,
+        TextFieldPointerSource::Selection,
+        |_, _| true,
+    );
+    let field = TextFieldOutput {
+        widget: result.widget,
+        changed: result.changed,
+    };
+    (field, result.ordered, result.pointer)
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct TextFieldPointerMetadata {
+    pub(crate) accepted_double_click: bool,
+    pub(crate) domain_drag_modifiers: Option<kinetik_ui_core::Modifiers>,
+    pub(crate) transaction_allowed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RawTextPointerAction {
+    ordinal: Option<usize>,
+    phase: TextPointerPhase,
+    position: Option<kinetik_ui_core::Point>,
+    click_count: u8,
+    modifiers: kinetik_ui_core::Modifiers,
+    release_clicked: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum TextFieldPointerSource {
+    Selection,
+    DomainDrag(CapturedDomainDragGesture),
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn text_field_with_pointer_runtime(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+    pointer_source: TextFieldPointerSource,
+    replay_guard: impl FnOnce(&TextFieldPointerMetadata, &TextEditState) -> bool,
+) -> (
+    TextFieldOutput,
+    OrderedTextInputResult,
+    TextFieldPointerMetadata,
+) {
+    let result = canonical_text_field_runtime(
+        runtime,
+        id,
+        rect,
+        state,
+        theme,
+        access,
+        text_layouts,
+        caret_visible,
+        TextFieldKind::SingleLine,
+        TextEditMode::SingleLine,
+        false,
+        pointer_source,
+        replay_guard,
     );
     (
         TextFieldOutput {
@@ -79,6 +204,7 @@ pub(crate) fn text_field_with_access_runtime(
             changed: result.changed,
         },
         result.ordered,
+        result.pointer,
     )
 }
 
@@ -309,6 +435,9 @@ pub(crate) fn multi_line_text_field_with_access_runtime(
         caret_visible,
         TextFieldKind::WrappedMultiLine,
         TextEditMode::MultiLine,
+        false,
+        TextFieldPointerSource::Selection,
+        |_, _| true,
     );
     MultiLineTextFieldOutput {
         widget: result.widget,
@@ -541,6 +670,7 @@ struct CanonicalTextFieldResult {
     widget: WidgetOutput,
     changed: bool,
     ordered: OrderedTextInputResult,
+    pointer: TextFieldPointerMetadata,
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -555,6 +685,9 @@ fn canonical_text_field_runtime(
     caret_visible: bool,
     kind: TextFieldKind,
     edit_mode: TextEditMode,
+    interaction_fenced: bool,
+    pointer_source: TextFieldPointerSource,
+    replay_guard: impl FnOnce(&TextFieldPointerMetadata, &TextEditState) -> bool,
 ) -> CanonicalTextFieldResult {
     if access == TextFieldAccess::ReadOnly && state.composition.is_some() {
         let _ = state.apply_read_only_ordered_input(&[], edit_mode);
@@ -564,8 +697,60 @@ fn canonical_text_field_runtime(
     let entry_selection_anchor = state.selection.anchor;
     let retained_gesture_anchor = runtime.memory().selection_gesture_anchor(id);
     let retained_offset = runtime.memory().scroll_offset(id);
-    let gesture = runtime.captured_selection_gesture(id, rect, access.is_disabled());
-    let mut response = gesture.response;
+    let (mut response, raw_pointer_actions, domain_drag_source) = match pointer_source {
+        TextFieldPointerSource::Selection => {
+            let (gesture, clicked_release_ordinals) = runtime
+                .captured_selection_gesture_with_clicked_releases(
+                    id,
+                    rect,
+                    access.is_disabled() || interaction_fenced,
+                );
+            let mut actions = gesture
+                .actions
+                .into_iter()
+                .map(|action| RawTextPointerAction {
+                    ordinal: action.ordinal,
+                    phase: TextPointerPhase::from(action.phase),
+                    position: action.position,
+                    click_count: action.click_count,
+                    modifiers: action.modifiers,
+                    release_clicked: false,
+                })
+                .collect::<Vec<_>>();
+            attach_clicked_release_provenance(&mut actions, &clicked_release_ordinals);
+            (gesture.response, actions, false)
+        }
+        TextFieldPointerSource::DomainDrag(gesture) => {
+            let mut actions = Vec::with_capacity(gesture.actions.len() + 1);
+            for action in gesture.actions {
+                let phase = match action.phase {
+                    DomainDragGesturePhase::Press => TextPointerPhase::OwnershipPress,
+                    DomainDragGesturePhase::Move => TextPointerPhase::OwnershipMove,
+                    DomainDragGesturePhase::Release => TextPointerPhase::OwnershipRelease,
+                    DomainDragGesturePhase::Cancel => TextPointerPhase::OwnershipCancel,
+                };
+                actions.push(RawTextPointerAction {
+                    ordinal: action.ordinal,
+                    phase,
+                    position: action.position,
+                    click_count: action.click_count,
+                    modifiers: action.modifiers,
+                    release_clicked: action.release_clicked,
+                });
+                if action.phase == DomainDragGesturePhase::Release && action.release_clicked {
+                    actions.push(RawTextPointerAction {
+                        ordinal: action.ordinal,
+                        phase: TextPointerPhase::PlaceCaret,
+                        position: action.position,
+                        click_count: action.click_count,
+                        modifiers: action.modifiers,
+                        release_clicked: true,
+                    });
+                }
+            }
+            (gesture.response, actions, true)
+        }
+    };
     let entry_recipe = theme.text_field(ComponentState {
         hovered: response.state.hovered,
         pressed: response.state.pressed,
@@ -581,17 +766,17 @@ fn canonical_text_field_runtime(
         retained_offset,
         text_layouts.as_deref_mut(),
     );
-    let mut pointer_actions = gesture
-        .actions
+    let mut pointer_actions = raw_pointer_actions
         .into_iter()
         .map(|action| ResolvedTextPointerAction {
             ordinal: action.ordinal,
-            phase: TextPointerPhase::from(action.phase),
+            phase: action.phase,
             model_offset: action.position.map(|position| {
                 entry_geometry.model_offset_at_with_layout(position, text_layouts.as_deref())
             }),
             click_count: action.click_count,
             modifiers: action.modifiers,
+            release_clicked: action.release_clicked,
         })
         .collect::<Vec<_>>();
 
@@ -604,7 +789,7 @@ fn canonical_text_field_runtime(
             && pointer_actions
                 .iter()
                 .filter(|action| {
-                    action.phase == TextPointerPhase::Press
+                    is_pointer_ownership_press(action.phase)
                         && action.ordinal == Some(final_ordinal)
                         && action.model_offset.is_some()
                 })
@@ -614,7 +799,7 @@ fn canonical_text_field_runtime(
         pointer_actions
             .iter()
             .filter(|action| {
-                action.phase == TextPointerPhase::Press
+                is_pointer_ownership_press(action.phase)
                     && action.ordinal.is_none()
                     && action.model_offset.is_some()
             })
@@ -623,6 +808,16 @@ fn canonical_text_field_runtime(
     } else {
         false
     };
+
+    let domain_drag_aggregate_authoritative = domain_drag_source
+        && response.dragged
+        && if let Some(final_ordinal) = final_root_press {
+            owns_press && discarded_domain_trace_cannot_drag(&pointer_actions, final_ordinal)
+        } else if legacy_snapshot_press {
+            owns_press
+        } else {
+            true
+        };
 
     if let Some(final_ordinal) = final_root_press {
         if owns_press {
@@ -638,11 +833,47 @@ fn canonical_text_field_runtime(
         pointer_actions.clear();
     }
 
-    if access.is_disabled() || (root_press_present && !owns_press) {
+    let accepted_place_caret = pointer_actions.iter().any(|action| {
+        action.phase == TextPointerPhase::PlaceCaret && action.model_offset.is_some()
+    });
+    let accepted_double_click = pointer_actions.iter().any(|action| {
+        action.release_clicked
+            && matches!(
+                action.phase,
+                TextPointerPhase::Release | TextPointerPhase::OwnershipRelease
+            )
+            && action.model_offset.is_some()
+            && action.click_count >= 2
+    });
+    let domain_drag_modifiers = domain_drag_aggregate_authoritative.then(|| {
+        pointer_actions
+            .iter()
+            .rev()
+            .find(|action| action.phase == TextPointerPhase::OwnershipMove)
+            .or_else(|| {
+                pointer_actions
+                    .iter()
+                    .rev()
+                    .find(|action| action.phase == TextPointerPhase::OwnershipRelease)
+            })
+            .map(|action| action.modifiers)
+    });
+    let mut pointer_metadata = TextFieldPointerMetadata {
+        accepted_double_click,
+        domain_drag_modifiers: domain_drag_modifiers.flatten(),
+        transaction_allowed: true,
+    };
+    let pointer_activates = if domain_drag_source {
+        accepted_place_caret
+    } else {
+        owns_press
+    };
+
+    if access.is_disabled() || interaction_fenced || (root_press_present && !owns_press) {
         if runtime.memory().is_focused(id) {
             runtime.memory_mut().clear_focus();
         }
-    } else if owns_press {
+    } else if pointer_activates {
         runtime.memory_mut().focus(id);
     }
 
@@ -650,30 +881,81 @@ fn canonical_text_field_runtime(
     let prepared = access.owner_mode().is_some_and(|mode| {
         runtime.memory().is_focused(id) && runtime.prepare_text_input_owner(id, mode)
     });
-    let ordered_events = if prepared {
-        runtime
-            .claim_ordered_text_input_events(id)
-            .ok()
-            .flatten()
-            .unwrap_or_default()
+    let requires_transaction_preview =
+        domain_drag_source && response.dragged && pointer_metadata.domain_drag_modifiers.is_some();
+    let (replay_enabled, replay) = if access.is_disabled() || interaction_fenced {
+        (false, TextReplayResult::default())
+    } else if requires_transaction_preview {
+        let preview_events = if prepared {
+            runtime
+                .preview_ordered_text_input_events(id)
+                .ok()
+                .flatten()
+                .map(<[_]>::to_vec)
+        } else {
+            Some(Vec::new())
+        };
+        if let Some(preview_events) = preview_events {
+            let mut preview_state = state.clone();
+            let preview_replay = replay_text_field_events(
+                &mut preview_state,
+                access,
+                edit_mode,
+                id,
+                entry_accepts_input,
+                entry_selection_anchor,
+                retained_gesture_anchor,
+                pointer_actions.clone(),
+                preview_events.clone(),
+            );
+            if replay_guard(&pointer_metadata, &preview_state) {
+                let claim_matches = !prepared
+                    || runtime
+                        .claim_ordered_text_input_events(id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|claimed| claimed == preview_events);
+                if claim_matches {
+                    *state = preview_state;
+                    (true, preview_replay)
+                } else {
+                    (false, TextReplayResult::default())
+                }
+            } else {
+                (false, TextReplayResult::default())
+            }
+        } else {
+            (false, TextReplayResult::default())
+        }
     } else {
-        Vec::new()
+        let replay_enabled = replay_guard(&pointer_metadata, state);
+        let ordered_events = if replay_enabled && prepared {
+            runtime
+                .claim_ordered_text_input_events(id)
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let replay = if replay_enabled {
+            replay_text_field_events(
+                state,
+                access,
+                edit_mode,
+                id,
+                entry_accepts_input,
+                entry_selection_anchor,
+                retained_gesture_anchor,
+                pointer_actions,
+                ordered_events,
+            )
+        } else {
+            TextReplayResult::default()
+        };
+        (replay_enabled, replay)
     };
-    let replay = if access.is_disabled() {
-        TextReplayResult::default()
-    } else {
-        replay_text_field_events(
-            state,
-            access,
-            edit_mode,
-            id,
-            entry_accepts_input,
-            entry_selection_anchor,
-            retained_gesture_anchor,
-            pointer_actions,
-            ordered_events,
-        )
-    };
+    pointer_metadata.transaction_allowed = replay_enabled;
     if let Some(anchor) = replay.accepted_gesture_anchor {
         let _ = runtime
             .memory_mut()
@@ -695,7 +977,7 @@ fn canonical_text_field_runtime(
     let geometry =
         TextFieldGeometry::build(rect, state, &recipe, kind, retained_offset, text_layouts);
 
-    if !access.is_disabled() {
+    if !access.is_disabled() && replay_enabled {
         let wheel = text_wheel_delta(runtime.input(), runtime.memory(), id, rect, kind, false);
         let viewport = geometry.viewport();
         let mut candidate = viewport.scroll_by(wheel);
@@ -715,6 +997,7 @@ fn canonical_text_field_runtime(
     }
 
     if access == TextFieldAccess::Editable
+        && replay_enabled
         && response.state.focused
         && !replay.focus_lost
         && let Some(caret) = geometry.visible_caret_rect()
@@ -722,12 +1005,25 @@ fn canonical_text_field_runtime(
         let _ = runtime.publish_text_input_rect(id, caret);
     }
 
-    let primitives = geometry.primitives(
-        id,
-        response.state.focused,
-        !access.is_disabled(),
-        caret_visible,
-    );
+    let content_has_area = rect.width.is_finite()
+        && rect.height.is_finite()
+        && rect.width > recipe.padding_x * 2.0
+        && rect.height > recipe.padding_y * 2.0;
+    let primitives = if content_has_area {
+        geometry.primitives(
+            id,
+            response.state.focused,
+            !access.is_disabled(),
+            caret_visible,
+        )
+    } else {
+        vec![Primitive::Rect(RectPrimitive {
+            rect,
+            fill: Some(recipe.background),
+            stroke: Some(recipe.border),
+            radius: recipe.radius,
+        })]
+    };
     let widget = with_hover_cursor(
         WidgetOutput::new(Some(response), primitives)
             .with_semantic(with_response_state(
@@ -749,6 +1045,72 @@ fn canonical_text_field_runtime(
         widget,
         changed: before != state.text,
         ordered: replay.ordered,
+        pointer: pointer_metadata,
+    }
+}
+
+fn discarded_domain_trace_cannot_drag(
+    actions: &[ResolvedTextPointerAction],
+    final_ordinal: usize,
+) -> bool {
+    let discarded = actions
+        .iter()
+        .filter(|action| {
+            action
+                .ordinal
+                .is_some_and(|ordinal| ordinal < final_ordinal)
+        })
+        .collect::<Vec<_>>();
+    if discarded.is_empty() {
+        return true;
+    }
+
+    let mut open = !is_pointer_ownership_press(discarded[0].phase);
+    for action in &discarded {
+        match action.phase {
+            phase if is_pointer_ownership_press(phase) => {
+                if open {
+                    return false;
+                }
+                open = true;
+            }
+            TextPointerPhase::OwnershipMove => open = true,
+            TextPointerPhase::OwnershipRelease => {
+                if !action.release_clicked {
+                    return false;
+                }
+                open = false;
+            }
+            TextPointerPhase::OwnershipCancel => return false,
+            TextPointerPhase::PlaceCaret
+            | TextPointerPhase::Press
+            | TextPointerPhase::Move
+            | TextPointerPhase::Release
+            | TextPointerPhase::Cancel
+            | TextPointerPhase::OwnershipPress => {}
+        }
+    }
+    !open
+}
+
+fn attach_clicked_release_provenance(
+    actions: &mut [RawTextPointerAction],
+    clicked_release_ordinals: &[Option<usize>],
+) {
+    for clicked_ordinal in clicked_release_ordinals {
+        let mut matching = actions
+            .iter()
+            .enumerate()
+            .filter(|(_, action)| {
+                action.phase == TextPointerPhase::Release && action.ordinal == *clicked_ordinal
+            })
+            .map(|(index, _)| index);
+        let Some(index) = matching.next() else {
+            continue;
+        };
+        if matching.next().is_none() {
+            actions[index].release_clicked = true;
+        }
     }
 }
 
@@ -763,10 +1125,35 @@ fn final_primary_press_is_unambiguous(
             .is_some_and(|ordinal| ordinal < final_ordinal)
     }) {
         match action.phase {
-            TextPointerPhase::Press => primary_open = true,
-            TextPointerPhase::Release | TextPointerPhase::Cancel => primary_open = false,
-            TextPointerPhase::Move => {}
+            phase if is_pointer_ownership_press(phase) => primary_open = true,
+            phase if is_pointer_ownership_end(phase) => primary_open = false,
+            TextPointerPhase::Move
+            | TextPointerPhase::OwnershipMove
+            | TextPointerPhase::PlaceCaret => {}
+            TextPointerPhase::Press
+            | TextPointerPhase::Release
+            | TextPointerPhase::Cancel
+            | TextPointerPhase::OwnershipPress
+            | TextPointerPhase::OwnershipRelease
+            | TextPointerPhase::OwnershipCancel => unreachable!(),
         }
     }
     !primary_open
+}
+
+const fn is_pointer_ownership_press(phase: TextPointerPhase) -> bool {
+    matches!(
+        phase,
+        TextPointerPhase::Press | TextPointerPhase::OwnershipPress
+    )
+}
+
+const fn is_pointer_ownership_end(phase: TextPointerPhase) -> bool {
+    matches!(
+        phase,
+        TextPointerPhase::Release
+            | TextPointerPhase::Cancel
+            | TextPointerPhase::OwnershipRelease
+            | TextPointerPhase::OwnershipCancel
+    )
 }
