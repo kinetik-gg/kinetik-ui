@@ -6,7 +6,7 @@ use crate::{
     InputStreamConflict, LivenessRegistry, LivenessTargetId, LivenessToken, LivenessUpdateStatus,
     Modifiers, ObserverDelivery, ObserverDrain, ObserverNotification, ObserverNotificationId,
     ObserverPublishStatus, ObserverRegistry, ObserverSubscriptionHandle, ObserverSubscriptionId,
-    Point, UiInput, UiInputEvent, Vec2, WidgetId,
+    Point, Response, UiInput, UiInputEvent, Vec2, WidgetId,
 };
 
 /// Frame-local routing decision for one pointer event class.
@@ -114,6 +114,8 @@ pub struct UiMemory {
     scoped_pointer_cleanup_events: HashSet<usize>,
     scoped_pointer_event_ordinals: Vec<usize>,
     selection_gesture_claims: HashSet<WidgetId>,
+    domain_drag_frame_open: bool,
+    domain_drag_responses: HashMap<WidgetId, Response>,
     /// Retained primary press origin and threshold latch.
     pointer_gesture: Option<PointerGesture>,
     /// Widget currently acting as an active drag source.
@@ -163,6 +165,8 @@ impl UiMemory {
         self.scoped_pointer_cleanup_events.clear();
         self.scoped_pointer_event_ordinals.clear();
         self.selection_gesture_claims.clear();
+        self.domain_drag_frame_open = true;
+        self.domain_drag_responses.clear();
         self.text_input_event_claim = None;
         self.root_input_validation = RootInputValidation::Unvalidated;
         self.liveness.begin_frame();
@@ -171,6 +175,8 @@ impl UiMemory {
 
     /// Removes liveness targets not seen during the current frame.
     pub(crate) fn end_frame(&mut self) {
+        self.domain_drag_frame_open = false;
+        self.domain_drag_responses.clear();
         self.scroll_offsets
             .extend(std::mem::take(&mut self.pending_scroll_offsets));
         self.liveness.end_frame();
@@ -562,6 +568,18 @@ impl UiMemory {
 
     pub(crate) fn claim_selection_gesture(&mut self, owner: WidgetId) -> bool {
         self.selection_gesture_claims.insert(owner)
+    }
+
+    pub(crate) fn cached_domain_drag_response(&self, owner: WidgetId) -> Option<Response> {
+        self.domain_drag_frame_open
+            .then(|| self.domain_drag_responses.get(&owner).copied())
+            .flatten()
+    }
+
+    pub(crate) fn cache_domain_drag_response(&mut self, owner: WidgetId, response: Response) {
+        if self.domain_drag_frame_open {
+            self.domain_drag_responses.entry(owner).or_insert(response);
+        }
     }
 
     pub(crate) fn install_scoped_pointer_events(

@@ -49,6 +49,31 @@ fn captured_selection_modifiers(
     action.modifiers
 }
 
+fn captured_domain_drag_method(
+    ui: &mut kinetik_ui::core::Ui<'_>,
+    id: kinetik_ui::core::WidgetId,
+    rect: kinetik_ui::core::Rect,
+    disabled: bool,
+) -> kinetik_ui::core::CapturedDomainDragGesture {
+    ui.captured_domain_drag_gesture(id, rect, disabled)
+}
+
+fn captured_domain_drag_action(
+    action: &kinetik_ui::core::DomainDragGestureAction,
+) -> (
+    Option<usize>,
+    kinetik_ui::core::DomainDragGesturePhase,
+    kinetik_ui::core::Modifiers,
+    bool,
+) {
+    (
+        action.ordinal,
+        action.phase,
+        action.modifiers,
+        action.release_clicked,
+    )
+}
+
 fn ordered_text_input_method(
     ui: &mut kinetik_ui::core::Ui<'_>,
     id: kinetik_ui::core::WidgetId,
@@ -66,7 +91,10 @@ fn facade_root_and_feature_qualified_paths_compile() {
     let _ = UiState::new();
     let paths = [
         std::any::type_name::<core::UiInput>(),
+        std::any::type_name::<core::CapturedDomainDragGesture>(),
         std::any::type_name::<core::CapturedSelectionGesture>(),
+        std::any::type_name::<core::DomainDragGestureAction>(),
+        std::any::type_name::<core::DomainDragGesturePhase>(),
         std::any::type_name::<core::OrderedTextInputEvent>(),
         std::any::type_name::<core::SelectionGestureAction>(),
         std::any::type_name::<core::SelectionGesturePhase>(),
@@ -78,6 +106,15 @@ fn facade_root_and_feature_qualified_paths_compile() {
 
     let _ = captured_selection_method;
     let _ = captured_selection_modifiers;
+    let _ = captured_domain_drag_method;
+    let _ = captured_domain_drag_action;
+    let phases = [
+        core::DomainDragGesturePhase::Press,
+        core::DomainDragGesturePhase::Move,
+        core::DomainDragGesturePhase::Release,
+        core::DomainDragGesturePhase::Cancel,
+    ];
+    assert_eq!(phases.len(), 4);
     let _ = ordered_text_input_method;
 
     #[cfg(feature = "platform-winit")]

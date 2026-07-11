@@ -280,6 +280,17 @@ Selection is isolated and cannot become or release a domain drag. Legacy
 snapshot input starts a fresh press at the current position and does not
 reinterpret that frame's aggregate pointer delta as post-press movement.
 
+`Ui::captured_domain_drag_gesture` returns that single authoritative response
+plus ordered DomainDrag Press, Move, Release, and Cancel actions. A Release
+action's `release_clicked` flag is true only when that exact causal release
+produced a pointer click; aggregate `Response.clicked` alone is insufficient
+when a frame contains multiple transactions. `draggable`,
+`draggable_transformed`, and the captured runtime method share a per-widget
+first claim inside an explicit memory frame. Later observations return the
+exact first response without resolving or mutating pointer/drop state again,
+and captured actions are delivered once. The cache closes at runtime frame end;
+unframed standalone primitives retain uncached compatibility behavior.
+
 Text selection uses `Ui::captured_selection_gesture`, a visually neutral
 capture seam that returns the common `Response` plus ordered Press, Move,
 Release, and Cancel actions. Canonical actions retain their original root event

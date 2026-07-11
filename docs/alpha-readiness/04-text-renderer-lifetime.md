@@ -29,6 +29,13 @@ ordered selection seam before either `ASYNC-01` or `TEXT-01` edits the shared
 memory/runtime files. It is not a new audit roadmap ID and does not close any
 desktop editing finding by itself.
 
+`TEXT-01-PRE2` is the following root-owned prerequisite. It exposes the same
+single-pass DomainDrag response as causal root-ordinal actions, including the
+exact release that clicked, while keeping action metadata separate from
+canonical drop authority. `ASYNC-01` and `TEXT-01` remain serialized behind its
+accepted merge because all three touch shared memory/runtime and campaign
+evidence files.
+
 ## Ownership And Overlap
 
 `ASYNC-01` shares Z1 with runtime ownership and cannot precede `RT-03`. `TEXT-01/02/03` and `REND-02` share Z4 and must not edit the same text files concurrently. `REND-01/02` share Z5. Color space and premultiplication are one root-owned cross-layer policy; no Vello leaf task may choose local semantics. Halt if Unicode work requires an unplanned shaping-engine replacement.
