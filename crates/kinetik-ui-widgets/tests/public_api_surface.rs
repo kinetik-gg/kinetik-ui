@@ -70,3 +70,36 @@ fn modules_remain_available_for_advanced_apis() {
     assert_eq!(target, widgets::node_graph::NodeGraphContextTarget::Canvas);
     assert!(viewport_tool.active);
 }
+
+#[test]
+fn root_exports_access_aware_text_field_api_without_expanding_prelude_usage() {
+    fn assert_traits<T: core::fmt::Debug + Clone + Copy + PartialEq + Eq + core::hash::Hash>() {}
+    assert_traits::<widgets::TextFieldAccess>();
+
+    let theme = default_dark_theme();
+    let input = UiInput::default();
+    let mut memory = UiMemory::new();
+    let mut single = kinetik_ui_text::TextEditState::new("single");
+    let mut multi = kinetik_ui_text::TextEditState::new("multi\nline");
+    let mut ui = widgets::Ui::new(&input, &mut memory, &theme);
+    let single_output = ui.text_field_with_access(
+        "single",
+        Rect::new(0.0, 0.0, 120.0, 24.0),
+        &mut single,
+        widgets::TextFieldAccess::ReadOnly,
+    );
+    let multi_output = ui.multi_line_text_field_with_access(
+        "multi",
+        Rect::new(0.0, 28.0, 120.0, 60.0),
+        &mut multi,
+        widgets::TextFieldAccess::Disabled,
+    );
+    let _ = ui.finish_output();
+
+    assert!(!single_output.changed);
+    assert!(!multi_output.changed);
+    assert_eq!(
+        widgets::TextFieldAccess::Editable,
+        widgets::TextFieldAccess::Editable
+    );
+}

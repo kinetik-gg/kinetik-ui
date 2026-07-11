@@ -54,9 +54,9 @@ pub use components::{
     IconGraphic, IconLibrary, IconPath, MultiLineTextFieldOutput, NumericInputDraft,
     NumericInputOutput, NumericInputPolicy, NumericScrubInputConfig, NumericScrubInputOutput,
     PanelFrame, PathFieldConfig, PathFieldOutput, SearchFieldOutput, SelectFieldConfig,
-    SelectFieldOutput, SliderStep, TextFieldOutput, VectorScrubInputConfig, VectorScrubInputOutput,
-    WidgetOutput, asset_slot_field, button, button_semantics, checkbox, checkbox_semantics,
-    checkbox_with_label, checkbox_with_label_target, choice_label_target_rect,
+    SelectFieldOutput, SliderStep, TextFieldAccess, TextFieldOutput, VectorScrubInputConfig,
+    VectorScrubInputOutput, WidgetOutput, asset_slot_field, button, button_semantics, checkbox,
+    checkbox_semantics, checkbox_with_label, checkbox_with_label_target, choice_label_target_rect,
     classify_numeric_input_draft, color_field, icon_button, icon_button_semantics,
     icon_button_with_label, icon_button_with_library, image, image_icon_button,
     image_icon_button_sized, image_icon_selectable_button, image_icon_selectable_button_sized,
@@ -72,11 +72,12 @@ pub use components::{
     vector4_scrub_input,
 };
 pub(crate) use components::{
+    multi_line_text_field_with_access_runtime,
     multi_line_text_field_with_text_layouts_and_caret_visibility,
     numeric_input_with_text_layouts_and_caret_visibility,
     numeric_scrub_input_with_text_layouts_and_caret_visibility,
     path_field_with_text_layouts_and_caret_visibility,
-    search_field_with_text_layouts_and_caret_visibility,
+    search_field_with_text_layouts_and_caret_visibility, text_field_with_access_runtime,
     text_field_with_text_layouts_and_caret_visibility,
     vector_scrub_input_with_text_layouts_and_caret_visibility,
 };

@@ -134,8 +134,10 @@ fn nested_scroll_projects_focused_text_semantics_and_ime_to_one_screen_rect() {
     memory.focus(field_id);
     let theme = default_dark_theme();
     let mut state = TextEditState::new("Nested text");
+    state.set_caret(0);
     let child_rect = Rect::new(30.0, 60.0, 20.0, 20.0);
     let expected_screen = Rect::new(15.0, 33.0, 20.0, 20.0);
+    let expected_caret_screen = Rect::new(19.0, 37.0, 1.0, 12.0);
     let input = UiInput::default();
     let mut ui = Ui::new(&input, &mut memory, &theme);
 
@@ -178,12 +180,14 @@ fn nested_scroll_projects_focused_text_semantics_and_ime_to_one_screen_rect() {
             .state
             .focused
     );
-    assert!(frame.platform_requests.iter().any(|request| {
-        matches!(
-            request,
-            PlatformRequest::StartTextInput { rect: Some(rect) } if *rect == expected_screen
-        )
-    }));
+    let ime_rect = frame
+        .platform_requests
+        .iter()
+        .find_map(|request| match request {
+            PlatformRequest::StartTextInput { rect: Some(rect) } => Some(*rect),
+            _ => None,
+        });
+    assert_eq!(ime_rect, Some(expected_caret_screen));
 }
 
 #[test]

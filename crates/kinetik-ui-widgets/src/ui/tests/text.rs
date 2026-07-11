@@ -25,7 +25,7 @@ fn ui_text_field_requests_platform_text_input_when_focused() {
             request,
             PlatformRequest::StartTextInput {
                 rect: Some(rect),
-            } if *rect == Rect::new(0.0, 0.0, 120.0, 24.0)
+            } if *rect == Rect::new(4.0, 4.0, 1.0, 16.0)
         )
     }));
 
@@ -38,7 +38,7 @@ fn ui_text_field_requests_platform_text_input_when_focused() {
         output
             .platform_requests
             .contains(&PlatformRequest::UpdateTextInputRect {
-                rect: Rect::new(0.0, 0.0, 120.0, 24.0),
+                rect: Rect::new(4.0, 4.0, 1.0, 16.0),
             })
     );
     assert!(!output.platform_requests.iter().any(|request| matches!(

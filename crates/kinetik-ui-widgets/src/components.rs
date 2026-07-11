@@ -42,6 +42,8 @@ mod semantics;
 mod slider;
 mod surfaces;
 mod text_fields;
+mod text_geometry;
+mod text_interaction;
 mod text_support;
 mod vector_color_fields;
 
@@ -80,7 +82,8 @@ pub(crate) use numeric_inputs::{
 pub(crate) use search::search_field_with_text_layouts_and_caret_visibility;
 pub(crate) use selector_fields::path_field_with_text_layouts_and_caret_visibility;
 pub(crate) use text_fields::{
-    multi_line_text_field_with_text_layouts_and_caret_visibility,
+    multi_line_text_field_with_access_runtime,
+    multi_line_text_field_with_text_layouts_and_caret_visibility, text_field_with_access_runtime,
     text_field_with_text_layouts_and_caret_visibility,
     text_field_with_text_layouts_and_caret_visibility_and_ordered_result,
 };
