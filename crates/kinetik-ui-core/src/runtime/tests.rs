@@ -127,6 +127,41 @@ fn frame_output_accumulates_render_semantics_and_platform_requests() {
 }
 
 #[test]
+fn platform_request_and_frame_debug_redact_external_payloads() {
+    let clipboard = "private clipboard payload";
+    let title = "private title";
+    let url = "https://example.com/docs?secret=token#private-fragment";
+    let requests = vec![
+        PlatformRequest::CopyToClipboard(clipboard.to_owned()),
+        PlatformRequest::SetWindowTitle(title.to_owned()),
+        PlatformRequest::OpenUrl(url.to_owned()),
+    ];
+    let mut output = FrameOutput::new();
+    for request in requests.clone() {
+        output.push_platform_request(request);
+    }
+
+    let request_debug = format!("{requests:?}");
+    let output_debug = format!("{output:?}");
+
+    for debug in [request_debug, output_debug] {
+        assert!(!debug.contains(clipboard));
+        assert!(!debug.contains(title));
+        assert!(!debug.contains("secret"));
+        assert!(!debug.contains("private-fragment"));
+        assert!(debug.contains("https"));
+    }
+
+    let malformed = format!(
+        "{:?}",
+        PlatformRequest::OpenUrl("private-custom-scheme:secret".to_owned())
+    );
+    assert!(!malformed.contains("private-custom-scheme"));
+    assert!(!malformed.contains("secret"));
+    assert!(malformed.contains("unsupported"));
+}
+
+#[test]
 fn frame_output_exports_accessibility_snapshot_independent_from_painting() {
     let mut output = FrameOutput::new();
     let root = WidgetId::from_key("root");

@@ -1,3 +1,5 @@
+use core::fmt;
+
 use kinetik_ui_core::{CursorShape, FrameOutput, PlatformRequest, Rect, RepaintRequest};
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::window::{CursorIcon, Window};
@@ -92,7 +94,7 @@ impl WinitAppliedRequests {
 /// This type deliberately does not implement [`Clone`]. Applying it consumes
 /// the batch, which prevents clipboard, URL, title, or IME work from being
 /// replayed after the frame that emitted it.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Default, PartialEq)]
 pub struct WinitPlatformRequests {
     /// Final cursor shape for this frame. The default actively resets a stale
     /// cursor when no widget requested one.
@@ -105,6 +107,22 @@ pub struct WinitPlatformRequests {
     window_title: Option<String>,
     /// Ordered application-shell operations.
     shell: WinitShellRequests,
+}
+
+impl fmt::Debug for WinitPlatformRequests {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WinitPlatformRequests")
+            .field("cursor", &self.cursor)
+            .field("repaint", &self.repaint)
+            .field("text_input", &self.text_input)
+            .field(
+                "window_title_bytes",
+                &self.window_title.as_ref().map(String::len),
+            )
+            .field("shell", &self.shell)
+            .finish()
+    }
 }
 
 impl WinitPlatformRequests {

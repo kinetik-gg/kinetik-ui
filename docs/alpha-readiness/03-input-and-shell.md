@@ -6,7 +6,7 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | In progress; `IN-01` merged, `IN-02` implementation gates passed pending independent audit |
+| Status | In progress; `IN-01` merged, `IN-02` depth-one remedy focused gates passed pending re-review |
 | Scope | Sequence-preserving input, platform request execution, and pointer normalization |
 | Impact / confidence | Critical / High (`IN-03` is High / High) |
 | Campaign prerequisite | Stage 2 gate; campaign authorization recorded |
@@ -28,12 +28,15 @@ complete local CI-equivalent gate. Existing pointer primitives intentionally rem
 event-aware click, drag, and wheel policy stays in `IN-03`.
 
 `IN-02` now uses one consumed Winit batch, ordered injectable shell services,
-payload-free failures, targeted one-shot clipboard responses, same-owner IME
-rectangle updates, stateful repaint replacement, and a live-loop rollover path
-that cannot replay shell work after a recoverable surface failure. Help, About,
-and F1 route one fixed HTTPS Documentation action. Focused deterministic and
-warning-denied Clippy gates pass; independent audit, the complete workspace
-gate, PR CI, and squash merge remain before acceptance.
+payload-free failures and debug output, targeted one-shot clipboard responses,
+same-owner IME rectangle updates, stateful repaint replacement, strict
+parseable-host HTTP(S) validation, and a live-loop rollover path that cannot
+replay shell work after a recoverable surface failure. Help, the interactive
+About control, and F1 route one fixed HTTPS Documentation action. Real Showcase
+output crosses fake Winit cursor, IME, clipboard, URL, and repaint boundaries in
+deterministic tests. The depth-zero audit's four findings are closed in the
+depth-one candidate; independent re-review, the complete workspace gate, PR CI,
+and squash merge remain before acceptance.
 
 ## Ownership And Overlap
 

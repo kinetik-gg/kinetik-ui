@@ -356,22 +356,38 @@ impl WinitShellServices for NativeWinitShellServices {
     }
 }
 
-fn redacted_url_scheme(url: &str) -> &str {
-    url.split_once(':').map_or("missing", |(scheme, _)| scheme)
+fn redacted_url_scheme(url: &str) -> &'static str {
+    let Some((scheme, _)) = url.split_once(':') else {
+        return "missing";
+    };
+    if scheme.eq_ignore_ascii_case("https") {
+        "https"
+    } else if scheme.eq_ignore_ascii_case("http") {
+        "http"
+    } else {
+        "unsupported"
+    }
 }
 
 fn is_supported_web_url(url: &str) -> bool {
-    if url.trim() != url {
+    if url.trim() != url || url.chars().any(char::is_control) {
         return false;
     }
-    let Some((scheme, remainder)) = url.split_once("://") else {
+    let Some((raw_scheme, raw_authority_and_path)) = url.split_once("://") else {
         return false;
     };
-    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+    if (!raw_scheme.eq_ignore_ascii_case("http") && !raw_scheme.eq_ignore_ascii_case("https"))
+        || raw_authority_and_path.starts_with('/')
+    {
         return false;
     }
-    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
-    !authority.is_empty()
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return false;
+    }
+    parsed.host_str().is_some_and(|host| !host.is_empty())
 }
 
 #[cfg(test)]
@@ -386,5 +402,9 @@ mod tests {
         assert!(!is_supported_web_url("javascript:alert(1)"));
         assert!(!is_supported_web_url("https://"));
         assert!(!is_supported_web_url(" https://example.com"));
+        assert!(!is_supported_web_url("https://   /private"));
+        assert!(!is_supported_web_url("https://@/path"));
+        assert!(!is_supported_web_url("https:///missing-host"));
+        assert!(!is_supported_web_url("https://example.com\nprivate"));
     }
 }

@@ -759,6 +759,10 @@ fn platform_requests_apply_window_effects_and_return_shell_work() {
     output.push_platform_request(PlatformRequest::SetWindowTitle("Kinetik".to_owned()));
     output.push_platform_request(PlatformRequest::OpenUrl("https://example.com".to_owned()));
     let requests = WinitPlatformRequests::from_frame_output(&output);
+    let request_debug = format!("{requests:?}");
+    assert!(!request_debug.contains("copy"));
+    assert!(!request_debug.contains("Kinetik"));
+    assert!(!request_debug.contains("example.com"));
     let mut window = FakeWindow::default();
 
     let applied = requests.apply_to_window_ops(&mut window);

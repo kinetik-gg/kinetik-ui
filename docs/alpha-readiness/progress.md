@@ -589,18 +589,24 @@ defaults actively, title is final/optional, IME Start/Update/Stop stays ordered,
 and window application returns ordered shell work plus the sole repaint intent.
 Clipboard and browser work uses injectable services with a retained native
 clipboard, hardened HTTP/HTTPS-only opening, continued failure processing, and
-payload-free diagnostics. Targeted paste responses enter the IN-01 stream once.
+payload-free diagnostics. Core `PlatformRequest` and `FrameOutput` debug output
+also redacts external payloads before Winit translation. URL validation requires
+a parseable HTTP(S) host and rejects malformed raw authorities. Targeted paste
+responses enter the IN-01 stream once.
 
 Repaint policy moved into a stateful Winit scheduler with replacement semantics,
 response promotion, overflow safety, one-shot deadlines, and bounded Continuous
 state. The live loop consumes external work before render, then always rolls
 input and responses before scheduling, including recoverable surface errors.
 Documentation is an application-owned fixed HTTPS action shared by Help, About,
-and F1; widgets do not open browsers.
+and F1; widgets do not open browsers. The About Documentation control owns an
+explicit pointer target and pressable route. Real Showcase frames traverse
+injectable Winit cursor, IME, clipboard, URL, and repaint boundaries in tests.
 
 #### Tests run and results
 
-- Core all-feature suite: 346 passed, 0 failed.
+- Core all-feature suite: 346 passed, 0 failed before audit; the depth-one
+  redaction-focused core run also passed.
 - Winit all-feature suite: 42 passed, 0 failed.
 - Widget all-feature suite: passed, including current-owner geometry updates.
 - Showcase: 126 library plus 25 binary tests passed; Documentation source/F1
@@ -608,6 +614,12 @@ and F1; widgets do not open browsers.
 - Qualified facade public surface: 5/5 passed without prelude promotion.
 - Warning-denied focused Clippy across core, Winit, widgets, facade, and showcase:
   passed.
+- Depth-zero independent audit: failed with 2 P1 and 2 P2 findings covering
+  pre-translation debug redaction, About-control interaction, malformed URL
+  authorities, and missing real Showcase-to-fake-Winit integration. All four
+  have deterministic depth-one remedies; focused core, Winit (42/42), Showcase
+  (128 library plus 25 binary), and warning-denied Clippy checks pass. Exact-SHA
+  re-review remains pending.
 - `cargo package -p kinetik-ui-winit --allow-dirty --list`: passed and included
   both new modules plus integration tests. The direct archive attempt reproduced
   the accepted unpublished `kinetik-ui-core` registry bootstrap limitation.
