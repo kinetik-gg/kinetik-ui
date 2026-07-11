@@ -52,6 +52,47 @@ pub struct CapturedSelectionGesture {
     pub actions: Vec<SelectionGestureAction>,
 }
 
+/// Ordered phase emitted by a captured domain-drag gesture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DomainDragGesturePhase {
+    /// Primary pointer capture started inside the target.
+    Press,
+    /// Captured pointer movement, including movement below the drag threshold.
+    Move,
+    /// Primary pointer capture ended normally.
+    Release,
+    /// Capture ended because input or ownership was cancelled.
+    Cancel,
+}
+
+/// One ordered action from a captured domain-drag gesture.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DomainDragGestureAction {
+    /// Original root canonical event index, or `None` for legacy input.
+    pub ordinal: Option<usize>,
+    /// Gesture transition phase.
+    pub phase: DomainDragGesturePhase,
+    /// Event-time position in the current spatial scope, when available.
+    pub position: Option<Point>,
+    /// Event-time movement in the current spatial scope.
+    pub delta: Vec2,
+    /// Click sequence count carried by the transition.
+    pub click_count: u8,
+    /// Modifier state effective at the original root event ordinal.
+    pub modifiers: Modifiers,
+    /// Whether this exact pointer release contributed a click.
+    pub release_clicked: bool,
+}
+
+/// Common response plus ordered actions for a captured domain drag.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapturedDomainDragGesture {
+    /// Authoritative first response for this widget and frame.
+    pub response: Response,
+    /// Ordered press, move, release, and cancellation actions.
+    pub actions: Vec<DomainDragGestureAction>,
+}
+
 /// Resolves neutral draggable behavior.
 pub fn draggable(
     id: WidgetId,
@@ -90,7 +131,49 @@ fn draggable_with_hit_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> Response {
-    resolve_pressable_with_hit_target(
+    captured_domain_drag_gesture_with_hit_target(
+        id, rect, hit_target, input, memory, disabled, None,
+    )
+    .response
+}
+
+pub(crate) fn captured_domain_drag_gesture_with_ordinals(
+    id: WidgetId,
+    rect: Rect,
+    input: &UiInput,
+    event_ordinals: &[usize],
+    memory: &mut UiMemory,
+    disabled: bool,
+) -> CapturedDomainDragGesture {
+    captured_domain_drag_gesture_with_hit_target(
+        id,
+        rect,
+        HitTarget::Rect,
+        input,
+        memory,
+        disabled,
+        Some(event_ordinals),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn captured_domain_drag_gesture_with_hit_target(
+    id: WidgetId,
+    rect: Rect,
+    hit_target: HitTarget,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    disabled: bool,
+    event_ordinals: Option<&[usize]>,
+) -> CapturedDomainDragGesture {
+    if let Some(response) = memory.cached_domain_drag_response(id) {
+        return CapturedDomainDragGesture {
+            response,
+            actions: Vec::new(),
+        };
+    }
+
+    let resolution = resolve_pressable_with_hit_target(
         id,
         rect,
         hit_target,
@@ -98,10 +181,20 @@ fn draggable_with_hit_target(
         memory,
         disabled,
         PointerGestureKind::DomainDrag,
-        None,
+        event_ordinals,
         true,
-    )
-    .response
+    );
+    memory.cache_domain_drag_response(id, resolution.response);
+    let mut actions = resolution.domain_drag_actions;
+    if input.events.is_empty() {
+        for action in &mut actions {
+            action.modifiers = input.keyboard.modifiers;
+        }
+    }
+    CapturedDomainDragGesture {
+        response: resolution.response,
+        actions,
+    }
 }
 
 pub(crate) fn captured_selection_gesture_with_ordinals(

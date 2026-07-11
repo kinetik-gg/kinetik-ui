@@ -496,6 +496,14 @@ while the independent modifier fold still reaches the focus-loss reset. A
 conflicted stream cannot apply modifier/key changes, though its focus-loss fence
 still performs the safety reset.
 
+Captured DomainDrag actions use the same root-ordinal modifier lookup but a
+DomainDrag-specific public action type. Each Release records whether that exact
+transition contributed the aggregate pointer click, so multiple transactions
+in one frame remain causally distinguishable. Action ordinals are observation
+metadata only: release/drop authority always comes from the private scoped root
+pointer sidecar. No standalone captured adapter or local ordinal namespace is
+defined.
+
 The input model must support pointer capture. During a drag, the active widget
 continues receiving drag updates after leaving its original rectangle while it
 remains inside the effective clip. Outside the effective clip, interaction is

@@ -6,7 +6,7 @@ use crate::{
     InputStreamConflict, LivenessRegistry, LivenessTargetId, LivenessToken, LivenessUpdateStatus,
     Modifiers, ObserverDelivery, ObserverDrain, ObserverNotification, ObserverNotificationId,
     ObserverPublishStatus, ObserverRegistry, ObserverSubscriptionHandle, ObserverSubscriptionId,
-    Point, UiInput, UiInputEvent, Vec2, WidgetId,
+    Point, Response, UiInput, UiInputEvent, Vec2, WidgetId,
 };
 
 /// Frame-local routing decision for one pointer event class.
@@ -77,6 +77,7 @@ pub(crate) enum PointerGestureKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CancelledPointerGesture {
     owner: WidgetId,
+    kind: Option<PointerGestureKind>,
     click_count: u8,
 }
 
@@ -114,6 +115,8 @@ pub struct UiMemory {
     scoped_pointer_cleanup_events: HashSet<usize>,
     scoped_pointer_event_ordinals: Vec<usize>,
     selection_gesture_claims: HashSet<WidgetId>,
+    domain_drag_frame_open: bool,
+    domain_drag_responses: HashMap<WidgetId, Response>,
     /// Retained primary press origin and threshold latch.
     pointer_gesture: Option<PointerGesture>,
     /// Widget currently acting as an active drag source.
@@ -163,6 +166,8 @@ impl UiMemory {
         self.scoped_pointer_cleanup_events.clear();
         self.scoped_pointer_event_ordinals.clear();
         self.selection_gesture_claims.clear();
+        self.domain_drag_frame_open = true;
+        self.domain_drag_responses.clear();
         self.text_input_event_claim = None;
         self.root_input_validation = RootInputValidation::Unvalidated;
         self.liveness.begin_frame();
@@ -171,6 +176,8 @@ impl UiMemory {
 
     /// Removes liveness targets not seen during the current frame.
     pub(crate) fn end_frame(&mut self) {
+        self.domain_drag_frame_open = false;
+        self.domain_drag_responses.clear();
         self.scroll_offsets
             .extend(std::mem::take(&mut self.pending_scroll_offsets));
         self.liveness.end_frame();
@@ -548,9 +555,18 @@ impl UiMemory {
         }
     }
 
-    pub(crate) fn take_cancelled_pointer_gesture(&mut self, owner: WidgetId) -> Option<u8> {
-        self.cancelled_pointer_gesture
-            .filter(|gesture| gesture.owner == owner)?;
+    pub(crate) fn take_cancelled_pointer_gesture(
+        &mut self,
+        owner: WidgetId,
+        kind: PointerGestureKind,
+        allow_kind_mismatch: bool,
+    ) -> Option<u8> {
+        self.cancelled_pointer_gesture.filter(|gesture| {
+            gesture.owner == owner
+                && (gesture.kind == Some(kind)
+                    || (gesture.kind.is_none() && kind == PointerGestureKind::Selection)
+                    || allow_kind_mismatch)
+        })?;
         self.cancelled_pointer_gesture
             .take()
             .map(|gesture| gesture.click_count)
@@ -562,6 +578,18 @@ impl UiMemory {
 
     pub(crate) fn claim_selection_gesture(&mut self, owner: WidgetId) -> bool {
         self.selection_gesture_claims.insert(owner)
+    }
+
+    pub(crate) fn cached_domain_drag_response(&self, owner: WidgetId) -> Option<Response> {
+        self.domain_drag_frame_open
+            .then(|| self.domain_drag_responses.get(&owner).copied())
+            .flatten()
+    }
+
+    pub(crate) fn cache_domain_drag_response(&mut self, owner: WidgetId, response: Response) {
+        if self.domain_drag_frame_open {
+            self.domain_drag_responses.entry(owner).or_insert(response);
+        }
     }
 
     pub(crate) fn install_scoped_pointer_events(
@@ -636,6 +664,13 @@ impl UiMemory {
         let cancelled_click_count = cancelled_owner
             .and_then(|owner| self.pointer_gesture_click_count(owner))
             .unwrap_or(0);
+        let cancelled_kind = cancelled_owner
+            .and_then(|owner| self.pointer_gesture_kind(owner))
+            .or_else(|| {
+                cancelled_owner
+                    .filter(|owner| self.drag_source == Some(*owner))
+                    .map(|_| PointerGestureKind::DomainDrag)
+            });
         let cancelled = self.active.is_some()
             || self.pressed.is_some()
             || self.pointer_capture.is_some()
@@ -644,6 +679,7 @@ impl UiMemory {
         if cancelled {
             self.cancelled_pointer_gesture = cancelled_owner.map(|owner| CancelledPointerGesture {
                 owner,
+                kind: cancelled_kind,
                 click_count: cancelled_click_count,
             });
             self.clear_active_drag();
