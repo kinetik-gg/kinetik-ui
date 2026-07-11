@@ -1501,7 +1501,7 @@ fn nonfinite_and_overflowing_scrub_arithmetic_fails_closed() {
     let _ = ui.finish_output();
     assert!(output.scrub_response.dragged);
     assert!(!output.scrubbed);
-    assert_eq!(output.step, 10.0);
+    assert_eq!(output.step, 1.0);
     assert_eq!(value, expected_value);
     assert_eq!(state, expected);
     assert!(memory.claim_text_input_events(id));
@@ -1591,6 +1591,62 @@ fn browse_press_preempts_path_text_owner_and_emits_only_browse() {
     assert!(!output.open_requested);
     assert_eq!(memory.focused(), None);
     assert_eq!(memory.text_input_owner(), None);
+    assert!(frame.warnings.is_empty());
+}
+
+#[test]
+fn earlier_browse_transaction_preempts_later_path_text_claim_and_mutation() {
+    let theme = default_dark_theme();
+    let text_id = root_child("path").child("text");
+    let mut memory = UiMemory::new();
+    memory.focus(text_id);
+    memory.set_text_input_owner(text_id);
+    let mut state = TextEditState::new("src/main.rs");
+    state.set_selection(TextSelection::new(0, state.text.len()));
+    let expected = state.clone();
+    let input = canonical([
+        press(140.0, 8.0, 1),
+        release(140.0, 8.0, 1),
+        press(8.0, 8.0, 1),
+        release(8.0, 8.0, 1),
+        UiInputEvent::Text(TextInputEvent::Commit("X".to_owned())),
+        UiInputEvent::ClipboardText(ClipboardText::new(text_id, "Y")),
+    ]);
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+    let output = ui.path_field(
+        "path",
+        FIELD_RECT,
+        "Source",
+        &mut state,
+        PathFieldConfig::new().open(true),
+    );
+    let frame = ui.finish_output();
+
+    assert!(output.browse_requested);
+    assert!(!output.open_requested);
+    assert!(!output.changed);
+    assert_eq!(state, expected);
+    assert_eq!(memory.focused(), None);
+    assert_eq!(memory.text_input_owner(), None);
+    assert!(
+        output
+            .field
+            .widget
+            .response
+            .is_some_and(|response| !response.state.disabled)
+    );
+    let node = frame
+        .semantics
+        .get(text_id)
+        .expect("editable path text node");
+    assert!(node.focusable);
+    assert!(has_action(node, &SemanticActionKind::SetText));
+    assert!(
+        frame
+            .platform_requests
+            .iter()
+            .all(|request| { matches!(request, PlatformRequest::StopTextInput) })
+    );
     assert!(frame.warnings.is_empty());
 }
 

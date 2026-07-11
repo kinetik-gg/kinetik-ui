@@ -341,6 +341,77 @@ fn affected_wrapper_root_prelude_and_layout_paths_compile_call() {
         &mut memory,
         &theme,
     );
+
+    let mut root_search = TextEditState::new("root");
+    let _: widgets::SearchFieldOutput = widgets::search_field(
+        WidgetId::from_key("root-search"),
+        rect,
+        &mut root_search,
+        &input,
+        &mut memory,
+        &theme,
+        false,
+    );
+    let mut root_scrub_value = 3.0;
+    let mut root_scrub = TextEditState::new("3");
+    let _: widgets::NumericScrubInputOutput = widgets::numeric_scrub_input(
+        WidgetId::from_key("root-scrub"),
+        rect,
+        &mut root_scrub_value,
+        &mut root_scrub,
+        widgets::NumericScrubInputConfig::default(),
+        &input,
+        &mut memory,
+        &theme,
+    );
+    let mut root_values4 = [1.0, 2.0, 3.0, 4.0];
+    let mut root_states4 = [
+        TextEditState::new("1"),
+        TextEditState::new("2"),
+        TextEditState::new("3"),
+        TextEditState::new("4"),
+    ];
+    let _: widgets::VectorScrubInputOutput<4> = widgets::vector4_scrub_input(
+        WidgetId::from_key("root-vector4"),
+        rect,
+        "Color",
+        &mut root_values4,
+        &mut root_states4,
+        widgets::VectorScrubInputConfig::default(),
+        &input,
+        &mut memory,
+        &theme,
+    );
+    let mut prelude_values2 = [1.0, 2.0];
+    let mut prelude_states2 = [TextEditState::new("1"), TextEditState::new("2")];
+    let _: widgets::VectorScrubInputOutput<2> = prelude::vector2_scrub_input(
+        WidgetId::from_key("prelude-vector2"),
+        rect,
+        "Offset",
+        &mut prelude_values2,
+        &mut prelude_states2,
+        widgets::VectorScrubInputConfig::default(),
+        &input,
+        &mut memory,
+        &theme,
+    );
+    let mut prelude_values3 = [1.0, 2.0, 3.0];
+    let mut prelude_states3 = [
+        TextEditState::new("1"),
+        TextEditState::new("2"),
+        TextEditState::new("3"),
+    ];
+    let _: widgets::VectorScrubInputOutput<3> = prelude::vector3_scrub_input(
+        WidgetId::from_key("prelude-vector3"),
+        rect,
+        "Position",
+        &mut prelude_values3,
+        &mut prelude_states3,
+        widgets::VectorScrubInputConfig::default(),
+        &input,
+        &mut memory,
+        &theme,
+    );
 }
 
 #[test]

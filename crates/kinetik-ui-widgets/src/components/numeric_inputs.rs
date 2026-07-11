@@ -406,55 +406,57 @@ pub(crate) fn numeric_scrub_input_with_runtime(
     let access = numeric_scrub_access(config);
     let final_modifiers = runtime.input().keyboard.modifiers;
 
-    let (mut numeric, mut scrub_response, causal_modifiers) = if access == TextFieldAccess::Editable
-    {
-        let gesture = runtime.captured_domain_drag_gesture(id, rect, false);
-        let scrub_response = gesture.response;
-        let (field, ordered_result, pointer) = text_field_with_pointer_runtime(
-            runtime,
-            id,
-            rect,
-            state,
-            theme,
-            access,
-            text_layouts,
-            caret_visible,
-            TextFieldPointerSource::DomainDrag(gesture),
-            |pointer, preview_state| {
-                scrub_arithmetic_allows_text_replay(
-                    scrub_response,
-                    &resolved,
-                    preview_state,
-                    pointer.domain_drag_modifiers,
-                )
-            },
-        );
-        (
-            numeric_output_from_field(state, field, &ordered_result, true),
-            scrub_response,
-            pointer.domain_drag_modifiers,
-        )
-    } else {
-        let (field, ordered_result) = text_field_with_access_runtime(
-            runtime,
-            id,
-            rect,
-            state,
-            theme,
-            access,
-            text_layouts,
-            caret_visible,
-        );
-        let scrub_response = field
-            .widget
-            .response
-            .expect("canonical text fields always emit a response");
-        (
-            numeric_output_from_field(state, field, &ordered_result, false),
-            scrub_response,
-            None,
-        )
-    };
+    let (mut numeric, mut scrub_response, causal_modifiers, transaction_allowed) =
+        if access == TextFieldAccess::Editable {
+            let gesture = runtime.captured_domain_drag_gesture(id, rect, false);
+            let scrub_response = gesture.response;
+            let (field, ordered_result, pointer) = text_field_with_pointer_runtime(
+                runtime,
+                id,
+                rect,
+                state,
+                theme,
+                access,
+                text_layouts,
+                caret_visible,
+                TextFieldPointerSource::DomainDrag(gesture),
+                |pointer, preview_state| {
+                    scrub_arithmetic_allows_text_replay(
+                        scrub_response,
+                        &resolved,
+                        preview_state,
+                        pointer.domain_drag_modifiers,
+                    )
+                },
+            );
+            (
+                numeric_output_from_field(state, field, &ordered_result, true),
+                scrub_response,
+                pointer.domain_drag_modifiers,
+                pointer.transaction_allowed,
+            )
+        } else {
+            let (field, ordered_result) = text_field_with_access_runtime(
+                runtime,
+                id,
+                rect,
+                state,
+                theme,
+                access,
+                text_layouts,
+                caret_visible,
+            );
+            let scrub_response = field
+                .widget
+                .response
+                .expect("canonical text fields always emit a response");
+            (
+                numeric_output_from_field(state, field, &ordered_result, false),
+                scrub_response,
+                None,
+                false,
+            )
+        };
 
     scrub_response.state.focused = runtime.memory().is_focused(id);
     let selected_step =
@@ -463,6 +465,7 @@ pub(crate) fn numeric_scrub_input_with_runtime(
 
     if access == TextFieldAccess::Editable
         && scrub_response.dragged
+        && transaction_allowed
         && causal_modifiers.is_some()
         && scrub_response.drag_delta.x.is_finite()
         && selected_step.is_finite()

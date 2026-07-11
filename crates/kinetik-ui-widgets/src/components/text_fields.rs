@@ -92,6 +92,35 @@ pub(crate) fn text_field_with_access_runtime_metadata(
     OrderedTextInputResult,
     TextFieldPointerMetadata,
 ) {
+    text_field_with_access_runtime_metadata_and_fence(
+        runtime,
+        id,
+        rect,
+        state,
+        theme,
+        access,
+        text_layouts,
+        caret_visible,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn text_field_with_access_runtime_metadata_and_fence(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+    interaction_fenced: bool,
+) -> (
+    TextFieldOutput,
+    OrderedTextInputResult,
+    TextFieldPointerMetadata,
+) {
     let result = canonical_text_field_runtime(
         runtime,
         id,
@@ -103,6 +132,7 @@ pub(crate) fn text_field_with_access_runtime_metadata(
         caret_visible,
         TextFieldKind::SingleLine,
         TextEditMode::SingleLine,
+        interaction_fenced,
         TextFieldPointerSource::Selection,
         |_, _| true,
     );
@@ -117,6 +147,7 @@ pub(crate) fn text_field_with_access_runtime_metadata(
 pub(crate) struct TextFieldPointerMetadata {
     pub(crate) accepted_double_click: bool,
     pub(crate) domain_drag_modifiers: Option<kinetik_ui_core::Modifiers>,
+    pub(crate) transaction_allowed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -163,6 +194,7 @@ pub(crate) fn text_field_with_pointer_runtime(
         caret_visible,
         TextFieldKind::SingleLine,
         TextEditMode::SingleLine,
+        false,
         pointer_source,
         replay_guard,
     );
@@ -403,6 +435,7 @@ pub(crate) fn multi_line_text_field_with_access_runtime(
         caret_visible,
         TextFieldKind::WrappedMultiLine,
         TextEditMode::MultiLine,
+        false,
         TextFieldPointerSource::Selection,
         |_, _| true,
     );
@@ -652,6 +685,7 @@ fn canonical_text_field_runtime(
     caret_visible: bool,
     kind: TextFieldKind,
     edit_mode: TextEditMode,
+    interaction_fenced: bool,
     pointer_source: TextFieldPointerSource,
     replay_guard: impl FnOnce(&TextFieldPointerMetadata, &TextEditState) -> bool,
 ) -> CanonicalTextFieldResult {
@@ -666,7 +700,11 @@ fn canonical_text_field_runtime(
     let (mut response, raw_pointer_actions, domain_drag_source) = match pointer_source {
         TextFieldPointerSource::Selection => {
             let (gesture, clicked_release_ordinals) = runtime
-                .captured_selection_gesture_with_clicked_releases(id, rect, access.is_disabled());
+                .captured_selection_gesture_with_clicked_releases(
+                    id,
+                    rect,
+                    access.is_disabled() || interaction_fenced,
+                );
             let mut actions = gesture
                 .actions
                 .into_iter()
@@ -823,6 +861,7 @@ fn canonical_text_field_runtime(
     let mut pointer_metadata = TextFieldPointerMetadata {
         accepted_double_click,
         domain_drag_modifiers: domain_drag_modifiers.flatten(),
+        transaction_allowed: true,
     };
     let pointer_activates = if domain_drag_source {
         accepted_place_caret
@@ -830,7 +869,7 @@ fn canonical_text_field_runtime(
         owns_press
     };
 
-    if access.is_disabled() || (root_press_present && !owns_press) {
+    if access.is_disabled() || interaction_fenced || (root_press_present && !owns_press) {
         if runtime.memory().is_focused(id) {
             runtime.memory_mut().clear_focus();
         }
@@ -844,7 +883,7 @@ fn canonical_text_field_runtime(
     });
     let requires_transaction_preview =
         domain_drag_source && response.dragged && pointer_metadata.domain_drag_modifiers.is_some();
-    let (replay_enabled, replay) = if access.is_disabled() {
+    let (replay_enabled, replay) = if access.is_disabled() || interaction_fenced {
         (false, TextReplayResult::default())
     } else if requires_transaction_preview {
         let preview_events = if prepared {
@@ -916,9 +955,7 @@ fn canonical_text_field_runtime(
         };
         (replay_enabled, replay)
     };
-    if !replay_enabled {
-        pointer_metadata.domain_drag_modifiers = None;
-    }
+    pointer_metadata.transaction_allowed = replay_enabled;
     if let Some(anchor) = replay.accepted_gesture_anchor {
         let _ = runtime
             .memory_mut()

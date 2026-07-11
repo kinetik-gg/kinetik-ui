@@ -4,8 +4,8 @@ use super::{
     SemanticNode, SemanticRole, SemanticValue, TextEditState, TextFieldAccess, TextFieldOutput,
     TextLayoutStore, Theme, UiInput, UiMemory, WidgetId, WidgetOutput, drop_target,
     field_text_primitive, finite_widget_extent, pressable, suppress_disabled_interaction_reporting,
-    text_field_with_access_runtime_metadata, text_field_with_text_layouts_and_caret_visibility,
-    with_hover_cursor, with_response_state,
+    text_field_with_access_runtime_metadata_and_fence,
+    text_field_with_text_layouts_and_caret_visibility, with_hover_cursor, with_response_state,
 };
 use kinetik_ui_core::Ui as CoreUi;
 
@@ -647,7 +647,21 @@ pub(crate) fn path_field_with_access_runtime(
     let field_width = (rect.width - browse_width - gap).max(0.0);
     let field_rect = Rect::new(rect.x, rect.y, field_width, rect.height);
     let button_rect = Rect::new(field_rect.max_x() + gap, rect.y, browse_width, rect.height);
-    let (mut field, _, pointer) = text_field_with_access_runtime_metadata(
+    let browse_response = if browse_width > 0.0 {
+        let browse_id = id.child("browse");
+        let mut response = {
+            let (input, memory) = runtime.input_and_memory_mut();
+            pressable(browse_id, button_rect, input, memory, browse_disabled)
+        };
+        suppress_disabled_interaction_reporting(&mut response);
+        Some(response)
+    } else {
+        None
+    };
+    let browse_requested = browse_response.as_ref().is_some_and(|response| {
+        !browse_disabled && (response.clicked || response.keyboard_activated)
+    });
+    let (mut field, _, pointer) = text_field_with_access_runtime_metadata_and_fence(
         runtime,
         id.child("text"),
         field_rect,
@@ -656,21 +670,15 @@ pub(crate) fn path_field_with_access_runtime(
         access,
         text_layouts,
         caret_visible,
+        browse_requested,
     );
     if let Some(node) = field.widget.semantics.first_mut() {
         node.label = Some(label.clone());
     }
 
-    let mut browse_response = None;
-    let mut browse_requested = false;
     let mut widget = field.widget.clone();
-    if browse_width > 0.0 {
+    if let Some(response) = browse_response.as_ref() {
         let browse_id = id.child("browse");
-        let mut response = {
-            let (input, memory) = runtime.input_and_memory_mut();
-            pressable(browse_id, button_rect, input, memory, browse_disabled)
-        };
-        suppress_disabled_interaction_reporting(&mut response);
         let recipe = theme.text_field(ComponentState {
             hovered: response.state.hovered,
             pressed: response.state.pressed,
@@ -698,9 +706,7 @@ pub(crate) fn path_field_with_access_runtime(
             node.actions
                 .push(SemanticAction::new(SemanticActionKind::Open, "Browse"));
         }
-        widget.semantics.push(with_response_state(node, &response));
-        browse_requested = !browse_disabled && (response.clicked || response.keyboard_activated);
-        browse_response = Some(response);
+        widget.semantics.push(with_response_state(node, response));
     }
 
     let open_requested = config.open
