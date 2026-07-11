@@ -806,9 +806,9 @@ selection editing and must consume this seam without reparsing pointer events.
 
 ### `TEXT-01-PRE`: event-time selection modifiers
 
-Status: Implementation candidate for Issue #522. This is a shared-foundation
-prerequisite, not a new audit roadmap ID. `ASYNC-01` and `TEXT-01` remain gated
-until it passes independent/local/remote review and squash-merges.
+Status: Complete. Issue #522 closed through PR #523, squash-merged as
+`f2fd2d0`. This is a shared-foundation prerequisite, not a new audit roadmap
+ID. `ASYNC-01` and `TEXT-01` remain gated on the separate `TEXT-01-PRE2` seam.
 
 #### Changed files
 
@@ -841,17 +841,82 @@ an accepted provisional alpha source break with a changelog migration note.
   evidence-only remedy pinned different-owner same-frame claim compatibility.
 - Existing drag-threshold conformance: 46/46 passed.
 - Facade public API surface: 5/5 passed.
-- The complete six-command workspace gate passed; independent exact-SHA audit,
-  remote three-OS CI, and PR checks remain pending on this candidate.
+- The complete six-command workspace gate and independent exact-SHA audits
+  passed. Ubuntu, Windows, and macOS passed in run 29142938717; PR checks passed
+  in run 29143144569 before PR #523 squash-merged as `f2fd2d0`.
 
 #### Remaining risks and deferred findings
 
-`TEXT-01` still needs one separately gated ordinal-bearing DomainDrag seam for
+`TEXT-01` still needs the separately gated ordinal-bearing DomainDrag seam for
 canonical editable numeric scrub; expanding this modifiers-only packet after
-its accepted task gate would mix contracts. `TEXT-01-PRE2` will own that shared
+its accepted task gate would mix contracts. `TEXT-01-PRE2` owns that shared
 prerequisite before `ASYNC-01`. Actual word movement/deletion, selection,
 read-only, multiline, caret-scroll, IME-owner, and text rendering behavior
 remain `TEXT-01` or later Stage 4 work.
+
+### `TEXT-01-PRE2`: causal DomainDrag actions
+
+Status: Implementation candidate for Issue #524. This is the second
+shared-foundation prerequisite discovered by the `TEXT-01` task gate, not a new
+audit roadmap ID. `ASYNC-01` and `TEXT-01` remain gated until it passes exact-SHA
+review, remote CI, PR checks, and squash merge.
+
+#### Changed files
+
+- `CHANGELOG.md`
+- `crates/kinetik-ui-core/src/interaction.rs`
+- `crates/kinetik-ui-core/src/interaction/drag_select.rs`
+- `crates/kinetik-ui-core/src/interaction/press.rs`
+- `crates/kinetik-ui-core/src/lib.rs`
+- `crates/kinetik-ui-core/src/memory.rs`
+- `crates/kinetik-ui-core/src/runtime/ui.rs`
+- `crates/kinetik-ui-core/tests/domain_drag_action_conformance.rs`
+- `crates/kinetik-ui/tests/public_api_surface.rs`
+- `docs/specs/01-foundations.md`
+- `docs/specs/02-layout-and-interaction.md`
+- `docs/alpha-readiness/04-text-renderer-lifetime.md`
+- `docs/alpha-readiness/progress.md`
+
+#### Reasoning and contract decisions
+
+`Ui::captured_domain_drag_gesture` exposes DomainDrag-specific Press, Move,
+Release, and Cancel actions with original root ordinals and event-time
+modifiers. Every Release carries its own `release_clicked` outcome, so a field
+can distinguish below-threshold caret placement when one canonical frame
+contains multiple transactions. The public action ordinal and private release/
+drop authority are separate channels; action metadata cannot authorize a drop.
+
+Ordinary, transformed, and captured DomainDrag calls share one first response
+per widget in an explicitly begun memory frame. Later observations return that
+exact per-frame response, deliver no actions, and do not mutate memory. Runtime
+frame finalization closes the cache, while unframed standalone `draggable`
+calls retain their previous uncached behavior. This is a provisional breaking
+behavioral change for duplicate same-ID calls; callers migrate to one
+authoritative call or distinct IDs. No public free captured adapter or local
+ordinal namespace was added.
+
+#### Tests run and results
+
+- New DomainDrag action conformance: 16/16 passed, covering threshold outcomes,
+  multiple releases, outside/missing positions, spatial ordinal gaps and
+  modifiers, full action metadata, legacy/disabled/focus/release-all/conflict/
+  clipped cancellation, exact response caching, ordinary/captured/transformed
+  orders, disabled-first reset, standalone compatibility, claim independence,
+  and transformed/clipped planned/unplanned drops.
+- Existing selection modifier, drag threshold, pointer, and runtime spatial
+  conformance passed at 11/11, 46/46, 28/28, and 12/12 respectively.
+- Facade public API surface passed 5/5; warning-denied core Clippy passed.
+- The complete six-command workspace gate passed. Independent exact-SHA audit,
+  three-OS CI, and PR checks remain pending on this implementation candidate.
+
+#### Remaining risks and deferred findings
+
+The action seam deliberately remains runtime-only; low-level standalone
+`draggable` callers receive the existing aggregate response without ordered
+actions. `TEXT-01` must consume the captured response once and still owns actual
+numeric caret arbitration, desktop selection, word behavior, read-only modes,
+viewports, and IME geometry. `ASYNC-01` remains serialized next because it edits
+the same memory/runtime and evidence files.
 
 ## Packet Completion Template
 

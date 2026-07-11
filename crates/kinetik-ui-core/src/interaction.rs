@@ -10,10 +10,13 @@ mod scroll;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use drag_select::captured_selection_gesture_with_ordinals;
 pub use drag_select::{
-    CapturedSelectionGesture, OrderedTextInputEvent, SelectionGestureAction, SelectionGesturePhase,
+    CapturedDomainDragGesture, CapturedSelectionGesture, DomainDragGestureAction,
+    DomainDragGesturePhase, OrderedTextInputEvent, SelectionGestureAction, SelectionGesturePhase,
     draggable, draggable_transformed, selectable, selectable_transformed,
+};
+pub(crate) use drag_select::{
+    captured_domain_drag_gesture_with_ordinals, captured_selection_gesture_with_ordinals,
 };
 pub use focus::{focusable, focusable_transformed};
 pub use hit::{hit_test, hit_test_transformed};

@@ -1,13 +1,15 @@
 use std::hash::Hash;
 
 use crate::input::{InputStreamConflict, UiInput, UiInputEvent};
-use crate::interaction::captured_selection_gesture_with_ordinals;
+use crate::interaction::{
+    captured_domain_drag_gesture_with_ordinals, captured_selection_gesture_with_ordinals,
+};
 use crate::memory::UiMemory;
 use crate::render::Primitive;
 use crate::{
-    ActionContext, ActionId, ActionInvocation, ActionSource, CapturedSelectionGesture, IdStack,
-    LivenessTargetId, LivenessToken, Modifiers, OrderedTextInputEvent, Rect, SemanticActionKind,
-    SemanticNode, WidgetId,
+    ActionContext, ActionId, ActionInvocation, ActionSource, CapturedDomainDragGesture,
+    CapturedSelectionGesture, IdStack, LivenessTargetId, LivenessToken, Modifiers,
+    OrderedTextInputEvent, Rect, SemanticActionKind, SemanticNode, WidgetId,
 };
 
 use super::focus::{
@@ -129,6 +131,40 @@ impl<'a> Ui<'a> {
         disabled: bool,
     ) -> CapturedSelectionGesture {
         let mut gesture = captured_selection_gesture_with_ordinals(
+            id,
+            rect,
+            &self.context.input,
+            &self.input_event_ordinals,
+            self.memory,
+            disabled,
+        );
+        for action in &mut gesture.actions {
+            if let Some(ordinal) = action.ordinal {
+                debug_assert!(ordinal < self.root_event_modifiers.len());
+                action.modifiers = self
+                    .root_event_modifiers
+                    .get(ordinal)
+                    .copied()
+                    .unwrap_or_default();
+            }
+        }
+        gesture
+    }
+
+    /// Resolves one authoritative domain-drag response with ordered actions.
+    ///
+    /// Canonical actions retain their original root event ordinals even when
+    /// the current spatial scope filtered earlier events. Legacy snapshot
+    /// actions use `None`. Ordinary and captured domain-drag calls for the same
+    /// widget share the first response in a frame; actions are delivered only
+    /// when this captured method is the first claimant.
+    pub fn captured_domain_drag_gesture(
+        &mut self,
+        id: WidgetId,
+        rect: Rect,
+        disabled: bool,
+    ) -> CapturedDomainDragGesture {
+        let mut gesture = captured_domain_drag_gesture_with_ordinals(
             id,
             rect,
             &self.context.input,

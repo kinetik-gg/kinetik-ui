@@ -44,6 +44,15 @@ published, or accepted as an alpha release.
   not name every field must use `..`. Canonical actions now report the modifier
   state at their original root ordinal; legacy snapshot actions use the
   snapshot modifier state.
+- Added `Ui::captured_domain_drag_gesture` with DomainDrag-specific ordered
+  actions and a causal `release_clicked` result on each release. Ordinary,
+  transformed, and captured DomainDrag calls now share one exact first response
+  per begun frame, deliver actions once, and keep public action ordinals
+  separate from internal release/drop authority. Unframed standalone
+  `draggable` calls remain uncached. This is a provisional breaking behavioral
+  change for callers that resolve the same `WidgetId` more than once in a begun
+  frame: use one authoritative call and share its `Response`, or use distinct
+  widget IDs for genuinely distinct interactions.
 
 ### Documentation
 
