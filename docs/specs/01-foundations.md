@@ -434,7 +434,11 @@ legacy snapshot path; text consumption synthesizes the historical text-domain
 order because legacy pointer order cannot be recovered. A non-empty stream
 whose key, text, clipboard, focus, modifier, or pointer transient projections
 were mutated inconsistently emits a structured frame warning and fails closed
-for text editing.
+for text editing. Root projection validation is recorded once before spatial
+localization. Scoped text validation rechecks only unchanged non-pointer
+projections, so legitimate local pointer coordinates do not block editing;
+root conflicts remain out-of-band and preserve the canonical pointer snapshot
+instead of healing from an inconsistent compatibility projection.
 
 Winit IME Enabled/Disabled events describe availability, not active
 composition. Non-empty preedit starts or updates composition, empty preedit

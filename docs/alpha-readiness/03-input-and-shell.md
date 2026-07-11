@@ -6,7 +6,7 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | In progress; `IN-01` implementation complete pending packet gate |
+| Status | In progress; `IN-01` accepted pending PR CI and squash merge |
 | Scope | Sequence-preserving input, platform request execution, and pointer normalization |
 | Impact / confidence | Critical / High (`IN-03` is High / High) |
 | Campaign prerequisite | Stage 2 gate; campaign authorization recorded |
@@ -23,7 +23,8 @@
 `IN-01` now defines one canonical ordered stream with compatibility projections,
 source-aware hardware text and preedit-driven IME behavior, one frame-local text
 claim, event-time pointer localization, and deterministic mixed-mode conflict
-diagnostics. Existing pointer primitives intentionally remain snapshot-driven;
+diagnostics. Its depth-two remedy and independent re-review passed, as did the
+complete local CI-equivalent gate. Existing pointer primitives intentionally remain snapshot-driven;
 event-aware click, drag, and wheel policy stays in `IN-03`.
 
 ## Ownership And Overlap
