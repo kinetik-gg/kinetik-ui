@@ -146,6 +146,28 @@ pub fn text_field_semantics(
     node
 }
 
+pub(crate) fn text_field_semantics_with_access(
+    id: WidgetId,
+    rect: Rect,
+    label: impl Into<String>,
+    text: impl Into<String>,
+    access: super::text_fields::TextFieldAccess,
+) -> SemanticNode {
+    let disabled = access == super::text_fields::TextFieldAccess::Disabled;
+    let mut node = SemanticNode::new(id, SemanticRole::TextField, rect)
+        .with_label(label)
+        .focusable(!disabled);
+    if access == super::text_fields::TextFieldAccess::Editable {
+        node = node.with_action(SemanticAction::new(SemanticActionKind::SetText, "Set text"));
+    }
+    node.state = SemanticState {
+        disabled,
+        value: Some(SemanticValue::Text(text.into())),
+        ..SemanticState::default()
+    };
+    node
+}
+
 /// Returns semantics for a search field.
 #[must_use]
 pub fn search_field_semantics(

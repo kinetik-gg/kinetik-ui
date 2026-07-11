@@ -279,6 +279,10 @@ fn assert_f32_slice_eq(actual: &[f32], expected: &[f32]) {
     }
 }
 
+#[path = "text_field_conformance/access_modes.rs"]
+mod access_modes;
+#[path = "text_field_conformance/desktop_selection.rs"]
+mod desktop_selection;
 #[path = "text_field_conformance/focus_and_clipboard.rs"]
 mod focus_and_clipboard;
 #[path = "text_field_conformance/layout_selection_shortcuts.rs"]
@@ -289,5 +293,7 @@ mod multiline_navigation;
 mod numeric_and_scrub;
 #[path = "text_field_conformance/ordered_input.rs"]
 mod ordered_input;
+#[path = "text_field_conformance/viewport_ime.rs"]
+mod viewport_ime;
 #[path = "text_field_conformance/wrappers_and_path.rs"]
 mod wrappers_and_path;
