@@ -471,7 +471,10 @@ selection consume canonical pointer transitions once in order whenever that
 stream is nonempty; they never replay compatibility snapshot edges. The empty
 stream remains the legacy snapshot path. Spatial localization privately keeps
 each surviving event paired with its original root-stream ordinal, including
-gaps created by clipping, without adding metadata to public `UiInput`.
+gaps created by clipping, plus whether a captured release survived only for
+cleanup, without adding metadata to public `UiInput`. Ordered focus-loss and
+release-all cancellation is deferred until behaviors can observe preceding
+transitions; `end_frame` performs the same cleanup if no owner participates.
 
 The input model must support pointer capture. During a drag, the active widget
 continues receiving drag updates after leaving its original rectangle while it
@@ -482,6 +485,8 @@ four-unit inclusive threshold. Crossing latches even if the pointer moves back;
 the crossing response reports the full origin displacement and later frames
 report only subsequent movement. Any crossed release suppresses a pointer
 click. Only the `draggable` primitive publishes a domain drag source.
+Drop targets use canonical release-time geometry rather than the frame-final
+pointer snapshot; missing canonical button positions fail closed.
 
 Text input has priority when a text editor is focused. Keyboard shortcuts should not steal ordinary typing from focused text fields.
 

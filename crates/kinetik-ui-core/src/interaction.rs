@@ -12,8 +12,8 @@ mod tests;
 
 pub(crate) use drag_select::captured_selection_gesture_with_ordinals;
 pub use drag_select::{
-    CapturedSelectionGesture, SelectionGestureAction, SelectionGesturePhase, draggable,
-    draggable_transformed, selectable, selectable_transformed,
+    CapturedSelectionGesture, OrderedTextInputEvent, SelectionGestureAction, SelectionGesturePhase,
+    draggable, draggable_transformed, selectable, selectable_transformed,
 };
 pub use focus::{focusable, focusable_transformed};
 pub use hit::{hit_test, hit_test_transformed};

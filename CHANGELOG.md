@@ -29,6 +29,8 @@ published, or accepted as an alpha release.
   release-click suppression. Canonical pointer transitions now resolve once in
   order, and `Ui::captured_selection_gesture` exposes original-root-ordinal
   selection actions without turning text selection into a domain drag source.
+  `Ui::claim_ordered_text_input_events` supplies the matching ordinal-bearing
+  editing stream so text fields need not parse pointer events again.
 
 ### Documentation
 

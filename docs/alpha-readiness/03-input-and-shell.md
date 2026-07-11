@@ -57,7 +57,9 @@ a private four-current-scope-unit inclusive threshold latch, and suppresses
 release clicks after crossing. Only domain draggables publish drag sources.
 The runtime also retains original root event ordinals in a private spatial
 sidecar and exposes neutral captured-selection actions without changing public
-input or common response layouts. Empty canonical streams remain compatible.
+input or common response layouts. A matching ordered text claim exposes editing
+events with the same ordinals, so `TEXT-01` can merge without pointer reparsing.
+Empty canonical streams remain compatible.
 Focused threshold, conflict, drop-order, ordinal, spatial, and public-surface
 verification is in progress before independent audit and the complete gate.
 

@@ -704,9 +704,10 @@ in serial packet `IN-03B`; no B-owned behavior is claimed here.
 
 - `CHANGELOG.md`
 - `crates/kinetik-ui-core/src/{interaction,lib,memory}.rs`
-- `crates/kinetik-ui-core/src/interaction/{drag_select,hit,overlay,press,tests}.rs`
-- `crates/kinetik-ui-core/src/runtime/{spatial,ui}.rs`
+- `crates/kinetik-ui-core/src/interaction/{drag_select,hit,overlay,press,scroll,tests}.rs`
+- `crates/kinetik-ui-core/src/runtime/{spatial,tests,ui}.rs`
 - `crates/kinetik-ui-core/tests/{drag_threshold_conformance,ownership_reconciliation_conformance,pointer_arbitration_conformance,runtime_spatial_conformance}.rs`
+- `crates/kinetik-ui-core/tests/pointer_conformance/drag_capture.rs`
 - `crates/kinetik-ui/tests/public_api_surface.rs`
 - `docs/specs/{01-foundations,02-layout-and-interaction}.md`
 - `docs/alpha-readiness/{03-input-and-shell,progress}.md`
@@ -726,14 +727,24 @@ unchanged. `Ui::captured_selection_gesture` emits ordinal-bearing Press, Move,
 Release, and Cancel actions, reports below-threshold selection movement, and
 cannot replay actions for the same owner in one frame. Root conflicts block new
 pointer/drop actions while ordered release/cancel evidence can clean an existing
-owner.
+owner. `Ui::claim_ordered_text_input_events` exposes the corresponding claimed
+editing-domain events with the same original ordinals, so `TEXT-01` does not
+need to parse the pointer stream.
+
+The depth-one remedy retains cleanup-only release provenance, defers ordered
+release-all/focus cancellation until preceding transitions are observable,
+uses event-time release geometry for drops, rejects missing canonical button
+positions, clears disabled secondary owners, blocks conflicted tooltip/scroll
+hover, and prevents selection from publishing a retained domain drag.
 
 #### Tests run and results
 
-- New drag-threshold conformance: 12/12 passed, covering boundaries, accumulated
+- New drag-threshold conformance: 23/23 passed, covering boundaries, accumulated
   and subsequent deltas, move-back latch, same-frame release, pressable
   suppression, double-click, conflict cleanup, drop order, selection ordinals,
-  spatial gaps, release-all cancellation, and plain-capture cleanup.
+  spatial gaps and cleanup provenance, release-all cancellation, canonical drop
+  geometry, ordered text merging, missing event positions, and plain-capture
+  cleanup.
 - Core all-feature suite: passed after updating superseded snapshot fixtures to
   use canonical events and threshold-crossing geometry.
 - Facade public API surface with all features: 5/5 passed.

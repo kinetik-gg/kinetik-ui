@@ -279,8 +279,13 @@ capture seam that returns the common `Response` plus ordered Press, Move,
 Release, and Cancel actions. Canonical actions retain their original root event
 ordinal through transforms and clips; legacy snapshot actions have no ordinal.
 Selection reports movement below the domain threshold and never publishes a
-drag source. A field merges these actions with its single claimed editing
-stream instead of parsing pointer input a second time.
+drag source. `Ui::claim_ordered_text_input_events` returns the single claimed
+key, text, clipboard, modifier, IME, and focus stream with the same root
+ordinals (or no ordinals for legacy synthesis). A field merges those events
+with selection actions instead of parsing pointer input a second time.
+Releases preserved outside an effective clip are cancellation-only, even when
+their transformed point remains inside a larger widget rectangle. A canonical
+release with no event-time position cannot click, cross a threshold, or drop.
 
 Overlapping interaction uses a predeclared `PointerTargetPlan`. Each visual
 target has one canonical identity, at most one ordinary event owner, at most

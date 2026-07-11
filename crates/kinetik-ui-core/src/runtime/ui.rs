@@ -1,12 +1,13 @@
 use std::hash::Hash;
 
-use crate::input::UiInput;
+use crate::input::{InputStreamConflict, UiInput, UiInputEvent};
 use crate::interaction::captured_selection_gesture_with_ordinals;
 use crate::memory::UiMemory;
 use crate::render::Primitive;
 use crate::{
     ActionContext, ActionId, ActionInvocation, ActionSource, CapturedSelectionGesture, IdStack,
-    LivenessTargetId, LivenessToken, Rect, SemanticActionKind, SemanticNode, WidgetId,
+    LivenessTargetId, LivenessToken, OrderedTextInputEvent, Rect, SemanticActionKind, SemanticNode,
+    WidgetId,
 };
 
 use super::focus::{
@@ -33,6 +34,7 @@ pub struct Ui<'a> {
     output: FrameOutput,
     spatial: SpatialStack,
     pointer_plan_installed: bool,
+    pointer_cancel_pending: bool,
 }
 
 impl<'a> Ui<'a> {
@@ -43,7 +45,17 @@ impl<'a> Ui<'a> {
         let input_validation = context.input.validate_event_stream();
         let input_conflict = input_validation.as_ref().err().copied();
         memory.set_root_input_validation(input_validation);
-        if !context.input.window_focused || pointer_release_all_cancelled(&context.input) {
+        let pointer_cancel_pending = !context.input.events.is_empty()
+            && context.input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    UiInputEvent::PointerReleaseAll { .. }
+                        | UiInputEvent::WindowFocusChanged(false)
+                )
+            });
+        let legacy_pointer_cancel = context.input.events.is_empty()
+            && (!context.input.window_focused || pointer_release_all_cancelled(&context.input));
+        if legacy_pointer_cancel {
             memory.cancel_pointer_interaction();
         }
         let root_input = context.input.clone();
@@ -61,6 +73,7 @@ impl<'a> Ui<'a> {
             output,
             spatial: SpatialStack::default(),
             pointer_plan_installed: false,
+            pointer_cancel_pending,
         }
     }
 
@@ -111,6 +124,58 @@ impl<'a> Ui<'a> {
             self.memory,
             disabled,
         )
+    }
+
+    /// Claims editing-domain input with original root event ordinals.
+    ///
+    /// A successful canonical claim returns `Some` ordinals even when spatial
+    /// filtering removed earlier pointer events. Legacy synthesized input uses
+    /// `None`. `Ok(None)` means the caller did not own or had already claimed
+    /// this frame's editing stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the root input conflict recorded for this frame.
+    pub fn claim_ordered_text_input_events(
+        &mut self,
+        id: WidgetId,
+    ) -> Result<Option<Vec<OrderedTextInputEvent>>, InputStreamConflict> {
+        if !self.memory.claim_text_input_events(id) {
+            return match self.memory.root_input_conflict() {
+                Some(conflict) => Err(conflict),
+                None => Ok(None),
+            };
+        }
+
+        let events = self
+            .memory
+            .effective_text_input_events(&self.context.input)?;
+        if self.root_input.events.is_empty() {
+            return Ok(Some(
+                events
+                    .into_iter()
+                    .filter(is_editing_domain_event)
+                    .map(|event| OrderedTextInputEvent {
+                        ordinal: None,
+                        event,
+                    })
+                    .collect(),
+            ));
+        }
+
+        debug_assert_eq!(events.len(), self.input_event_ordinals.len());
+        Ok(Some(
+            events
+                .into_iter()
+                .zip(self.input_event_ordinals.iter().copied())
+                .filter_map(|(event, ordinal)| {
+                    is_editing_domain_event(&event).then_some(OrderedTextInputEvent {
+                        ordinal: Some(ordinal),
+                        event,
+                    })
+                })
+                .collect(),
+        ))
     }
 
     /// Derives and registers a widget ID in the current scope.
@@ -390,6 +455,10 @@ impl<'a> Ui<'a> {
                 .push_warning(FrameWarning::DuplicateWidgetId { id: duplicate.id });
         }
 
+        if self.pointer_cancel_pending && self.memory.cancel_pointer_interaction() {
+            self.output.request_repaint(RepaintRequest::NextFrame);
+        }
+
         let semantic_tree_valid = match self.output.semantics.validate() {
             Ok(()) => true,
             Err(error) => {
@@ -435,15 +504,34 @@ impl<'a> Ui<'a> {
     fn refresh_scoped_input(&mut self) {
         let localized = self.spatial.localize_input(
             &self.root_input,
-            self.memory.pointer_capture().is_some(),
+            self.memory.pointer_release_cleanup_required(),
             self.memory.secondary_pressed().is_some(),
             self.memory.root_input_conflict().is_some(),
         );
         self.context.input = localized.input;
         self.input_event_ordinals = localized.event_ordinals;
+        self.memory.install_scoped_pointer_cleanup_events(
+            localized
+                .cleanup_only
+                .iter()
+                .enumerate()
+                .filter_map(|(index, cleanup_only)| cleanup_only.then_some(index)),
+        );
     }
 }
 
 fn pointer_release_all_cancelled(input: &UiInput) -> bool {
     input.pointer.release_all_cancelled()
+}
+
+fn is_editing_domain_event(event: &UiInputEvent) -> bool {
+    matches!(
+        event,
+        UiInputEvent::ModifiersChanged(_)
+            | UiInputEvent::Key(_)
+            | UiInputEvent::Text(_)
+            | UiInputEvent::ClipboardText(_)
+            | UiInputEvent::ImeEnabled(_)
+            | UiInputEvent::WindowFocusChanged(_)
+    )
 }

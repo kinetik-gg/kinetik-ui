@@ -1,9 +1,9 @@
 //! Ordered drag-threshold and captured-selection gesture conformance.
 
 use kinetik_ui_core::{
-    ClipId, Key, KeyEvent, KeyState, Modifiers, MouseButton, Point, Primitive, Rect,
-    SelectionGesturePhase, TextInputEvent, UiInputEvent, UiTestHarness, Vec2, draggable,
-    drop_target, pressable,
+    ClipId, InputWheelDelta, Key, KeyEvent, KeyState, Modifiers, MouseButton, Point, Primitive,
+    Rect, SelectionGesturePhase, Size, TextInputEvent, UiInputEvent, UiTestHarness, Vec2,
+    draggable, drop_target, pressable, scrollable, tooltip_trigger,
 };
 
 const FULL: Rect = Rect::new(0.0, 0.0, 160.0, 80.0);
@@ -258,6 +258,169 @@ fn spatial_filtering_keeps_original_action_ordinals_with_gaps() {
 }
 
 #[test]
+fn ordered_text_claim_exposes_root_ordinals_without_pointer_reparsing() {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(200.0, 10.0));
+    harness.input_mut().push_event(UiInputEvent::Wheel {
+        delta: InputWheelDelta::Pixels(Vec2::new(0.0, 1.0)),
+        position: Some(Point::new(200.0, 10.0)),
+    });
+    harness.input_mut().push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: true,
+        click_count: 1,
+        position: Some(Point::new(10.0, 10.0)),
+    });
+    harness
+        .input_mut()
+        .push_event(UiInputEvent::Text(TextInputEvent::Commit(
+            "typed".to_owned(),
+        )));
+
+    let clip = ClipId::from_raw(94);
+    let ((gesture, editing), _) = harness.run_frame(|ui| {
+        let id = ui.id("selection");
+        ui.memory_mut().focus(id);
+        ui.memory_mut().set_text_input_owner(id);
+        ui.push_primitive(Primitive::ClipBegin {
+            id: clip,
+            rect: FULL,
+        });
+        let gesture = ui.captured_selection_gesture(id, FULL, false);
+        let editing = ui
+            .claim_ordered_text_input_events(id)
+            .expect("valid root stream")
+            .expect("focused owner claim");
+        ui.push_primitive(Primitive::ClipEnd { id: clip });
+        (gesture, editing)
+    });
+
+    assert_eq!(gesture.actions[0].ordinal, Some(2));
+    assert_eq!(editing.len(), 1);
+    assert_eq!(editing[0].ordinal, Some(3));
+    assert!(matches!(
+        &editing[0].event,
+        UiInputEvent::Text(TextInputEvent::Commit(text)) if text == "typed"
+    ));
+}
+
+#[test]
+fn canonical_release_outside_clip_is_cancel_only_with_original_ordinal() {
+    let clip = ClipId::from_raw(92);
+    let clip_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Primary);
+    let pressed = harness
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let gesture = ui.captured_selection_gesture(id, FULL, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            gesture
+        })
+        .0;
+    assert_eq!(
+        harness.memory().pointer_capture(),
+        Some(pressed.response.id)
+    );
+
+    harness.set_pointer_position(Point::new(50.0, 10.0));
+    harness.pointer_release(MouseButton::Primary);
+    let cancelled = harness
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let gesture = ui.captured_selection_gesture(id, FULL, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            gesture
+        })
+        .0;
+
+    assert_eq!(cancelled.actions.len(), 1);
+    assert_eq!(cancelled.actions[0].ordinal, Some(1));
+    assert_eq!(cancelled.actions[0].phase, SelectionGesturePhase::Cancel);
+    assert!(!cancelled.response.clicked);
+    assert!(!cancelled.response.dragged);
+    assert_eq!(harness.memory().pointer_capture(), None);
+
+    let mut ordinary = UiTestHarness::new();
+    ordinary.set_pointer_position(Point::new(10.0, 10.0));
+    ordinary.pointer_press(MouseButton::Primary);
+    let _ = ordinary.run_frame(|ui| {
+        let id = ui.id("press");
+        ui.push_primitive(Primitive::ClipBegin {
+            id: clip,
+            rect: clip_rect,
+        });
+        let (input, memory) = ui.input_and_memory_mut();
+        let response = pressable(id, FULL, input, memory, false);
+        ui.push_primitive(Primitive::ClipEnd { id: clip });
+        response
+    });
+    ordinary.set_pointer_position(Point::new(50.0, 10.0));
+    ordinary.pointer_release(MouseButton::Primary);
+    let response = ordinary
+        .run_frame(|ui| {
+            let id = ui.id("press");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let (input, memory) = ui.input_and_memory_mut();
+            let response = pressable(id, FULL, input, memory, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            response
+        })
+        .0;
+    assert!(!response.clicked);
+    assert_eq!(ordinary.memory().pointer_capture(), None);
+}
+
+#[test]
+fn canonical_secondary_release_outside_clip_is_cleanup_only() {
+    let clip = ClipId::from_raw(95);
+    let clip_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Secondary);
+    let _ = harness.run_frame(|ui| {
+        let id = ui.id("press");
+        ui.push_primitive(Primitive::ClipBegin {
+            id: clip,
+            rect: clip_rect,
+        });
+        let (input, memory) = ui.input_and_memory_mut();
+        let response = pressable(id, FULL, input, memory, false);
+        ui.push_primitive(Primitive::ClipEnd { id: clip });
+        response
+    });
+    harness.set_pointer_position(Point::new(50.0, 10.0));
+    harness.pointer_release(MouseButton::Secondary);
+    let response = harness
+        .run_frame(|ui| {
+            let id = ui.id("press");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let (input, memory) = ui.input_and_memory_mut();
+            let response = pressable(id, FULL, input, memory, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            response
+        })
+        .0;
+    assert!(!response.secondary_clicked);
+    assert_eq!(harness.memory().secondary_pressed(), None);
+}
+
+#[test]
 fn release_all_emits_one_original_ordinal_cancel_and_clears_selection_capture() {
     let mut harness = UiTestHarness::new();
     harness.set_pointer_position(Point::new(10.0, 10.0));
@@ -285,6 +448,188 @@ fn release_all_emits_one_original_ordinal_cancel_and_clears_selection_capture() 
     assert_eq!(cancelled.actions[0].phase, SelectionGesturePhase::Cancel);
     assert_eq!(harness.memory().pointer_capture(), None);
     assert_eq!(harness.memory().drag_source(), None);
+
+    let clip = ClipId::from_raw(93);
+    let clip_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let mut clipped = UiTestHarness::new();
+    clipped.set_pointer_position(Point::new(10.0, 10.0));
+    clipped.pointer_press(MouseButton::Primary);
+    let _ = clipped.run_frame(|ui| {
+        let id = ui.id("selection");
+        ui.push_primitive(Primitive::ClipBegin {
+            id: clip,
+            rect: clip_rect,
+        });
+        let gesture = ui.captured_selection_gesture(id, FULL, false);
+        ui.push_primitive(Primitive::ClipEnd { id: clip });
+        gesture
+    });
+    clipped.set_pointer_position(Point::new(50.0, 10.0));
+    clipped.input_mut().release_pointer_buttons();
+    let cancelled = clipped
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let gesture = ui.captured_selection_gesture(id, FULL, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            gesture
+        })
+        .0;
+    assert_eq!(cancelled.actions.len(), 1);
+    assert_eq!(cancelled.actions[0].ordinal, Some(1));
+    assert_eq!(cancelled.actions[0].phase, SelectionGesturePhase::Cancel);
+}
+
+#[test]
+fn ordered_move_before_release_all_is_not_discarded_by_frame_cleanup() {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Primary);
+    let _ = harness.run_frame(|ui| {
+        let id = ui.id("selection");
+        ui.captured_selection_gesture(id, FULL, false)
+    });
+
+    harness.set_pointer_position(Point::new(12.0, 10.0));
+    harness.input_mut().release_pointer_buttons();
+    let gesture = harness
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            ui.captured_selection_gesture(id, FULL, false)
+        })
+        .0;
+    assert_eq!(
+        gesture
+            .actions
+            .iter()
+            .map(|action| (action.ordinal, action.phase))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some(0), SelectionGesturePhase::Move),
+            (Some(1), SelectionGesturePhase::Cancel),
+        ]
+    );
+    assert_eq!(harness.memory().pointer_capture(), None);
+}
+
+#[test]
+fn secondary_owner_clears_when_the_participating_widget_becomes_disabled() {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Secondary);
+    let owner = run_press(&mut harness).id;
+    assert_eq!(harness.memory().secondary_pressed(), Some(owner));
+
+    let response = harness
+        .run_frame(|ui| {
+            let id = ui.id("press");
+            let (input, memory) = ui.input_and_memory_mut();
+            pressable(id, FULL, input, memory, true)
+        })
+        .0;
+    assert!(response.state.disabled);
+    assert_eq!(harness.memory().secondary_pressed(), None);
+}
+
+#[test]
+fn selection_mode_change_cannot_publish_a_retained_domain_drop() {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Primary);
+    let _ = run_drag(&mut harness);
+    harness.set_pointer_position(Point::new(14.0, 10.0));
+    let crossed = run_drag(&mut harness);
+    assert_eq!(harness.memory().drag_source(), Some(crossed.id));
+
+    harness.pointer_release(MouseButton::Primary);
+    let gesture = harness
+        .run_frame(|ui| {
+            let id = ui.id("drag");
+            ui.captured_selection_gesture(id, FULL, false)
+        })
+        .0;
+    assert_eq!(gesture.actions[0].phase, SelectionGesturePhase::Release);
+    assert_eq!(harness.memory().drag_source(), None);
+    assert_eq!(harness.memory().released_drag_source(), None);
+}
+
+#[test]
+fn conflicted_selection_release_is_cancel_only() {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Primary);
+    let _ = harness.run_frame(|ui| {
+        let id = ui.id("selection");
+        ui.captured_selection_gesture(id, FULL, false)
+    });
+
+    harness.pointer_release(MouseButton::Primary);
+    harness.input_mut().pointer.delta = Vec2::new(99.0, 0.0);
+    let gesture = harness
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            ui.captured_selection_gesture(id, FULL, false)
+        })
+        .0;
+    assert_eq!(gesture.actions.len(), 1);
+    assert_eq!(gesture.actions[0].phase, SelectionGesturePhase::Cancel);
+    assert!(!gesture.response.clicked);
+    assert_eq!(harness.memory().pointer_capture(), None);
+}
+
+#[test]
+fn conflicting_snapshot_only_focus_loss_cannot_invent_an_ordered_cancel() {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Primary);
+    let owner = run_press(&mut harness).id;
+    harness
+        .input_mut()
+        .push_event(UiInputEvent::Key(KeyEvent::new(
+            Key::ArrowLeft,
+            KeyState::Pressed,
+            Modifiers::default(),
+            false,
+        )));
+    harness.input_mut().window_focused = false;
+
+    let response = run_press(&mut harness);
+    assert!(!response.clicked);
+    assert_eq!(harness.memory().pointer_capture(), Some(owner));
+    assert!(!harness.memory().pointer_interaction_cancelled());
+}
+
+#[test]
+fn root_conflict_blocks_tooltip_and_scroll_hover_without_discarding_canonical_wheel() {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.wheel_pixels(Vec2::new(0.0, -20.0));
+    harness.input_mut().pointer.delta = Vec2::new(99.0, 0.0);
+
+    let ((tooltip, scroll), output) = harness.run_frame(|ui| {
+        let tooltip_id = ui.id("tooltip");
+        let scroll_id = ui.id("scroll");
+        let (input, memory) = ui.input_and_memory_mut();
+        let tooltip = tooltip_trigger(tooltip_id, FULL, input, memory, false);
+        let (input, memory) = ui.input_and_memory_mut();
+        let scroll = scrollable(
+            scroll_id,
+            FULL,
+            Size::new(320.0, 320.0),
+            input,
+            memory,
+            false,
+        );
+        (tooltip, scroll)
+    });
+    assert!(!tooltip.state.hovered);
+    assert!(!tooltip.tooltip_requested);
+    assert!(!scroll.response.state.hovered);
+    assert_eq!(scroll.delta, Vec2::new(0.0, 20.0));
+    assert_eq!(output.warnings.len(), 1);
 }
 
 #[test]
@@ -328,6 +673,64 @@ fn drop_is_ineligible_below_threshold_and_order_independent_after_crossing() {
     assert_eq!(drop.source, Some(source.id));
     assert!(drop.dropped);
     assert!(!source.clicked);
+}
+
+#[test]
+fn drop_uses_canonical_release_geometry_and_rejects_missing_event_position() {
+    let source = kinetik_ui_core::WidgetId::from_key("source");
+    let target = kinetik_ui_core::WidgetId::from_key("target");
+
+    let mut missing = UiTestHarness::new();
+    missing.memory_mut().capture_pointer(source);
+    missing.memory_mut().activate(source);
+    missing.memory_mut().press(source);
+    missing.memory_mut().start_drag(source);
+    missing.input_mut().pointer.position = Some(Point::new(10.0, 10.0));
+    missing.input_mut().push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: false,
+        click_count: 1,
+        position: None,
+    });
+    let drop = missing
+        .run_frame(|ui| {
+            ui.register_id(source);
+            ui.register_id(target);
+            let (input, memory) = ui.input_and_memory_mut();
+            drop_target(target, FULL, input, memory, false)
+        })
+        .0;
+    assert_eq!(drop.source, None);
+    assert!(!drop.dropped);
+
+    let mut ordered = UiTestHarness::new();
+    ordered.memory_mut().capture_pointer(source);
+    ordered.memory_mut().activate(source);
+    ordered.memory_mut().press(source);
+    ordered.memory_mut().start_drag(source);
+    ordered.input_mut().pointer.position = Some(Point::new(10.0, 10.0));
+    ordered.input_mut().pointer.primary.down = true;
+    ordered.input_mut().push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: false,
+        click_count: 1,
+        position: Some(Point::new(10.0, 10.0)),
+    });
+    ordered.input_mut().push_event(UiInputEvent::PointerMoved {
+        position: Point::new(200.0, 10.0),
+        delta: Vec2::new(190.0, 0.0),
+    });
+    let drop = ordered
+        .run_frame(|ui| {
+            ui.register_id(source);
+            ui.register_id(target);
+            let (input, memory) = ui.input_and_memory_mut();
+            drop_target(target, FULL, input, memory, false)
+        })
+        .0;
+    assert_eq!(drop.source, Some(source));
+    assert!(drop.dropped);
+    assert!(drop.response.state.hovered);
 }
 
 #[test]
@@ -376,4 +779,38 @@ fn plain_pointer_capture_release_cleans_without_synthesizing_a_click() {
         .0;
     assert!(!response.clicked);
     assert_eq!(harness.memory().pointer_capture(), None);
+}
+
+#[test]
+fn canonical_button_without_event_position_never_uses_the_final_snapshot_position() {
+    let mut missing_press = UiTestHarness::new();
+    missing_press.set_pointer_position(Point::new(10.0, 10.0));
+    missing_press
+        .input_mut()
+        .push_event(UiInputEvent::PointerButton {
+            button: MouseButton::Primary,
+            down: true,
+            click_count: 1,
+            position: None,
+        });
+    let response = run_press(&mut missing_press);
+    assert!(!response.state.active);
+    assert_eq!(missing_press.memory().pointer_capture(), None);
+
+    let mut missing_release = UiTestHarness::new();
+    missing_release.set_pointer_position(Point::new(10.0, 10.0));
+    missing_release.pointer_press(MouseButton::Primary);
+    let pressed = run_press(&mut missing_release);
+    assert_eq!(missing_release.memory().pointer_capture(), Some(pressed.id));
+    missing_release
+        .input_mut()
+        .push_event(UiInputEvent::PointerButton {
+            button: MouseButton::Primary,
+            down: false,
+            click_count: 1,
+            position: None,
+        });
+    let response = run_press(&mut missing_release);
+    assert!(!response.clicked);
+    assert_eq!(missing_release.memory().pointer_capture(), None);
 }

@@ -316,7 +316,7 @@ fn ui_builder_cancels_pointer_interaction_on_focus_loss_at_frame_start() {
 }
 
 #[test]
-fn ui_builder_cancels_pointer_interaction_on_release_all_at_frame_start() {
+fn ui_builder_defers_ordered_release_all_cleanup_until_frame_end() {
     let viewport = ViewportInfo::new(
         Size::new(100.0, 50.0),
         PhysicalSize::new(100, 50),
@@ -338,15 +338,23 @@ fn ui_builder_cancels_pointer_interaction_on_release_all_at_frame_start() {
     memory.capture_pointer(owner);
     memory.start_drag(owner);
 
-    let ui = Ui::begin_frame(context, &mut memory);
+    let mut ui = Ui::begin_frame(context, &mut memory);
 
-    assert_eq!(ui.memory().active(), None);
-    assert_eq!(ui.memory().pressed(), None);
-    assert_eq!(ui.memory().pointer_capture(), None);
-    assert_eq!(ui.memory().drag_source(), None);
-    assert!(ui.memory().pointer_interaction_cancelled());
-    assert_eq!(ui.memory().focused(), Some(focused));
-    assert_eq!(ui.memory().text_input_owner(), Some(focused));
+    assert_eq!(ui.memory().active(), Some(owner));
+    assert_eq!(ui.memory().pointer_capture(), Some(owner));
+    assert!(!ui.memory().pointer_interaction_cancelled());
+    ui.register_id(owner);
+    ui.register_id(focused);
+    let output = ui.end_frame();
+
+    assert_eq!(memory.active(), None);
+    assert_eq!(memory.pressed(), None);
+    assert_eq!(memory.pointer_capture(), None);
+    assert_eq!(memory.drag_source(), None);
+    assert!(memory.pointer_interaction_cancelled());
+    assert_eq!(memory.focused(), Some(focused));
+    assert_eq!(memory.text_input_owner(), Some(focused));
+    assert_eq!(output.repaint, RepaintRequest::NextFrame);
 }
 
 #[test]

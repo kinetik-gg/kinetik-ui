@@ -90,9 +90,10 @@ pub(super) fn resolve_pressable_with_hit_target(
 ) -> PressResolution {
     let conflicted = memory.pointer_input_conflicted(input);
     let owns_primary = owns_primary_gesture(memory, id);
+    let owns_secondary = memory.is_secondary_pressed(id);
     let mut outcome = PointerOutcome::default();
 
-    if disabled && owns_primary {
+    if disabled && (owns_primary || owns_secondary) {
         memory.cancel_pointer_interaction();
     }
 
@@ -205,6 +206,7 @@ fn resolve_canonical_pointer(
 
     for (event_index, event) in input.events.iter().enumerate() {
         let ordinal = selection_ordinal(kind, event_ordinals, event_index);
+        let cleanup_only = memory.scoped_pointer_event_is_cleanup(event_index);
         match event {
             UiInputEvent::PointerMoved { position, delta } => {
                 if !conflicted && owns_primary_gesture(memory, id) {
@@ -229,8 +231,8 @@ fn resolve_canonical_pointer(
                 if !conflicted
                     && !owns_primary_gesture(memory, id)
                     && memory.pointer_route_allows(id)
-                    && hit_target.hit_test_position(rect, position.or(input.pointer.position))
-                    && let Some(press_position) = position.or(input.pointer.position)
+                    && hit_target.hit_test_position(rect, *position)
+                    && let Some(press_position) = *position
                 {
                     memory.activate(id);
                     memory.press(id);
@@ -258,11 +260,12 @@ fn resolve_canonical_pointer(
                         id,
                         rect,
                         hit_target,
-                        position.or(input.pointer.position),
+                        *position,
                         *click_count,
                         memory,
                         kind,
                         ordinal,
+                        cleanup_only,
                         conflicted,
                         outcome,
                     );
@@ -277,10 +280,11 @@ fn resolve_canonical_pointer(
                 id,
                 rect,
                 hit_target,
-                position.or(input.pointer.position),
+                *position,
                 *down,
                 memory,
                 conflicted,
+                cleanup_only,
                 outcome,
             ),
             UiInputEvent::PointerReleaseAll { position } => {
@@ -290,14 +294,14 @@ fn resolve_canonical_pointer(
                         outcome,
                         ordinal,
                         SelectionGesturePhase::Cancel,
-                        position.or(input.pointer.position),
+                        *position,
                         Vec2::ZERO,
                         input.pointer.click_count,
                     );
                     memory.cancel_pointer_interaction();
                     outcome.suppress_drag_output = true;
                 } else if memory.is_secondary_pressed(id) {
-                    memory.release_secondary(id);
+                    memory.cancel_pointer_interaction();
                 }
             }
             UiInputEvent::WindowFocusChanged(false) => {
@@ -386,6 +390,7 @@ fn resolve_legacy_pointer(
             kind,
             None,
             false,
+            false,
             outcome,
         );
     }
@@ -447,10 +452,12 @@ fn resolve_primary_release(
     memory: &mut UiMemory,
     kind: PointerGestureKind,
     ordinal: Option<usize>,
+    cleanup_only: bool,
     conflicted: bool,
     outcome: &mut PointerOutcome,
 ) {
     if !conflicted
+        && !cleanup_only
         && memory
             .pointer_gesture(id)
             .is_some_and(|(_, crossed)| !crossed)
@@ -462,12 +469,16 @@ fn resolve_primary_release(
         .pointer_gesture(id)
         .is_some_and(|(_, crossed)| crossed)
         || memory.is_drag_source(id);
-    let released_inside = hit_target.hit_test_position(rect, position);
+    let released_inside = !cleanup_only && hit_target.hit_test_position(rect, position);
     push_selection_action(
         kind,
         outcome,
         ordinal,
-        SelectionGesturePhase::Release,
+        if cleanup_only || conflicted {
+            SelectionGesturePhase::Cancel
+        } else {
+            SelectionGesturePhase::Release
+        },
         position,
         Vec2::ZERO,
         click_count,
@@ -482,12 +493,12 @@ fn resolve_primary_release(
         outcome.clicked = true;
         outcome.double_clicked |= click_count >= 2;
     }
-    if conflicted {
+    if conflicted || kind != PointerGestureKind::DomainDrag {
         memory.clear_drag();
     } else {
         memory.finish_drag(id);
     }
-    if !released_inside {
+    if cleanup_only || !released_inside {
         outcome.suppress_drag_output = true;
     }
     memory.clear_interaction();
@@ -502,6 +513,7 @@ fn resolve_secondary_transition(
     down: bool,
     memory: &mut UiMemory,
     conflicted: bool,
+    cleanup_only: bool,
     outcome: &mut PointerOutcome,
 ) {
     if down {
@@ -512,7 +524,8 @@ fn resolve_secondary_transition(
             memory.press_secondary(id);
         }
     } else if memory.is_secondary_pressed(id) {
-        outcome.secondary_clicked = !conflicted && hit_target.hit_test_position(rect, position);
+        outcome.secondary_clicked =
+            !conflicted && !cleanup_only && hit_target.hit_test_position(rect, position);
         memory.release_secondary(id);
     }
 }
@@ -562,7 +575,7 @@ fn cancellation_evidence(
         .rev()
         .find_map(|(index, event)| match event {
             UiInputEvent::PointerReleaseAll { position } => {
-                Some((Some(ordinals[index]), position.or(input.pointer.position)))
+                Some((Some(ordinals[index]), *position))
             }
             UiInputEvent::WindowFocusChanged(false) => {
                 Some((Some(ordinals[index]), input.pointer.position))

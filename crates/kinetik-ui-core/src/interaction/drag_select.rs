@@ -1,7 +1,16 @@
 use super::hit::HitTarget;
 use super::press::{PointerGestureKind, resolve_pressable_with_hit_target};
 use super::{Response, pressable, pressable_transformed};
-use crate::{Point, Rect, Transform, UiInput, UiMemory, Vec2, WidgetId};
+use crate::{Point, Rect, Transform, UiInput, UiInputEvent, UiMemory, Vec2, WidgetId};
+
+/// One claimed editing-domain event paired with its original canonical ordinal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrderedTextInputEvent {
+    /// Original root event index, or `None` for legacy synthesized input.
+    pub ordinal: Option<usize>,
+    /// Key, text, clipboard, modifier, IME, or focus event.
+    pub event: UiInputEvent,
+}
 
 /// Ordered phase emitted by a captured text-selection gesture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -88,6 +88,7 @@ pub struct UiMemory {
     cancelled_pointer_gesture_owner: Option<WidgetId>,
     pointer_routes: PointerRoutes,
     pointer_cursor_equivalents: HashSet<WidgetId>,
+    scoped_pointer_cleanup_events: HashSet<usize>,
     selection_gesture_claims: HashSet<WidgetId>,
     /// Retained primary press origin and threshold latch.
     pointer_gesture: Option<PointerGesture>,
@@ -126,6 +127,7 @@ impl UiMemory {
         self.cancelled_pointer_gesture_owner = None;
         self.pointer_routes = PointerRoutes::default();
         self.pointer_cursor_equivalents.clear();
+        self.scoped_pointer_cleanup_events.clear();
         self.selection_gesture_claims.clear();
         self.text_input_event_claim = None;
         self.root_input_validation = RootInputValidation::Unvalidated;
@@ -456,8 +458,24 @@ impl UiMemory {
         }
     }
 
+    pub(crate) const fn pointer_release_cleanup_required(&self) -> bool {
+        self.pointer_capture.is_some() || self.cancelled_pointer_gesture_owner.is_some()
+    }
+
     pub(crate) fn claim_selection_gesture(&mut self, owner: WidgetId) -> bool {
         self.selection_gesture_claims.insert(owner)
+    }
+
+    pub(crate) fn install_scoped_pointer_cleanup_events(
+        &mut self,
+        event_indices: impl IntoIterator<Item = usize>,
+    ) {
+        self.scoped_pointer_cleanup_events.clear();
+        self.scoped_pointer_cleanup_events.extend(event_indices);
+    }
+
+    pub(crate) fn scoped_pointer_event_is_cleanup(&self, event_index: usize) -> bool {
+        self.scoped_pointer_cleanup_events.contains(&event_index)
     }
 
     /// Marks a widget as the active drag source.

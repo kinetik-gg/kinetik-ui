@@ -12,6 +12,7 @@ pub(crate) struct SpatialStack {
 pub(crate) struct LocalizedInput {
     pub input: UiInput,
     pub event_ordinals: Vec<usize>,
+    pub cleanup_only: Vec<bool>,
 }
 
 impl SpatialStack {
@@ -83,16 +84,18 @@ impl SpatialStack {
             return LocalizedInput {
                 input,
                 event_ordinals: Vec::new(),
+                cleanup_only: Vec::new(),
             };
         }
 
-        let (events, event_ordinals) =
+        let (events, event_ordinals, cleanup_only) =
             self.localize_events(root, preserve_primary_release, preserve_secondary_release);
         input.events = events;
         if root_input_conflict {
             return LocalizedInput {
                 input,
                 event_ordinals,
+                cleanup_only,
             };
         }
 
@@ -136,6 +139,7 @@ impl SpatialStack {
         LocalizedInput {
             input,
             event_ordinals,
+            cleanup_only,
         }
     }
 
@@ -144,19 +148,53 @@ impl SpatialStack {
         root: &UiInput,
         preserve_primary_release: bool,
         preserve_secondary_release: bool,
-    ) -> (Vec<UiInputEvent>, Vec<usize>) {
+    ) -> (Vec<UiInputEvent>, Vec<usize>, Vec<bool>) {
         let localized = root
             .events
             .iter()
             .enumerate()
             .filter_map(|(ordinal, event)| {
+                let cleanup_only = self.event_is_cleanup_only(
+                    event,
+                    preserve_primary_release,
+                    preserve_secondary_release,
+                );
                 self.localize_event(event, preserve_primary_release, preserve_secondary_release)
-                    .map(|event| (ordinal, event))
+                    .map(|event| (ordinal, event, cleanup_only))
             })
             .collect::<Vec<_>>();
-        let ordinals = localized.iter().map(|(ordinal, _)| *ordinal).collect();
-        let events = localized.into_iter().map(|(_, event)| event).collect();
-        (events, ordinals)
+        let ordinals = localized.iter().map(|(ordinal, _, _)| *ordinal).collect();
+        let cleanup_only = localized
+            .iter()
+            .map(|(_, _, cleanup_only)| *cleanup_only)
+            .collect();
+        let events = localized.into_iter().map(|(_, event, _)| event).collect();
+        (events, ordinals, cleanup_only)
+    }
+
+    fn event_is_cleanup_only(
+        &self,
+        event: &UiInputEvent,
+        preserve_primary_release: bool,
+        preserve_secondary_release: bool,
+    ) -> bool {
+        match event {
+            UiInputEvent::PointerButton {
+                button,
+                down: false,
+                position,
+                ..
+            } => {
+                let preserved = (*button == MouseButton::Primary && preserve_primary_release)
+                    || (*button == MouseButton::Secondary && preserve_secondary_release);
+                preserved && !self.ordinary_event_allowed(*position)
+            }
+            UiInputEvent::PointerReleaseAll { position } => {
+                (preserve_primary_release || preserve_secondary_release)
+                    && !self.ordinary_event_allowed(*position)
+            }
+            _ => false,
+        }
     }
 
     fn localize_event(

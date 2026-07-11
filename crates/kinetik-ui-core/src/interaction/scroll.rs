@@ -66,8 +66,9 @@ fn scrollable_with_hit_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> ScrollResponse {
+    let conflicted = memory.pointer_input_conflicted(input);
     let target_hit = hit_target.hit_test(rect, input);
-    let hovered = !disabled && target_hit && memory.pointer_route_allows(id);
+    let hovered = !conflicted && !disabled && target_hit && memory.pointer_route_allows(id);
     if hovered {
         memory.set_hovered(id);
     }

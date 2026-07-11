@@ -1,6 +1,8 @@
 use super::hit::HitTarget;
 use super::{DropTargetResponse, InteractionState, Response, pressable, pressable_transformed};
-use crate::{Key, KeyState, Rect, Transform, UiInput, UiMemory, WidgetId};
+use crate::{
+    Key, KeyState, MouseButton, Rect, Transform, UiInput, UiInputEvent, UiMemory, WidgetId,
+};
 
 /// Resolves neutral context-menu trigger behavior.
 pub fn context_menu_trigger(
@@ -69,7 +71,9 @@ fn tooltip_trigger_with_hit_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> Response {
-    let hovered = !disabled && hit_target.routed_hit_test(id, rect, input, memory);
+    let hovered = !disabled
+        && !memory.pointer_input_conflicted(input)
+        && hit_target.routed_hit_test(id, rect, input, memory);
     if hovered {
         memory.set_hovered(id);
     }
@@ -131,24 +135,31 @@ fn drop_target_with_hit_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> DropTargetResponse {
-    let pointer_cancelled =
-        memory.pointer_interaction_cancelled() || memory.pointer_input_conflicted(input);
+    let pointer_cancelled = memory.pointer_interaction_cancelled()
+        || memory.pointer_input_conflicted(input)
+        || canonical_pointer_cancelled(input);
     let source_candidate = memory
         .released_drag_source()
         .or_else(|| memory.drag_source())
         .filter(|source| *source != id);
     let target_hit = hit_target.hit_test(rect, input);
+    let (release_seen, release_hit) = primary_release_hit(hit_target, rect, input, target_hit);
+    let source_hit = if release_seen {
+        release_hit
+    } else {
+        target_hit
+    };
     let hovered = !pointer_cancelled
         && !disabled
         && if source_candidate.is_some() {
-            target_hit && memory.pointer_drop_route_allows(id)
+            source_hit && memory.pointer_drop_route_allows(id)
         } else {
             hit_target.routed_hit_test(id, rect, input, memory)
         };
     let source = if !pointer_cancelled
         && !disabled
         && source_candidate.is_some()
-        && target_hit
+        && source_hit
         && memory.pointer_drop_route_allows(id)
     {
         source_candidate
@@ -158,11 +169,7 @@ fn drop_target_with_hit_target(
     if hovered {
         memory.set_hovered(id);
     }
-    let dropped = !pointer_cancelled
-        && !disabled
-        && hovered
-        && input.pointer.primary.released
-        && source.is_some();
+    let dropped = !pointer_cancelled && !disabled && hovered && release_seen && source.is_some();
     let response = Response::new(
         id,
         rect,
@@ -181,6 +188,43 @@ fn drop_target_with_hit_target(
         source,
         dropped,
     }
+}
+
+fn primary_release_hit(
+    hit_target: HitTarget,
+    rect: Rect,
+    input: &UiInput,
+    legacy_target_hit: bool,
+) -> (bool, bool) {
+    if input.events.is_empty() {
+        return (input.pointer.primary.released, legacy_target_hit);
+    }
+
+    let mut release_seen = false;
+    let mut release_hit = false;
+    for event in &input.events {
+        if let UiInputEvent::PointerButton {
+            button: MouseButton::Primary,
+            down: false,
+            position,
+            ..
+        } = event
+        {
+            release_seen = true;
+            release_hit |= hit_target.hit_test_position(rect, *position);
+        }
+    }
+    (release_seen, release_hit)
+}
+
+fn canonical_pointer_cancelled(input: &UiInput) -> bool {
+    !input.events.is_empty()
+        && input.events.iter().any(|event| {
+            matches!(
+                event,
+                UiInputEvent::PointerReleaseAll { .. } | UiInputEvent::WindowFocusChanged(false)
+            )
+        })
 }
 
 fn keyboard_context_requested(id: WidgetId, input: &UiInput, memory: &UiMemory) -> bool {
