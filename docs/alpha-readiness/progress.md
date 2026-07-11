@@ -618,12 +618,14 @@ injectable Winit cursor, IME, clipboard, URL, and repaint boundaries in tests.
   pre-translation debug redaction, About-control interaction, malformed URL
   authorities, and missing real Showcase-to-fake-Winit integration. All four
   have deterministic depth-one remedies; focused core, Winit (42/42), Showcase
-  (128 library plus 25 binary), and warning-denied Clippy checks pass. Exact-SHA
-  re-review remains pending.
+  (128 library plus 25 binary), and warning-denied Clippy checks pass. Three
+  independent exact-SHA re-reviewers passed with no P0/P1/P2 findings.
 - `cargo package -p kinetik-ui-winit --allow-dirty --list`: passed and included
   both new modules plus integration tests. The direct archive attempt reproduced
   the accepted unpublished `kinetik-ui-core` registry bootstrap limitation.
-- Independent critic and complete workspace gate: pending.
+- Complete workspace gate: formatting, warning-denied Clippy, all-feature tests,
+  all-feature build, all-feature examples, and warning-denied documentation all
+  passed on the audited code candidate.
 
 #### Remaining risks and deferred findings
 
@@ -632,8 +634,9 @@ event-loop timing need desktop/three-OS smoke beyond deterministic fakes. Delaye
 clipboard target reuse remains subject to `ASYNC-01` incarnation policy. This is
 a provisional breaking Winit API change; migration is recorded in the
 changelog. Direct archive creation still requires the Stage 1 ephemeral local
-registry until internal crates are published. Independent audit, full gate, PR
-CI, and merge are not yet claimed.
+registry until internal crates are published. Independent audit and the local
+full gate are accepted; exact-SHA three-OS CI, PR checks, and merge are not yet
+claimed.
 
 ## Packet Completion Template
 

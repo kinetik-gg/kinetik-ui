@@ -6,7 +6,7 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | In progress; `IN-01` merged, `IN-02` depth-one remedy focused gates passed pending re-review |
+| Status | In progress; `IN-01` merged, `IN-02` local audit and full gate passed pending exact-SHA three-OS CI |
 | Scope | Sequence-preserving input, platform request execution, and pointer normalization |
 | Impact / confidence | Critical / High (`IN-03` is High / High) |
 | Campaign prerequisite | Stage 2 gate; campaign authorization recorded |
@@ -34,9 +34,10 @@ parseable-host HTTP(S) validation, and a live-loop rollover path that cannot
 replay shell work after a recoverable surface failure. Help, the interactive
 About control, and F1 route one fixed HTTPS Documentation action. Real Showcase
 output crosses fake Winit cursor, IME, clipboard, URL, and repaint boundaries in
-deterministic tests. The depth-zero audit's four findings are closed in the
-depth-one candidate; independent re-review, the complete workspace gate, PR CI,
-and squash merge remain before acceptance.
+deterministic tests. Three independent depth-one re-reviewers closed the
+depth-zero audit's four findings with no P0/P1/P2 findings. The complete local
+CI-equivalent gate passes; exact-SHA three-OS CI, PR checks, and squash merge
+remain before acceptance.
 
 ## Ownership And Overlap
 
