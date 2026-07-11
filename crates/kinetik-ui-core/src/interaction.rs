@@ -16,7 +16,8 @@ pub use drag_select::{
     draggable, draggable_transformed, selectable, selectable_transformed,
 };
 pub(crate) use drag_select::{
-    captured_domain_drag_gesture_with_ordinals, captured_selection_gesture_with_ordinals,
+    captured_domain_drag_gesture_with_ordinals,
+    captured_selection_gesture_with_ordinals_and_clicked_releases,
 };
 pub use focus::{focusable, focusable_transformed};
 pub use hit::{hit_test, hit_test_transformed};

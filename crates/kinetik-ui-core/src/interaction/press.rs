@@ -13,6 +13,7 @@ use crate::{
 pub(super) struct PressResolution {
     pub response: Response,
     pub selection_actions: Vec<SelectionGestureAction>,
+    pub selection_clicked_release_ordinals: Vec<Option<usize>>,
     pub domain_drag_actions: Vec<DomainDragGestureAction>,
 }
 
@@ -26,6 +27,7 @@ struct PointerOutcome {
     drag_delta: Vec2,
     suppress_drag_output: bool,
     selection_actions: Vec<SelectionGestureAction>,
+    selection_clicked_release_ordinals: Vec<Option<usize>>,
     domain_drag_actions: Vec<DomainDragGestureAction>,
     capture_domain_drag_actions: bool,
 }
@@ -185,6 +187,7 @@ pub(super) fn resolve_pressable_with_hit_target(
             )
         },
         selection_actions: outcome.selection_actions,
+        selection_clicked_release_ordinals: outcome.selection_clicked_release_ordinals,
         domain_drag_actions: outcome.domain_drag_actions,
     }
 }
@@ -654,6 +657,9 @@ fn push_gesture_action(
 ) {
     match kind {
         PointerGestureKind::Selection => {
+            if release_clicked {
+                outcome.selection_clicked_release_ordinals.push(ordinal);
+            }
             outcome.selection_actions.push(SelectionGestureAction {
                 ordinal,
                 phase,

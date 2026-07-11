@@ -197,14 +197,14 @@ fn captured_domain_drag_gesture_with_hit_target(
     }
 }
 
-pub(crate) fn captured_selection_gesture_with_ordinals(
+pub(crate) fn captured_selection_gesture_with_ordinals_and_clicked_releases(
     id: WidgetId,
     rect: Rect,
     input: &UiInput,
     event_ordinals: &[usize],
     memory: &mut UiMemory,
     disabled: bool,
-) -> CapturedSelectionGesture {
+) -> (CapturedSelectionGesture, Vec<Option<usize>>) {
     let process_events = memory.claim_selection_gesture(id);
     let resolution = resolve_pressable_with_hit_target(
         id,
@@ -223,10 +223,13 @@ pub(crate) fn captured_selection_gesture_with_ordinals(
             action.modifiers = input.keyboard.modifiers;
         }
     }
-    CapturedSelectionGesture {
-        response: resolution.response,
-        actions,
-    }
+    (
+        CapturedSelectionGesture {
+            response: resolution.response,
+            actions,
+        },
+        resolution.selection_clicked_release_ordinals,
+    )
 }
 
 /// Resolves neutral selectable behavior.
