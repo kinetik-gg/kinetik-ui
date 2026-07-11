@@ -126,14 +126,35 @@ fn stage2_slider_and_numeric_input_statuses_are_backed_by_public_contracts() {
     assert!(numeric.policy.commit_requested);
     assert!(!numeric.policy.revert_requested);
 
+    assert_numeric_scrub_contract(&theme);
+}
+
+fn assert_numeric_scrub_contract(theme: &kinetik_ui_core::Theme) {
     let scrub_id = WidgetId::from_key("stage2-numeric-scrub");
     let mut scrub_memory = UiMemory::new();
-    scrub_memory.activate(scrub_id);
     let mut scrub_state = TextEditState::new("2");
     let mut scrub_value = 2.0;
+    let scrub_rect = Rect::new(0.0, 56.0, 120.0, 24.0);
+    let _ = numeric_scrub_input(
+        scrub_id,
+        scrub_rect,
+        &mut scrub_value,
+        &mut scrub_state,
+        NumericScrubInputConfig::new(0.5).with_range(0.0, 10.0),
+        &UiInput {
+            pointer: PointerInput {
+                position: Some(Point::new(4.0, 60.0)),
+                primary: PointerButtonState::new(true, true, false),
+                ..PointerInput::default()
+            },
+            ..UiInput::default()
+        },
+        &mut scrub_memory,
+        theme,
+    );
     let scrub = numeric_scrub_input(
         scrub_id,
-        Rect::new(0.0, 56.0, 120.0, 24.0),
+        scrub_rect,
         &mut scrub_value,
         &mut scrub_state,
         NumericScrubInputConfig::new(0.5).with_range(0.0, 10.0),
@@ -147,7 +168,7 @@ fn stage2_slider_and_numeric_input_statuses_are_backed_by_public_contracts() {
             ..UiInput::default()
         },
         &mut scrub_memory,
-        &theme,
+        theme,
     );
 
     assert!(scrub.scrubbed);
