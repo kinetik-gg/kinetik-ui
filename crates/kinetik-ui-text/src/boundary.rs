@@ -33,6 +33,112 @@ pub(crate) fn next_boundary(text: &str, offset: usize) -> Option<usize> {
     Some(next)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScalarClass {
+    Whitespace,
+    Word,
+    Other,
+}
+
+impl ScalarClass {
+    fn of(character: char) -> Self {
+        if character.is_whitespace() {
+            Self::Whitespace
+        } else if character.is_ascii_alphanumeric() || character == '_' {
+            Self::Word
+        } else {
+            Self::Other
+        }
+    }
+}
+
+pub(crate) fn previous_word_boundary(text: &str, offset: usize) -> usize {
+    let mut cursor = clamp_boundary(text, offset);
+
+    while let Some((index, character)) = text[..cursor].char_indices().next_back() {
+        if ScalarClass::of(character) != ScalarClass::Whitespace {
+            break;
+        }
+        cursor = index;
+    }
+
+    let Some((_, character)) = text[..cursor].char_indices().next_back() else {
+        return cursor;
+    };
+    let class = ScalarClass::of(character);
+    while let Some((index, character)) = text[..cursor].char_indices().next_back() {
+        if ScalarClass::of(character) != class {
+            break;
+        }
+        cursor = index;
+    }
+
+    cursor
+}
+
+pub(crate) fn next_word_boundary(text: &str, offset: usize) -> usize {
+    let mut cursor = clamp_boundary(text, offset);
+    let Some(character) = text[cursor..].chars().next() else {
+        return cursor;
+    };
+    let class = ScalarClass::of(character);
+
+    while let Some(character) = text[cursor..].chars().next() {
+        if ScalarClass::of(character) != class {
+            break;
+        }
+        cursor += character.len_utf8();
+    }
+
+    if class != ScalarClass::Whitespace {
+        while let Some(character) = text[cursor..].chars().next() {
+            if ScalarClass::of(character) != ScalarClass::Whitespace {
+                break;
+            }
+            cursor += character.len_utf8();
+        }
+    }
+
+    cursor
+}
+
+pub(crate) fn scalar_run_range_at(text: &str, offset: usize) -> core::ops::Range<usize> {
+    if text.is_empty() {
+        return 0..0;
+    }
+
+    let offset = clamp_boundary(text, offset);
+    let scalar_start = if offset == text.len() {
+        previous_boundary(text, offset).expect("non-empty text has a preceding scalar")
+    } else {
+        offset
+    };
+    let class = ScalarClass::of(
+        text[scalar_start..]
+            .chars()
+            .next()
+            .expect("scalar start is inside non-empty text"),
+    );
+
+    let mut start = scalar_start;
+    while let Some((index, character)) = text[..start].char_indices().next_back() {
+        if ScalarClass::of(character) != class {
+            break;
+        }
+        start = index;
+    }
+
+    let mut end = scalar_start;
+    while let Some(character) = text[end..].chars().next() {
+        if ScalarClass::of(character) != class {
+            break;
+        }
+        end += character.len_utf8();
+    }
+
+    start..end
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ExplicitLineCursor<'a> {
     text: &'a str,

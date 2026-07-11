@@ -584,6 +584,250 @@ fn moves_caret_by_character_boundaries() {
 }
 
 #[test]
+fn word_movement_uses_scalar_classes_and_skips_repeated_whitespace() {
+    let text = "ab_9é中!?  cd";
+    let word_end = "ab_9".len();
+    let other_end = "ab_9é中!?".len();
+    let final_word_start = other_end + "  ".len();
+    let mut state = TextEditState::new(text);
+
+    state.set_caret(0);
+    state.move_word_right();
+    assert_eq!(state.caret(), word_end);
+    state.move_word_right();
+    assert_eq!(state.caret(), final_word_start);
+    state.move_word_right();
+    assert_eq!(state.caret(), text.len());
+    state.move_word_right();
+    assert_eq!(state.caret(), text.len());
+
+    state.move_word_left();
+    assert_eq!(state.caret(), final_word_start);
+    state.move_word_left();
+    assert_eq!(state.caret(), word_end);
+    state.move_word_left();
+    assert_eq!(state.caret(), 0);
+    state.move_word_left();
+    assert_eq!(state.caret(), 0);
+
+    state.set_caret(2);
+    state.move_word_left();
+    assert_eq!(state.caret(), 0);
+    state.set_caret(2);
+    state.move_word_right();
+    assert_eq!(state.caret(), word_end);
+
+    state.set_caret("ab_9é".len());
+    state.move_word_left();
+    assert_eq!(state.caret(), word_end);
+    state.set_caret("ab_9é".len());
+    state.move_word_right();
+    assert_eq!(state.caret(), final_word_start);
+
+    state.set_caret(other_end + 1);
+    state.move_word_left();
+    assert_eq!(state.caret(), word_end);
+    state.set_caret(other_end + 1);
+    state.move_word_right();
+    assert_eq!(state.caret(), final_word_start);
+}
+
+#[test]
+fn word_movement_collapses_selection_and_extension_preserves_anchor() {
+    let text = "ab_9é中!?  cd";
+    let word_end = "ab_9".len();
+    let final_word_start = "ab_9é中!?  ".len();
+    let mut state = TextEditState::new(text);
+
+    state.set_selection(TextSelection::new(final_word_start, word_end));
+    state.move_word_left();
+    assert_eq!(state.selection, TextSelection::new(word_end, word_end));
+
+    state.set_selection(TextSelection::new(word_end, final_word_start));
+    state.move_word_right();
+    assert_eq!(
+        state.selection,
+        TextSelection::new(final_word_start, final_word_start)
+    );
+
+    state.set_caret(final_word_start);
+    state.extend_word_left();
+    assert_eq!(
+        state.selection,
+        TextSelection::new(final_word_start, word_end)
+    );
+    state.extend_word_left();
+    assert_eq!(state.selection, TextSelection::new(final_word_start, 0));
+
+    state.set_caret(word_end);
+    state.extend_word_right();
+    assert_eq!(
+        state.selection,
+        TextSelection::new(word_end, final_word_start)
+    );
+    state.extend_word_right();
+    assert_eq!(state.selection, TextSelection::new(word_end, text.len()));
+}
+
+#[test]
+fn word_selection_chooses_clamped_scalar_class_runs() {
+    let text = "ab_é中!? \tcd";
+    let word_end = "ab_".len();
+    let whitespace_start = text.find('\u{2003}').expect("whitespace run");
+    let final_word_start = text.rfind("cd").expect("final word");
+    let mut state = TextEditState::new(text);
+
+    state.select_word_at(0);
+    assert_eq!(state.selected_text(), Some("ab_"));
+    assert_eq!(state.selection, TextSelection::new(0, word_end));
+
+    state.select_word_at(word_end + 1);
+    assert_eq!(state.selected_text(), Some("é中!?"));
+    assert_eq!(
+        state.selection,
+        TextSelection::new(word_end, whitespace_start)
+    );
+
+    state.select_word_at(whitespace_start);
+    assert_eq!(state.selected_text(), Some(" \t"));
+    assert_eq!(
+        state.selection,
+        TextSelection::new(whitespace_start, final_word_start)
+    );
+
+    state.select_word_at(final_word_start);
+    assert_eq!(state.selected_text(), Some("cd"));
+    state.select_word_at(usize::MAX);
+    assert_eq!(state.selected_text(), Some("cd"));
+    assert_eq!(
+        state.selection,
+        TextSelection::new(final_word_start, text.len())
+    );
+
+    let mut empty = TextEditState::new("");
+    empty.select_word_at(usize::MAX);
+    assert_eq!(empty.selection, TextSelection::new(0, 0));
+    assert_eq!(empty.selected_text(), None);
+}
+
+#[test]
+fn word_deletion_handles_boundaries_whitespace_and_selection_precedence() {
+    let mut backward = TextEditState::new("one  two");
+    backward.backspace_word();
+    assert_eq!(backward.text, "one  ");
+    assert_eq!(backward.caret(), "one  ".len());
+    backward.backspace_word();
+    assert_eq!(backward.text, "");
+    assert_eq!(backward.caret(), 0);
+    backward.backspace_word();
+    assert_eq!(backward.text, "");
+
+    let mut forward = TextEditState::new("one  two");
+    forward.set_caret(0);
+    forward.delete_word_forward();
+    assert_eq!(forward.text, "two");
+    assert_eq!(forward.caret(), 0);
+    forward.set_caret(forward.text.len());
+    forward.delete_word_forward();
+    assert_eq!(forward.text, "two");
+
+    let mut selected_backward = TextEditState::new("zero one");
+    selected_backward.set_selection(TextSelection::new(8, 5));
+    selected_backward.backspace_word();
+    assert_eq!(selected_backward.text, "zero ");
+    assert!(selected_backward.undo());
+    assert_eq!(selected_backward.text, "zero one");
+    assert_eq!(selected_backward.selection, TextSelection::new(8, 5));
+
+    let mut selected_forward = TextEditState::new("zero one");
+    selected_forward.set_selection(TextSelection::new(0, 4));
+    selected_forward.delete_word_forward();
+    assert_eq!(selected_forward.text, " one");
+    assert!(selected_forward.undo());
+    assert_eq!(selected_forward.text, "zero one");
+    assert_eq!(selected_forward.selection, TextSelection::new(0, 4));
+}
+
+#[test]
+fn word_deletion_preserves_utf8_scalar_boundaries() {
+    let text = "aé中!?  z";
+    let mut backward = TextEditState::new(text);
+    backward.set_caret("aé中".len());
+
+    backward.backspace_word();
+
+    assert_eq!(backward.text, "a!?  z");
+    assert_eq!(backward.caret(), 1);
+    assert!(backward.text.is_char_boundary(backward.caret()));
+
+    let mut forward = TextEditState::new(text);
+    forward.set_caret(1);
+
+    forward.delete_word_forward();
+
+    assert_eq!(forward.text, "az");
+    assert_eq!(forward.caret(), 1);
+    assert!(forward.text.is_char_boundary(forward.caret()));
+}
+
+#[test]
+fn successful_word_delete_records_one_exact_undo_snapshot() {
+    let mut backward = TextEditState::new("one two");
+    let backward_selection = backward.selection;
+
+    backward.backspace_word();
+
+    assert_eq!(backward.text, "one ");
+    assert_eq!(backward.selection, TextSelection::new(4, 4));
+    assert!(backward.undo());
+    assert_eq!(backward.text, "one two");
+    assert_eq!(backward.selection, backward_selection);
+    assert!(!backward.undo());
+    assert!(backward.redo());
+    assert_eq!(backward.text, "one ");
+    assert_eq!(backward.selection, TextSelection::new(4, 4));
+
+    let mut forward = TextEditState::new("one two");
+    forward.set_caret(0);
+    let forward_selection = forward.selection;
+
+    forward.delete_word_forward();
+
+    assert_eq!(forward.text, "two");
+    assert_eq!(forward.selection, TextSelection::new(0, 0));
+    assert!(forward.undo());
+    assert_eq!(forward.text, "one two");
+    assert_eq!(forward.selection, forward_selection);
+    assert!(!forward.undo());
+    assert!(forward.redo());
+    assert_eq!(forward.text, "two");
+    assert_eq!(forward.selection, TextSelection::new(0, 0));
+}
+
+#[test]
+fn no_op_word_deletes_preserve_available_redo() {
+    let mut at_start = TextEditState::new("");
+    at_start.insert_text("x");
+    assert!(at_start.undo());
+    assert_eq!(at_start.text, "");
+
+    at_start.backspace_word();
+
+    assert!(at_start.redo());
+    assert_eq!(at_start.text, "x");
+
+    let mut at_end = TextEditState::new("x");
+    at_end.insert_text("y");
+    assert!(at_end.undo());
+    assert_eq!(at_end.text, "x");
+
+    at_end.delete_word_forward();
+
+    assert!(at_end.redo());
+    assert_eq!(at_end.text, "xy");
+}
+
+#[test]
 fn boundary_helpers_clamp_inside_multibyte_characters() {
     let text = "aé中z";
 
@@ -1041,6 +1285,173 @@ fn ordered_key(key: Key, text: Option<&str>, modifiers: Modifiers, repeat: bool)
         event = event.with_text(text);
     }
     UiInputEvent::Key(event)
+}
+
+#[test]
+fn ordered_word_commands_accept_ctrl_alt_shift_and_repeat() {
+    let target = WidgetId::from_key("field");
+    let ctrl = Modifiers::new(false, true, false, false);
+    let alt = Modifiers::new(false, false, true, false);
+    let shift_ctrl = Modifiers::new(true, true, false, false);
+    let mut movement = TextEditState::new("one  two");
+
+    let _ = movement.apply_ordered_input(
+        &[ordered_key(Key::ArrowLeft, None, ctrl, false)],
+        target,
+        TextEditMode::SingleLine,
+    );
+    assert_eq!(movement.caret(), "one  ".len());
+    let _ = movement.apply_ordered_input(
+        &[ordered_key(Key::ArrowLeft, None, alt, false)],
+        target,
+        TextEditMode::SingleLine,
+    );
+    assert_eq!(movement.caret(), 0);
+    let _ = movement.apply_ordered_input(
+        &[ordered_key(Key::ArrowRight, None, alt, false)],
+        target,
+        TextEditMode::SingleLine,
+    );
+    assert_eq!(movement.caret(), "one  ".len());
+    let _ = movement.apply_ordered_input(
+        &[ordered_key(Key::ArrowRight, None, shift_ctrl, false)],
+        target,
+        TextEditMode::SingleLine,
+    );
+    assert_eq!(
+        movement.selection,
+        TextSelection::new("one  ".len(), "one  two".len())
+    );
+
+    let mut backward = TextEditState::new("one  two");
+    let _ = backward.apply_ordered_input(
+        &[ordered_key(Key::Backspace, None, ctrl, false)],
+        target,
+        TextEditMode::SingleLine,
+    );
+    assert_eq!(backward.text, "one  ");
+
+    let mut forward = TextEditState::new("one  two");
+    forward.set_caret(0);
+    let _ = forward.apply_ordered_input(
+        &[ordered_key(Key::Delete, None, alt, false)],
+        target,
+        TextEditMode::SingleLine,
+    );
+    assert_eq!(forward.text, "two");
+
+    let mut repeated = TextEditState::new("one two three");
+    let _ = repeated.apply_ordered_input(
+        &[
+            ordered_key(Key::Backspace, None, ctrl, false),
+            ordered_key(Key::Backspace, None, ctrl, true),
+        ],
+        target,
+        TextEditMode::SingleLine,
+    );
+    assert_eq!(repeated.text, "one ");
+}
+
+#[test]
+fn ordered_ctrl_alt_and_super_combinations_keep_scalar_fallbacks() {
+    let target = WidgetId::from_key("field");
+    let ctrl_alt = Modifiers::new(false, true, true, false);
+    let super_ctrl = Modifiers::new(false, true, false, true);
+    let shift_ctrl_alt = Modifiers::new(true, true, true, false);
+
+    for modifiers in [ctrl_alt, super_ctrl] {
+        let mut movement = TextEditState::new("abcd");
+        let _ = movement.apply_ordered_input(
+            &[ordered_key(Key::ArrowLeft, None, modifiers, false)],
+            target,
+            TextEditMode::SingleLine,
+        );
+        assert_eq!(movement.caret(), 3);
+
+        let mut deletion = TextEditState::new("abcd");
+        let _ = deletion.apply_ordered_input(
+            &[ordered_key(Key::Backspace, None, modifiers, false)],
+            target,
+            TextEditMode::SingleLine,
+        );
+        assert_eq!(deletion.text, "abc");
+    }
+
+    let mut extended = TextEditState::new("abcd");
+    let _ = extended.apply_ordered_input(
+        &[ordered_key(Key::ArrowLeft, None, shift_ctrl_alt, false)],
+        target,
+        TextEditMode::SingleLine,
+    );
+    assert_eq!(extended.selection, TextSelection::new(4, 3));
+}
+
+#[test]
+fn ordered_word_commands_use_each_key_events_authoritative_modifiers() {
+    let target = WidgetId::from_key("field");
+    let ctrl = Modifiers::new(false, true, false, false);
+    let events = [
+        UiInputEvent::ModifiersChanged(ctrl),
+        ordered_key(Key::ArrowLeft, None, Modifiers::default(), false),
+        UiInputEvent::ModifiersChanged(Modifiers::default()),
+        ordered_key(Key::ArrowLeft, None, ctrl, false),
+    ];
+    let mut state = TextEditState::new("abcd efg");
+
+    let _ = state.apply_ordered_input(&events, target, TextEditMode::SingleLine);
+
+    assert_eq!(state.caret(), "abcd ".len());
+}
+
+#[test]
+fn legacy_single_and_multiline_helpers_apply_word_commands() {
+    let ctrl = Modifiers::new(false, true, false, false);
+    let shift_alt = Modifiers::new(true, false, true, false);
+    let mut single_line = TextEditState::new("one  two");
+
+    single_line.apply_input(
+        &[],
+        &[KeyEvent::new(
+            Key::ArrowLeft,
+            KeyState::Pressed,
+            ctrl,
+            false,
+        )],
+    );
+    assert_eq!(single_line.caret(), "one  ".len());
+    single_line.apply_input(
+        &[],
+        &[KeyEvent::new(
+            Key::ArrowLeft,
+            KeyState::Pressed,
+            shift_alt,
+            false,
+        )],
+    );
+    assert_eq!(single_line.selection, TextSelection::new("one  ".len(), 0));
+
+    let mut multiline = TextEditState::new("one\ntwo three");
+    multiline.apply_multiline_input(
+        &[],
+        &[KeyEvent::new(
+            Key::ArrowLeft,
+            KeyState::Pressed,
+            Modifiers::new(false, false, true, false),
+            false,
+        )],
+    );
+    assert_eq!(multiline.caret(), "one\ntwo ".len());
+    multiline.apply_multiline_input(
+        &[],
+        &[KeyEvent::new(
+            Key::Backspace,
+            KeyState::Pressed,
+            ctrl,
+            false,
+        )],
+    );
+    assert_eq!(multiline.text, "one\nthree");
+    assert_eq!(multiline.caret(), "one\n".len());
 }
 
 #[test]
