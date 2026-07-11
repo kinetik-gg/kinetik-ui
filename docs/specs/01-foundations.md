@@ -299,6 +299,13 @@ lower and modal barriers cancel incompatible lower pointer ownership before
 widget calls. Raw `hit_test` functions remain geometry queries rather than
 routed activation APIs.
 
+Ordinary and wheel routes use the frame-final pointer snapshot. When a retained
+drag has an ordered terminating release, the drop route instead uses that first
+release's event-time position. A ReleaseAll or focus loss before the release
+blocks the route; cancellation after the release cannot rewrite it. The
+captured source's effective clip must also accept the release, so a cleanup-only
+edge cannot target a larger external drop region.
+
 Wheel input stages the next retained scroll offset. Target geometry, paint,
 semantics, debug bounds, and clipping retain the frame-start offset until
 `end_frame`; the staged value becomes spatially observable in the next frame.

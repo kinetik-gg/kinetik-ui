@@ -1,18 +1,12 @@
 use super::drag_select::{SelectionGestureAction, SelectionGesturePhase};
 use super::{HitTarget, InteractionState, Response};
+use crate::memory::PointerGestureKind;
 use crate::{
     Key, KeyState, MouseButton, Point, Rect, Transform, UiInput, UiInputEvent, UiMemory, Vec2,
     WidgetId,
 };
 
 const DRAG_THRESHOLD_SQUARED: f32 = 16.0;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PointerGestureKind {
-    Press,
-    DomainDrag,
-    Selection,
-}
 
 pub(super) struct PressResolution {
     pub response: Response,
@@ -91,22 +85,26 @@ pub(super) fn resolve_pressable_with_hit_target(
     let conflicted = memory.pointer_input_conflicted(input);
     let owns_primary = owns_primary_gesture(memory, id);
     let owns_secondary = memory.is_secondary_pressed(id);
+    let mode_mismatch = memory
+        .pointer_gesture_kind(id)
+        .is_some_and(|retained| retained != kind);
     let mut outcome = PointerOutcome::default();
 
-    if disabled && (owns_primary || owns_secondary) {
+    if (disabled && (owns_primary || owns_secondary)) || mode_mismatch {
         memory.cancel_pointer_interaction();
     }
 
     if kind == PointerGestureKind::Selection
-        && memory.take_cancelled_pointer_gesture(id)
-        && let Some((ordinal, position)) = cancellation_evidence(input, event_ordinals)
+        && let Some(cancelled_click_count) = memory.take_cancelled_pointer_gesture(id)
+        && let Some((ordinal, position, event_click_count)) =
+            cancellation_evidence(input, event_ordinals)
     {
         outcome.selection_actions.push(SelectionGestureAction {
             ordinal,
             phase: SelectionGesturePhase::Cancel,
             position,
             delta: Vec2::ZERO,
-            click_count: input.pointer.click_count,
+            click_count: event_click_count.unwrap_or(cancelled_click_count),
         });
     }
 
@@ -205,11 +203,16 @@ fn resolve_canonical_pointer(
     }
 
     for (event_index, event) in input.events.iter().enumerate() {
-        let ordinal = selection_ordinal(kind, event_ordinals, event_index);
+        let root_ordinal = event_ordinals.map_or_else(
+            || memory.scoped_pointer_event_ordinal(event_index),
+            |ordinals| ordinals[event_index],
+        );
+        let ordinal = (kind == PointerGestureKind::Selection).then_some(root_ordinal);
         let cleanup_only = memory.scoped_pointer_event_is_cleanup(event_index);
         match event {
             UiInputEvent::PointerMoved { position, delta } => {
                 if !conflicted && owns_primary_gesture(memory, id) {
+                    let click_count = memory.pointer_gesture_click_count(id).unwrap_or(0);
                     push_selection_action(
                         kind,
                         outcome,
@@ -217,7 +220,7 @@ fn resolve_canonical_pointer(
                         SelectionGesturePhase::Move,
                         Some(*position),
                         *delta,
-                        input.pointer.click_count,
+                        click_count,
                     );
                     resolve_motion(id, *position, *delta, memory, kind, outcome);
                 }
@@ -237,7 +240,7 @@ fn resolve_canonical_pointer(
                     memory.activate(id);
                     memory.press(id);
                     memory.capture_pointer(id);
-                    memory.begin_pointer_gesture(id, press_position);
+                    memory.begin_pointer_gesture(id, press_position, kind, *click_count);
                     push_selection_action(
                         kind,
                         outcome,
@@ -288,6 +291,7 @@ fn resolve_canonical_pointer(
                 outcome,
             ),
             UiInputEvent::PointerReleaseAll { position } => {
+                let click_count = memory.pointer_gesture_click_count(id).unwrap_or(0);
                 if owns_primary_gesture(memory, id) {
                     push_selection_action(
                         kind,
@@ -296,28 +300,27 @@ fn resolve_canonical_pointer(
                         SelectionGesturePhase::Cancel,
                         *position,
                         Vec2::ZERO,
-                        input.pointer.click_count,
+                        click_count,
                     );
-                    memory.cancel_pointer_interaction();
-                    outcome.suppress_drag_output = true;
-                } else if memory.is_secondary_pressed(id) {
-                    memory.cancel_pointer_interaction();
                 }
+                memory.cancel_pointer_stream();
+                break;
             }
             UiInputEvent::WindowFocusChanged(false) => {
+                let click_count = memory.pointer_gesture_click_count(id).unwrap_or(0);
                 if owns_primary_gesture(memory, id) {
                     push_selection_action(
                         kind,
                         outcome,
                         ordinal,
                         SelectionGesturePhase::Cancel,
-                        input.pointer.position,
+                        None,
                         Vec2::ZERO,
-                        input.pointer.click_count,
+                        click_count,
                     );
-                    memory.cancel_pointer_interaction();
-                    outcome.suppress_drag_output = true;
                 }
+                memory.cancel_pointer_stream();
+                break;
             }
             _ => {}
         }
@@ -340,30 +343,27 @@ fn resolve_legacy_pointer(
     }
 
     let hovered = hit_target.routed_hit_test(id, rect, input, memory);
-    if hovered && input.pointer.primary.pressed && !owns_primary_gesture(memory, id) {
+    let owned_at_entry = owns_primary_gesture(memory, id);
+    if hovered && input.pointer.primary.pressed && !owned_at_entry {
         let Some(position) = input.pointer.position else {
             return;
         };
-        let origin = Point::new(
-            position.x - input.pointer.delta.x,
-            position.y - input.pointer.delta.y,
-        );
         memory.activate(id);
         memory.press(id);
         memory.capture_pointer(id);
-        memory.begin_pointer_gesture(id, origin);
+        memory.begin_pointer_gesture(id, position, kind, input.pointer.click_count);
         push_selection_action(
             kind,
             outcome,
             None,
             SelectionGesturePhase::Press,
-            Some(origin),
+            Some(position),
             Vec2::ZERO,
             input.pointer.click_count,
         );
     }
 
-    if owns_primary_gesture(memory, id)
+    if owned_at_entry
         && input.pointer.delta != Vec2::ZERO
         && let Some(position) = input.pointer.position
     {
@@ -425,7 +425,9 @@ fn resolve_motion(
 
     if crosses_now {
         memory.mark_pointer_threshold_crossed(id);
-        if kind == PointerGestureKind::DomainDrag {
+        if kind == PointerGestureKind::DomainDrag
+            && memory.pointer_gesture_kind(id) == Some(PointerGestureKind::DomainDrag)
+        {
             memory.start_drag(id);
             outcome.dragged = true;
             outcome.drag_delta = displacement;
@@ -433,7 +435,10 @@ fn resolve_motion(
         return;
     }
 
-    if was_crossed && kind == PointerGestureKind::DomainDrag {
+    if was_crossed
+        && kind == PointerGestureKind::DomainDrag
+        && memory.pointer_gesture_kind(id) == Some(PointerGestureKind::DomainDrag)
+    {
         memory.start_drag(id);
         if delta != Vec2::ZERO {
             outcome.dragged = true;
@@ -493,7 +498,9 @@ fn resolve_primary_release(
         outcome.clicked = true;
         outcome.double_clicked |= click_count >= 2;
     }
-    if conflicted || kind != PointerGestureKind::DomainDrag {
+    let exact_domain_gesture = kind == PointerGestureKind::DomainDrag
+        && memory.pointer_gesture_kind(id) == Some(PointerGestureKind::DomainDrag);
+    if cleanup_only || conflicted || !exact_domain_gesture {
         memory.clear_drag();
     } else {
         memory.finish_drag(id);
@@ -530,15 +537,6 @@ fn resolve_secondary_transition(
     }
 }
 
-fn selection_ordinal(
-    kind: PointerGestureKind,
-    event_ordinals: Option<&[usize]>,
-    event_index: usize,
-) -> Option<usize> {
-    (kind == PointerGestureKind::Selection)
-        .then(|| event_ordinals.expect("selection ordinal sidecar")[event_index])
-}
-
 #[allow(clippy::too_many_arguments)]
 fn push_selection_action(
     kind: PointerGestureKind,
@@ -563,23 +561,30 @@ fn push_selection_action(
 fn cancellation_evidence(
     input: &UiInput,
     event_ordinals: Option<&[usize]>,
-) -> Option<(Option<usize>, Option<Point>)> {
+) -> Option<(Option<usize>, Option<Point>, Option<u8>)> {
     if input.events.is_empty() {
-        return Some((None, input.pointer.position));
+        return Some((
+            None,
+            input.pointer.position,
+            Some(input.pointer.click_count),
+        ));
     }
     let ordinals = event_ordinals?;
     input
         .events
         .iter()
         .enumerate()
-        .rev()
         .find_map(|(index, event)| match event {
+            UiInputEvent::PointerButton {
+                button: MouseButton::Primary,
+                down: false,
+                click_count,
+                position,
+            } => Some((Some(ordinals[index]), *position, Some(*click_count))),
             UiInputEvent::PointerReleaseAll { position } => {
-                Some((Some(ordinals[index]), *position))
+                Some((Some(ordinals[index]), *position, None))
             }
-            UiInputEvent::WindowFocusChanged(false) => {
-                Some((Some(ordinals[index]), input.pointer.position))
-            }
+            UiInputEvent::WindowFocusChanged(false) => Some((Some(ordinals[index]), None, None)),
             _ => None,
         })
 }

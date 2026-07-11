@@ -1,9 +1,10 @@
 //! Ordered drag-threshold and captured-selection gesture conformance.
 
 use kinetik_ui_core::{
-    ClipId, InputWheelDelta, Key, KeyEvent, KeyState, Modifiers, MouseButton, Point, Primitive,
-    Rect, SelectionGesturePhase, Size, TextInputEvent, UiInputEvent, UiTestHarness, Vec2,
-    draggable, drop_target, pressable, scrollable, tooltip_trigger,
+    ClipId, InputWheelDelta, Key, KeyEvent, KeyState, Modifiers, MouseButton, Point,
+    PointerButtonState, PointerOrder, PointerTarget, Primitive, Rect, SelectionGesturePhase, Size,
+    TextInputEvent, UiInputEvent, UiTestHarness, Vec2, draggable, drop_target, pressable,
+    scrollable, tooltip_trigger,
 };
 
 const FULL: Rect = Rect::new(0.0, 0.0, 160.0, 80.0);
@@ -26,6 +27,18 @@ fn run_press(harness: &mut UiTestHarness) -> kinetik_ui_core::Response {
             pressable(id, FULL, input, memory, false)
         })
         .0
+}
+
+fn crossed_drag_harness() -> UiTestHarness {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Primary);
+    let _ = run_drag(&mut harness);
+    harness.set_pointer_position(Point::new(14.0, 10.0));
+    let crossed = run_drag(&mut harness);
+    assert!(crossed.dragged);
+    assert_eq!(harness.memory().drag_source(), Some(crossed.id));
+    harness
 }
 
 #[test]
@@ -551,9 +564,477 @@ fn selection_mode_change_cannot_publish_a_retained_domain_drop() {
             ui.captured_selection_gesture(id, FULL, false)
         })
         .0;
-    assert_eq!(gesture.actions[0].phase, SelectionGesturePhase::Release);
+    assert_eq!(gesture.actions[0].phase, SelectionGesturePhase::Cancel);
     assert_eq!(harness.memory().drag_source(), None);
     assert_eq!(harness.memory().released_drag_source(), None);
+}
+
+#[test]
+fn selection_gesture_cannot_be_promoted_to_a_domain_drag() {
+    let mut harness = UiTestHarness::new();
+    harness.set_pointer_position(Point::new(10.0, 10.0));
+    harness.pointer_press(MouseButton::Primary);
+    let selection_id = harness
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            let gesture = ui.captured_selection_gesture(id, FULL, false);
+            assert_eq!(gesture.actions[0].phase, SelectionGesturePhase::Press);
+            id
+        })
+        .0;
+
+    harness.set_pointer_position(Point::new(14.0, 10.0));
+    let response = harness
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            let (input, memory) = ui.input_and_memory_mut();
+            draggable(id, FULL, input, memory, false)
+        })
+        .0;
+    assert_eq!(response.id, selection_id);
+    assert!(!response.dragged);
+    assert_eq!(response.drag_delta, Vec2::ZERO);
+    assert_eq!(harness.memory().pointer_capture(), None);
+    assert_eq!(harness.memory().drag_source(), None);
+    assert_eq!(harness.memory().released_drag_source(), None);
+}
+
+#[test]
+fn legacy_pre_press_relocation_is_not_replayed_as_drag_motion() {
+    let mut harness = UiTestHarness::new();
+    harness.input_mut().events.clear();
+    harness.input_mut().pointer.position = Some(Point::new(100.0, 10.0));
+    harness.input_mut().pointer.delta = Vec2::new(90.0, 0.0);
+    harness.input_mut().pointer.primary = PointerButtonState::new(true, true, false);
+
+    let pressed = run_press(&mut harness);
+    assert!(pressed.state.active);
+    assert!(!pressed.dragged);
+    assert_eq!(harness.memory().drag_source(), None);
+
+    harness.input_mut().events.clear();
+    harness.input_mut().pointer.delta = Vec2::ZERO;
+    harness.input_mut().pointer.primary = PointerButtonState::new(false, false, true);
+    let released = run_press(&mut harness);
+    assert!(released.clicked);
+    assert_eq!(harness.memory().pointer_capture(), None);
+}
+
+#[test]
+fn same_frame_clipped_press_release_and_release_all_retain_ordered_cleanup() {
+    let clip = ClipId::from_raw(96);
+    let clip_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+
+    let mut primary = UiTestHarness::new();
+    primary.set_pointer_position(Point::new(10.0, 10.0));
+    primary.pointer_press(MouseButton::Primary);
+    primary.set_pointer_position(Point::new(50.0, 10.0));
+    primary.pointer_release(MouseButton::Primary);
+    let gesture = primary
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let gesture = ui.captured_selection_gesture(id, FULL, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            gesture
+        })
+        .0;
+    assert_eq!(
+        gesture
+            .actions
+            .iter()
+            .map(|action| (action.ordinal, action.phase))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some(1), SelectionGesturePhase::Press),
+            (Some(3), SelectionGesturePhase::Cancel),
+        ]
+    );
+    assert_eq!(primary.memory().pointer_capture(), None);
+
+    let mut secondary = UiTestHarness::new();
+    secondary.set_pointer_position(Point::new(10.0, 10.0));
+    secondary.pointer_press(MouseButton::Secondary);
+    secondary.set_pointer_position(Point::new(50.0, 10.0));
+    secondary.pointer_release(MouseButton::Secondary);
+    let response = secondary
+        .run_frame(|ui| {
+            let id = ui.id("press");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let (input, memory) = ui.input_and_memory_mut();
+            let response = pressable(id, FULL, input, memory, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            response
+        })
+        .0;
+    assert!(!response.secondary_clicked);
+    assert_eq!(secondary.memory().secondary_pressed(), None);
+
+    let mut release_all = UiTestHarness::new();
+    release_all.set_pointer_position(Point::new(10.0, 10.0));
+    release_all.pointer_press(MouseButton::Primary);
+    release_all.set_pointer_position(Point::new(50.0, 10.0));
+    release_all.input_mut().release_pointer_buttons();
+    let gesture = release_all
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let gesture = ui.captured_selection_gesture(id, FULL, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            gesture
+        })
+        .0;
+    assert_eq!(gesture.actions.last().unwrap().ordinal, Some(3));
+    assert_eq!(
+        gesture.actions.last().unwrap().phase,
+        SelectionGesturePhase::Cancel
+    );
+    assert_eq!(release_all.memory().pointer_capture(), None);
+}
+
+#[test]
+fn clipped_drag_cleanup_cannot_publish_or_accept_a_drop_in_either_order() {
+    let clip = ClipId::from_raw(97);
+    let clip_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+
+    for target_first in [false, true] {
+        let mut harness = UiTestHarness::new();
+        harness.set_pointer_position(Point::new(10.0, 10.0));
+        harness.pointer_press(MouseButton::Primary);
+        let _ = harness.run_frame(|ui| {
+            let id = ui.id("drag");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let (input, memory) = ui.input_and_memory_mut();
+            let response = draggable(id, FULL, input, memory, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            response
+        });
+        harness.set_pointer_position(Point::new(14.0, 10.0));
+        let _ = harness.run_frame(|ui| {
+            let id = ui.id("drag");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let (input, memory) = ui.input_and_memory_mut();
+            let response = draggable(id, FULL, input, memory, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            response
+        });
+        assert!(harness.memory().drag_source().is_some());
+
+        harness.set_pointer_position(Point::new(50.0, 10.0));
+        harness.pointer_release(MouseButton::Primary);
+        let ((source_response, drop_response), _) = harness.run_frame(|ui| {
+            let source = ui.id("drag");
+            let target = ui.id("drop");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let pair = if target_first {
+                let (input, memory) = ui.input_and_memory_mut();
+                let drop = drop_target(target, FULL, input, memory, false);
+                let (input, memory) = ui.input_and_memory_mut();
+                let source = draggable(source, FULL, input, memory, false);
+                (source, drop)
+            } else {
+                let (input, memory) = ui.input_and_memory_mut();
+                let source = draggable(source, FULL, input, memory, false);
+                let (input, memory) = ui.input_and_memory_mut();
+                let drop = drop_target(target, FULL, input, memory, false);
+                (source, drop)
+            };
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            pair
+        });
+        assert!(!source_response.clicked);
+        assert!(!source_response.dragged);
+        assert_eq!(drop_response.source, None);
+        assert!(!drop_response.dropped);
+        assert_eq!(harness.memory().drag_source(), None);
+        assert_eq!(harness.memory().released_drag_source(), None);
+    }
+}
+
+#[test]
+fn planned_drop_rejects_release_outside_the_captured_source_clip() {
+    let clip = ClipId::from_raw(98);
+    let clip_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let target_rect = Rect::new(40.0, 0.0, 20.0, 20.0);
+
+    for target_first in [false, true] {
+        let mut harness = UiTestHarness::new();
+        harness.set_pointer_position(Point::new(10.0, 10.0));
+        harness.pointer_press(MouseButton::Primary);
+        let _ = harness.run_frame(|ui| {
+            let source = ui.id("drag");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let (input, memory) = ui.input_and_memory_mut();
+            let response = draggable(source, FULL, input, memory, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            response
+        });
+        harness.set_pointer_position(Point::new(14.0, 10.0));
+        let _ = harness.run_frame(|ui| {
+            let source = ui.id("drag");
+            ui.push_primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: clip_rect,
+            });
+            let (input, memory) = ui.input_and_memory_mut();
+            let response = draggable(source, FULL, input, memory, false);
+            ui.push_primitive(Primitive::ClipEnd { id: clip });
+            response
+        });
+
+        harness.set_pointer_position(Point::new(50.0, 10.0));
+        harness.pointer_release(MouseButton::Primary);
+        let ((routes, drop), _) = harness.run_frame(|ui| {
+            let source = ui.id("drag");
+            let target = ui.id("drop");
+            let routes = ui
+                .resolve_pointer_targets(|plan| {
+                    plan.with_clip(clip_rect, |plan| {
+                        plan.target(PointerTarget::new(source, FULL, PointerOrder::new(20)));
+                    });
+                    plan.target(
+                        PointerTarget::new(target, target_rect, PointerOrder::new(10))
+                            .ordinary_owner(None)
+                            .drop_owner(target),
+                    );
+                })
+                .expect("valid clipped-source plan");
+            let drop = if target_first {
+                let (input, memory) = ui.input_and_memory_mut();
+                let drop = drop_target(target, target_rect, input, memory, false);
+                ui.push_primitive(Primitive::ClipBegin {
+                    id: clip,
+                    rect: clip_rect,
+                });
+                let (input, memory) = ui.input_and_memory_mut();
+                let _ = draggable(source, FULL, input, memory, false);
+                ui.push_primitive(Primitive::ClipEnd { id: clip });
+                drop
+            } else {
+                ui.push_primitive(Primitive::ClipBegin {
+                    id: clip,
+                    rect: clip_rect,
+                });
+                let (input, memory) = ui.input_and_memory_mut();
+                let _ = draggable(source, FULL, input, memory, false);
+                ui.push_primitive(Primitive::ClipEnd { id: clip });
+                let (input, memory) = ui.input_and_memory_mut();
+                drop_target(target, target_rect, input, memory, false)
+            };
+            (routes, drop)
+        });
+        assert_eq!(routes.drop, kinetik_ui_core::PointerRoute::Blocked);
+        assert_eq!(drop.source, None);
+        assert!(!drop.dropped);
+        assert_eq!(harness.memory().released_drag_source(), None);
+    }
+}
+
+#[test]
+fn planned_drop_uses_first_release_geometry_in_both_evaluation_orders() {
+    let source_rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let target_rect = Rect::new(40.0, 0.0, 20.0, 20.0);
+
+    for target_first in [false, true] {
+        let mut harness = crossed_drag_harness();
+        harness.set_pointer_position(Point::new(50.0, 10.0));
+        harness.pointer_release(MouseButton::Primary);
+        harness.set_pointer_position(Point::new(100.0, 10.0));
+        let ((routes, drop), _) = harness.run_frame(|ui| {
+            let source = ui.id("drag");
+            let target = ui.id("drop");
+            let routes = ui
+                .resolve_pointer_targets(|plan| {
+                    plan.target(PointerTarget::new(
+                        source,
+                        source_rect,
+                        PointerOrder::new(20),
+                    ));
+                    plan.target(
+                        PointerTarget::new(target, target_rect, PointerOrder::new(10))
+                            .ordinary_owner(None)
+                            .drop_owner(target),
+                    );
+                })
+                .expect("valid release-time plan");
+            let drop = if target_first {
+                let (input, memory) = ui.input_and_memory_mut();
+                let drop = drop_target(target, target_rect, input, memory, false);
+                let (input, memory) = ui.input_and_memory_mut();
+                let _ = draggable(source, source_rect, input, memory, false);
+                drop
+            } else {
+                let (input, memory) = ui.input_and_memory_mut();
+                let _ = draggable(source, source_rect, input, memory, false);
+                let (input, memory) = ui.input_and_memory_mut();
+                drop_target(target, target_rect, input, memory, false)
+            };
+            (routes, drop)
+        });
+        assert_eq!(
+            routes.drop,
+            kinetik_ui_core::PointerRoute::Target(drop.response.id)
+        );
+        assert!(drop.dropped);
+    }
+
+    let mut outside_then_inside = crossed_drag_harness();
+    outside_then_inside.set_pointer_position(Point::new(100.0, 10.0));
+    outside_then_inside.pointer_release(MouseButton::Primary);
+    outside_then_inside.set_pointer_position(Point::new(50.0, 10.0));
+    outside_then_inside.pointer_press(MouseButton::Primary);
+    outside_then_inside.pointer_release(MouseButton::Primary);
+    let ((routes, drop), _) = outside_then_inside.run_frame(|ui| {
+        let source = ui.id("drag");
+        let target = ui.id("drop");
+        let routes = ui
+            .resolve_pointer_targets(|plan| {
+                plan.target(PointerTarget::new(
+                    source,
+                    source_rect,
+                    PointerOrder::new(20),
+                ));
+                plan.target(
+                    PointerTarget::new(target, target_rect, PointerOrder::new(10))
+                        .ordinary_owner(None)
+                        .drop_owner(target),
+                );
+            })
+            .expect("valid first-release plan");
+        let (input, memory) = ui.input_and_memory_mut();
+        let _ = draggable(source, source_rect, input, memory, false);
+        let (input, memory) = ui.input_and_memory_mut();
+        let drop = drop_target(target, target_rect, input, memory, false);
+        (routes, drop)
+    });
+    assert_eq!(routes.drop, kinetik_ui_core::PointerRoute::Blocked);
+    assert!(!drop.dropped);
+    assert_eq!(drop.source, None);
+}
+
+#[test]
+fn ordered_drag_termination_preserves_prior_output_and_fences_later_input() {
+    let mut release_then_focus = crossed_drag_harness();
+    release_then_focus.pointer_release(MouseButton::Primary);
+    release_then_focus
+        .input_mut()
+        .push_event(UiInputEvent::WindowFocusChanged(false));
+    let ((source, drop), _) = release_then_focus.run_frame(|ui| {
+        let source = ui.id("drag");
+        let target = ui.id("drop");
+        let (input, memory) = ui.input_and_memory_mut();
+        let source = draggable(source, FULL, input, memory, false);
+        let (input, memory) = ui.input_and_memory_mut();
+        let drop = drop_target(target, FULL, input, memory, false);
+        (source, drop)
+    });
+    assert!(!source.clicked);
+    assert!(drop.dropped);
+
+    let mut focus_then_release = crossed_drag_harness();
+    focus_then_release
+        .input_mut()
+        .push_event(UiInputEvent::WindowFocusChanged(false));
+    focus_then_release.pointer_release(MouseButton::Primary);
+    let drop = focus_then_release
+        .run_frame(|ui| {
+            let source = ui.id("drag");
+            let target = ui.id("drop");
+            let (input, memory) = ui.input_and_memory_mut();
+            let _ = draggable(source, FULL, input, memory, false);
+            let (input, memory) = ui.input_and_memory_mut();
+            drop_target(target, FULL, input, memory, false)
+        })
+        .0;
+    assert!(!drop.dropped);
+    assert_eq!(drop.source, None);
+
+    let mut movement_then_cancel = UiTestHarness::new();
+    movement_then_cancel.set_pointer_position(Point::new(10.0, 10.0));
+    movement_then_cancel.pointer_press(MouseButton::Primary);
+    let _ = run_drag(&mut movement_then_cancel);
+    movement_then_cancel.set_pointer_position(Point::new(14.0, 10.0));
+    movement_then_cancel.input_mut().release_pointer_buttons();
+    let response = run_drag(&mut movement_then_cancel);
+    assert!(response.dragged);
+    assert_eq!(response.drag_delta, Vec2::new(4.0, 0.0));
+    assert_eq!(movement_then_cancel.memory().drag_source(), None);
+    assert_eq!(movement_then_cancel.memory().released_drag_source(), None);
+}
+
+#[test]
+fn focus_loss_fences_secondary_and_future_pointer_events_with_causal_selection_data() {
+    let mut secondary = UiTestHarness::new();
+    secondary.set_pointer_position(Point::new(10.0, 10.0));
+    secondary.pointer_press(MouseButton::Secondary);
+    let _ = run_press(&mut secondary);
+    secondary
+        .input_mut()
+        .push_event(UiInputEvent::WindowFocusChanged(false));
+    secondary.pointer_release(MouseButton::Secondary);
+    let response = run_press(&mut secondary);
+    assert!(!response.secondary_clicked);
+    assert_eq!(secondary.memory().secondary_pressed(), None);
+    assert!(secondary.memory().pointer_interaction_cancelled());
+
+    let mut no_owner = UiTestHarness::new();
+    no_owner.set_pointer_position(Point::new(10.0, 10.0));
+    let _ = run_press(&mut no_owner);
+    no_owner
+        .input_mut()
+        .push_event(UiInputEvent::WindowFocusChanged(false));
+    no_owner.pointer_press(MouseButton::Primary);
+    no_owner.pointer_release(MouseButton::Primary);
+    assert!(!run_press(&mut no_owner).clicked);
+
+    let mut selection = UiTestHarness::new();
+    selection.set_pointer_position(Point::new(10.0, 10.0));
+    selection.pointer_press(MouseButton::Primary);
+    let _ = selection.run_frame(|ui| {
+        let id = ui.id("selection");
+        ui.captured_selection_gesture(id, FULL, false)
+    });
+    selection.set_pointer_position(Point::new(12.0, 10.0));
+    selection
+        .input_mut()
+        .push_event(UiInputEvent::WindowFocusChanged(false));
+    selection.set_pointer_position(Point::new(80.0, 10.0));
+    selection.pointer_press(MouseButton::Secondary);
+    selection.set_click_count(2);
+    let gesture = selection
+        .run_frame(|ui| {
+            let id = ui.id("selection");
+            ui.captured_selection_gesture(id, FULL, false)
+        })
+        .0;
+    assert_eq!(gesture.actions.len(), 2);
+    assert_eq!(gesture.actions[0].phase, SelectionGesturePhase::Move);
+    assert_eq!(gesture.actions[0].position, Some(Point::new(12.0, 10.0)));
+    assert_eq!(gesture.actions[0].click_count, 0);
+    assert_eq!(gesture.actions[1].phase, SelectionGesturePhase::Cancel);
+    assert_eq!(gesture.actions[1].position, None);
+    assert_eq!(gesture.actions[1].click_count, 0);
 }
 
 #[test]

@@ -8,6 +8,13 @@ use crate::{ClipId, Point, PointerRoute, PointerRoutes, Rect, Transform, WidgetI
 
 use super::spatial::SpatialStack;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum PointerDropProbe {
+    Snapshot,
+    Release(Option<Point>),
+    Cancelled,
+}
+
 /// Explicit back-to-front paint ordinal used by pointer arbitration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PointerOrder(u64);
@@ -137,6 +144,7 @@ impl Error for PointerPlanError {}
 /// first routed behavior call. Declarations may arrive in any order.
 pub struct PointerTargetPlan {
     pointer: Option<Point>,
+    drop_probe: PointerDropProbe,
     spatial: SpatialStack,
     targets: Vec<ResolvedTarget>,
     blockers: Vec<ResolvedBlocker>,
@@ -149,9 +157,14 @@ pub struct PointerTargetPlan {
 }
 
 impl PointerTargetPlan {
-    pub(crate) fn new(pointer: Option<Point>, spatial: SpatialStack) -> Self {
+    pub(crate) fn new(
+        pointer: Option<Point>,
+        drop_probe: PointerDropProbe,
+        spatial: SpatialStack,
+    ) -> Self {
         Self {
             pointer,
+            drop_probe,
             spatial,
             targets: Vec::new(),
             blockers: Vec::new(),
@@ -184,6 +197,14 @@ impl PointerTargetPlan {
 
         let valid = target.enabled && self.spatial.project_rect(target.rect).is_some();
         let hit = valid && self.spatial.hit_test_rect(self.pointer, target.rect);
+        let drop_hit = valid
+            && !matches!(self.drop_probe, PointerDropProbe::Cancelled)
+            && self.spatial.hit_test_rect(self.drop_pointer(), target.rect);
+        let drop_event_allowed = match self.drop_probe {
+            PointerDropProbe::Snapshot => true,
+            PointerDropProbe::Release(position) => self.spatial.ordinary_event_allowed(position),
+            PointerDropProbe::Cancelled => false,
+        };
         let mut cursor_equivalents = target.cursor_equivalents;
         cursor_equivalents.push(target.canonical);
         if let Some(owner) = target.ordinary_owner {
@@ -202,6 +223,8 @@ impl PointerTargetPlan {
             cursor_equivalents,
             valid,
             hit,
+            drop_hit,
+            drop_event_allowed,
         });
     }
 
@@ -211,7 +234,15 @@ impl PointerTargetPlan {
         self.record_order(order);
         let valid = self.spatial.project_rect(rect).is_some();
         let hit = valid && self.spatial.hit_test_rect(self.pointer, rect);
-        self.blockers.push(ResolvedBlocker { order, valid, hit });
+        let drop_hit = valid
+            && !matches!(self.drop_probe, PointerDropProbe::Cancelled)
+            && self.spatial.hit_test_rect(self.drop_pointer(), rect);
+        self.blockers.push(ResolvedBlocker {
+            order,
+            valid,
+            hit,
+            drop_hit,
+        });
     }
 
     /// Adds a barrier that blocks every declaration at a lower paint order.
@@ -273,6 +304,23 @@ impl PointerTargetPlan {
             (None, None) => TopVisual::None,
         };
 
+        let top_drop_target = self
+            .targets
+            .iter()
+            .filter(|target| target.valid && target.drop_hit && eligible(target.order))
+            .max_by_key(|target| target.order);
+        let top_drop_blocker = self
+            .blockers
+            .iter()
+            .filter(|blocker| blocker.valid && blocker.drop_hit && eligible(blocker.order))
+            .max_by_key(|blocker| blocker.order);
+        let top_drop_visual = match (top_drop_target, top_drop_blocker) {
+            (Some(target), Some(blocker)) if blocker.order > target.order => TopVisual::Blocker,
+            (Some(target), _) => TopVisual::Target(target),
+            (None, Some(_)) => TopVisual::Blocker,
+            (None, None) => TopVisual::None,
+        };
+
         let captured_target = captured.and_then(|owner| {
             self.targets.iter().find(|target| {
                 target.valid && eligible(target.order) && target.ordinary_owner == Some(owner)
@@ -285,11 +333,17 @@ impl PointerTargetPlan {
         let ordinary = ordinary_target
             .and_then(|target| target.ordinary_owner)
             .map_or(PointerRoute::Blocked, PointerRoute::Target);
-        let drop = match top_visual {
-            TopVisual::Target(target) => target
-                .drop_owner
-                .map_or(PointerRoute::Blocked, PointerRoute::Target),
-            TopVisual::Blocker | TopVisual::None => PointerRoute::Blocked,
+        let captured_accepts_drop_event =
+            captured_target.is_none_or(|target| target.drop_event_allowed);
+        let drop = if captured_accepts_drop_event {
+            match top_drop_visual {
+                TopVisual::Target(target) => target
+                    .drop_owner
+                    .map_or(PointerRoute::Blocked, PointerRoute::Target),
+                TopVisual::Blocker | TopVisual::None => PointerRoute::Blocked,
+            }
+        } else {
+            PointerRoute::Blocked
         };
 
         let top_wheel = self
@@ -328,6 +382,14 @@ impl PointerTargetPlan {
         descriptor
     }
 
+    fn drop_pointer(&self) -> Option<Point> {
+        match self.drop_probe {
+            PointerDropProbe::Snapshot => self.pointer,
+            PointerDropProbe::Release(position) => position,
+            PointerDropProbe::Cancelled => None,
+        }
+    }
+
     fn record_order(&mut self, order: PointerOrder) {
         if !self.orders.insert(order) && self.error.is_none() {
             self.error = Some(PointerPlanError::DuplicateOrder(order));
@@ -353,6 +415,7 @@ pub(crate) struct ResolvedPointerPlan {
 }
 
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)]
 struct ResolvedTarget {
     order: PointerOrder,
     ordinary_owner: Option<WidgetId>,
@@ -361,6 +424,8 @@ struct ResolvedTarget {
     cursor_equivalents: Vec<WidgetId>,
     valid: bool,
     hit: bool,
+    drop_hit: bool,
+    drop_event_allowed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -368,6 +433,7 @@ struct ResolvedBlocker {
     order: PointerOrder,
     valid: bool,
     hit: bool,
+    drop_hit: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

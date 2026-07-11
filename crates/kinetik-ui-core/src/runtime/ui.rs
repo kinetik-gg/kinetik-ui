@@ -15,7 +15,7 @@ use super::focus::{
     apply_window_focus_text_blur,
 };
 use super::output::FrameOutput;
-use super::pointer::{PointerPlanError, PointerTargetPlan};
+use super::pointer::{PointerDropProbe, PointerPlanError, PointerTargetPlan};
 use super::primitive_stack::validate_primitive_stack;
 use super::spatial::SpatialStack;
 use super::types::{CursorShape, FrameContext, FrameWarning, PlatformRequest, RepaintRequest};
@@ -216,8 +216,15 @@ impl<'a> Ui<'a> {
         self.pointer_plan_installed = true;
 
         let captured = self.memory.pointer_capture();
-        let mut plan =
-            PointerTargetPlan::new(self.root_input.pointer.position, self.spatial.clone());
+        let drop_probe = pointer_drop_probe(
+            &self.root_input,
+            captured.is_some() || self.memory.drag_source().is_some(),
+        );
+        let mut plan = PointerTargetPlan::new(
+            self.root_input.pointer.position,
+            drop_probe,
+            self.spatial.clone(),
+        );
         declare(&mut plan);
         let resolved = match plan.resolve(captured) {
             Ok(resolved) => resolved,
@@ -508,20 +515,42 @@ impl<'a> Ui<'a> {
             self.memory.secondary_pressed().is_some(),
             self.memory.root_input_conflict().is_some(),
         );
-        self.context.input = localized.input;
-        self.input_event_ordinals = localized.event_ordinals;
-        self.memory.install_scoped_pointer_cleanup_events(
+        self.memory.install_scoped_pointer_events(
+            localized.event_ordinals.iter().copied(),
             localized
                 .cleanup_only
                 .iter()
                 .enumerate()
                 .filter_map(|(index, cleanup_only)| cleanup_only.then_some(index)),
         );
+        self.context.input = localized.input;
+        self.input_event_ordinals = localized.event_ordinals;
     }
 }
 
 fn pointer_release_all_cancelled(input: &UiInput) -> bool {
     input.pointer.release_all_cancelled()
+}
+
+fn pointer_drop_probe(input: &UiInput, retained_transaction: bool) -> PointerDropProbe {
+    if !retained_transaction || input.events.is_empty() {
+        return PointerDropProbe::Snapshot;
+    }
+    for event in &input.events {
+        match event {
+            UiInputEvent::PointerButton {
+                button: crate::MouseButton::Primary,
+                down: false,
+                position,
+                ..
+            } => return PointerDropProbe::Release(*position),
+            UiInputEvent::PointerReleaseAll { .. } | UiInputEvent::WindowFocusChanged(false) => {
+                return PointerDropProbe::Cancelled;
+            }
+            _ => {}
+        }
+    }
+    PointerDropProbe::Snapshot
 }
 
 fn is_editing_domain_event(event: &UiInputEvent) -> bool {

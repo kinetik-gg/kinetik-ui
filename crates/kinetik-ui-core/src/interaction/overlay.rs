@@ -135,24 +135,33 @@ fn drop_target_with_hit_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> DropTargetResponse {
-    let pointer_cancelled = memory.pointer_interaction_cancelled()
-        || memory.pointer_input_conflicted(input)
-        || canonical_pointer_cancelled(input);
+    let termination = drag_termination(input, memory);
+    let input_conflicted = memory.pointer_input_conflicted(input);
     let source_candidate = memory
         .released_drag_source()
         .or_else(|| memory.drag_source())
         .filter(|source| *source != id);
     let target_hit = hit_target.hit_test(rect, input);
-    let (release_seen, release_hit) = primary_release_hit(hit_target, rect, input, target_hit);
-    let source_hit = if release_seen {
-        release_hit
-    } else {
-        target_hit
+    let (release_seen, source_hit) = match termination {
+        DragTermination::Pending => (false, target_hit),
+        DragTermination::Release { position } => {
+            (true, hit_target.hit_test_position(rect, position))
+        }
+        DragTermination::Cancelled => (false, false),
     };
+    let route_allows = match termination {
+        DragTermination::Release { .. } => memory.pointer_drop_route_matches(id),
+        DragTermination::Pending => memory.pointer_drop_route_allows(id),
+        DragTermination::Cancelled => false,
+    };
+    let pointer_cancelled = input_conflicted
+        || matches!(termination, DragTermination::Cancelled)
+        || (matches!(termination, DragTermination::Pending)
+            && memory.pointer_interaction_cancelled());
     let hovered = !pointer_cancelled
         && !disabled
         && if source_candidate.is_some() {
-            source_hit && memory.pointer_drop_route_allows(id)
+            source_hit && route_allows
         } else {
             hit_target.routed_hit_test(id, rect, input, memory)
         };
@@ -160,7 +169,7 @@ fn drop_target_with_hit_target(
         && !disabled
         && source_candidate.is_some()
         && source_hit
-        && memory.pointer_drop_route_allows(id)
+        && route_allows
     {
         source_candidate
     } else {
@@ -190,41 +199,47 @@ fn drop_target_with_hit_target(
     }
 }
 
-fn primary_release_hit(
-    hit_target: HitTarget,
-    rect: Rect,
-    input: &UiInput,
-    legacy_target_hit: bool,
-) -> (bool, bool) {
-    if input.events.is_empty() {
-        return (input.pointer.primary.released, legacy_target_hit);
-    }
-
-    let mut release_seen = false;
-    let mut release_hit = false;
-    for event in &input.events {
-        if let UiInputEvent::PointerButton {
-            button: MouseButton::Primary,
-            down: false,
-            position,
-            ..
-        } = event
-        {
-            release_seen = true;
-            release_hit |= hit_target.hit_test_position(rect, *position);
-        }
-    }
-    (release_seen, release_hit)
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DragTermination {
+    Pending,
+    Release { position: Option<crate::Point> },
+    Cancelled,
 }
 
-fn canonical_pointer_cancelled(input: &UiInput) -> bool {
-    !input.events.is_empty()
-        && input.events.iter().any(|event| {
-            matches!(
-                event,
-                UiInputEvent::PointerReleaseAll { .. } | UiInputEvent::WindowFocusChanged(false)
-            )
-        })
+fn drag_termination(input: &UiInput, memory: &UiMemory) -> DragTermination {
+    if input.events.is_empty() {
+        return if input.pointer.primary.released {
+            DragTermination::Release {
+                position: input.pointer.position,
+            }
+        } else {
+            DragTermination::Pending
+        };
+    }
+
+    for (event_index, event) in input.events.iter().enumerate() {
+        match event {
+            UiInputEvent::PointerButton {
+                button: MouseButton::Primary,
+                down: false,
+                position,
+                ..
+            } => {
+                return if memory.scoped_pointer_event_is_cleanup(event_index) {
+                    DragTermination::Cancelled
+                } else {
+                    DragTermination::Release {
+                        position: *position,
+                    }
+                };
+            }
+            UiInputEvent::PointerReleaseAll { .. } | UiInputEvent::WindowFocusChanged(false) => {
+                return DragTermination::Cancelled;
+            }
+            _ => {}
+        }
+    }
+    DragTermination::Pending
 }
 
 fn keyboard_context_requested(id: WidgetId, input: &UiInput, memory: &UiMemory) -> bool {

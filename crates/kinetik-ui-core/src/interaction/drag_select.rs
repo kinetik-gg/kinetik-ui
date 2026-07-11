@@ -1,6 +1,7 @@
 use super::hit::HitTarget;
-use super::press::{PointerGestureKind, resolve_pressable_with_hit_target};
+use super::press::resolve_pressable_with_hit_target;
 use super::{Response, pressable, pressable_transformed};
+use crate::memory::PointerGestureKind;
 use crate::{Point, Rect, Transform, UiInput, UiInputEvent, UiMemory, Vec2, WidgetId};
 
 /// One claimed editing-domain event paired with its original canonical ordinal.

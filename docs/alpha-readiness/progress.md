@@ -705,7 +705,7 @@ in serial packet `IN-03B`; no B-owned behavior is claimed here.
 - `CHANGELOG.md`
 - `crates/kinetik-ui-core/src/{interaction,lib,memory}.rs`
 - `crates/kinetik-ui-core/src/interaction/{drag_select,hit,overlay,press,scroll,tests}.rs`
-- `crates/kinetik-ui-core/src/runtime/{spatial,tests,ui}.rs`
+- `crates/kinetik-ui-core/src/runtime/{pointer,spatial,tests,ui}.rs`
 - `crates/kinetik-ui-core/tests/{drag_threshold_conformance,ownership_reconciliation_conformance,pointer_arbitration_conformance,runtime_spatial_conformance}.rs`
 - `crates/kinetik-ui-core/tests/pointer_conformance/drag_capture.rs`
 - `crates/kinetik-ui/tests/public_api_surface.rs`
@@ -737,18 +737,30 @@ uses event-time release geometry for drops, rejects missing canonical button
 positions, clears disabled secondary owners, blocks conflicted tooltip/scroll
 hover, and prevents selection from publishing a retained domain drag.
 
+The depth-one audit and complete workspace test exposed legacy pre-press delta
+replay, same-frame clipped cleanup loss, mode promotion, non-causal
+cancellation metadata, and final-snapshot/multiple-release drop routing. The
+depth-two remedy makes gesture mode exact, localizes potential ownership
+sequentially, fences only later transitions, preserves earlier drag/drop
+output, and routes drops from the first terminating release after validating
+the captured source clip.
+
 #### Tests run and results
 
-- New drag-threshold conformance: 23/23 passed, covering boundaries, accumulated
+- New drag-threshold conformance: 31/31 passed, covering boundaries, accumulated
   and subsequent deltas, move-back latch, same-frame release, pressable
   suppression, double-click, conflict cleanup, drop order, selection ordinals,
   spatial gaps and cleanup provenance, release-all cancellation, canonical drop
   geometry, ordered text merging, missing event positions, and plain-capture
-  cleanup.
+  cleanup, plus legacy relocation, exact gesture modes, same-frame clipped
+  ownership, cancellation causality, multiple releases, and release-time plans.
 - Core all-feature suite: passed after updating superseded snapshot fixtures to
   use canonical events and threshold-crossing geometry.
+- Showcase all-feature suite: 128 library plus 25 binary tests passed, including
+  the three legacy click/navigation regressions found by the workspace gate.
 - Facade public API surface with all features: 5/5 passed.
-- Core warning-denied all-target/all-feature Clippy: passed.
+- Core/facade warning-denied all-target/all-feature Clippy and formatting are
+  pending one final candidate run after documentation integration.
 - Independent audit and the complete six-command workspace gate remain pending
   on the implementation candidate.
 

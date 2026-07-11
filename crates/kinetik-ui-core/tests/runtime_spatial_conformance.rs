@@ -20,13 +20,34 @@ fn assert_vec_close(actual: Vec2, expected: Vec2) {
 #[test]
 fn scoped_input_composes_affine_vectors_for_every_accessor_and_restores_parent() {
     let mut harness = UiTestHarness::new();
-    harness.input_mut().pointer.position = Some(Point::new(20.0, 44.0));
-    harness.input_mut().pointer.delta = Vec2::new(8.0, 8.0);
-    harness.input_mut().pointer.wheel_delta = Vec2::new(2.0, 4.0);
+    harness.input_mut().pointer.position = Some(Point::new(12.0, 36.0));
+    harness.input_mut().pointer.delta = Vec2::ZERO;
     harness.input_mut().pointer.primary = PointerButtonState::new(true, true, false);
     let owner = WidgetId::from_key("scaled-drag");
 
+    let _ = harness.run_frame(|ui| {
+        ui.register_id(owner);
+        ui.push_primitive(Primitive::TransformBegin(Transform::translation(
+            Vec2::new(10.0, 20.0),
+        )));
+        ui.push_primitive(Primitive::TransformBegin(Transform::scale(Vec2::new(
+            2.0, 4.0,
+        ))));
+        let (input, memory) = ui.input_and_memory_mut();
+        let response = draggable(owner, Rect::new(0.0, 0.0, 10.0, 10.0), input, memory, false);
+        ui.push_primitive(Primitive::TransformEnd);
+        ui.push_primitive(Primitive::TransformEnd);
+        response
+    });
+
+    harness.input_mut().events.clear();
+    harness.input_mut().pointer.position = Some(Point::new(20.0, 44.0));
+    harness.input_mut().pointer.delta = Vec2::new(8.0, 8.0);
+    harness.input_mut().pointer.wheel_delta = Vec2::new(2.0, 4.0);
+    harness.input_mut().pointer.primary = PointerButtonState::new(true, false, false);
+
     let (response, output) = harness.run_frame(|ui| {
+        ui.register_id(owner);
         let root = ui.input().clone();
         ui.push_primitive(Primitive::TransformBegin(Transform::translation(
             Vec2::new(10.0, 20.0),
@@ -582,7 +603,7 @@ fn ordered_pointer_events_localize_individually_and_clips_keep_only_release_clea
         localized
             .events
             .iter()
-            .any(|event| matches!(event, UiInputEvent::PointerReleaseAll { .. }))
+            .all(|event| !matches!(event, UiInputEvent::PointerReleaseAll { .. }))
     );
     let non_pointer = localized
         .events

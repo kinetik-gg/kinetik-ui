@@ -272,7 +272,12 @@ then remains latched. The crossing update reports the full origin-to-current
 displacement; later frames report only newly accumulated movement. A crossed
 release never clicks, even after moving back. `pressable` uses the same latch
 for click suppression but never becomes a domain drag; only `draggable` sets
-`drag_source` and can produce a released source for drop targets.
+`drag_source` and can produce a released source for drop targets. The retained
+transaction also records whether Press, DomainDrag, or Selection initiated it;
+changing primitive modes cancels rather than promoting or releasing another
+mode's gesture. Legacy snapshot input starts a fresh press at the current
+position and does not reinterpret that frame's aggregate pointer delta as
+post-press movement.
 
 Text selection uses `Ui::captured_selection_gesture`, a visually neutral
 capture seam that returns the common `Response` plus ordered Press, Move,
@@ -286,6 +291,11 @@ with selection actions instead of parsing pointer input a second time.
 Releases preserved outside an effective clip are cancellation-only, even when
 their transformed point remains inside a larger widget rectangle. A canonical
 release with no event-time position cannot click, cross a threshold, or drop.
+Spatial localization preserves a same-frame outside cleanup edge when an
+earlier accepted press created its potential owner. ReleaseAll and focus loss
+are ordered fences: earlier movement or a completed drop remains observable,
+later pointer transitions are inert, and focus cancellation never borrows a
+future event's position or click count.
 
 Overlapping interaction uses a predeclared `PointerTargetPlan`. Each visual
 target has one canonical identity, at most one ordinary event owner, at most

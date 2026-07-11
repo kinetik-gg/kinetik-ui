@@ -149,20 +149,65 @@ impl SpatialStack {
         preserve_primary_release: bool,
         preserve_secondary_release: bool,
     ) -> (Vec<UiInputEvent>, Vec<usize>, Vec<bool>) {
-        let localized = root
-            .events
-            .iter()
-            .enumerate()
-            .filter_map(|(ordinal, event)| {
-                let cleanup_only = self.event_is_cleanup_only(
-                    event,
-                    preserve_primary_release,
-                    preserve_secondary_release,
-                );
-                self.localize_event(event, preserve_primary_release, preserve_secondary_release)
-                    .map(|event| (ordinal, event, cleanup_only))
-            })
-            .collect::<Vec<_>>();
+        let mut localized = Vec::new();
+        let mut primary_cleanup_required = preserve_primary_release;
+        let mut secondary_cleanup_required = preserve_secondary_release;
+
+        for (ordinal, event) in root.events.iter().enumerate() {
+            let ordinary = match event {
+                UiInputEvent::PointerButton { position, .. }
+                | UiInputEvent::PointerReleaseAll { position } => {
+                    self.ordinary_event_allowed(*position)
+                }
+                _ => true,
+            };
+            let cleanup_only = match event {
+                UiInputEvent::PointerButton {
+                    button,
+                    down: false,
+                    ..
+                } => {
+                    let required = (*button == MouseButton::Primary && primary_cleanup_required)
+                        || (*button == MouseButton::Secondary && secondary_cleanup_required);
+                    required && !ordinary
+                }
+                UiInputEvent::PointerReleaseAll { .. } => {
+                    (primary_cleanup_required || secondary_cleanup_required) && !ordinary
+                }
+                _ => false,
+            };
+
+            if let Some(local_event) =
+                self.localize_event(event, primary_cleanup_required, secondary_cleanup_required)
+            {
+                localized.push((ordinal, local_event, cleanup_only));
+            }
+
+            match event {
+                UiInputEvent::PointerButton {
+                    button, down: true, ..
+                } if ordinary => match button {
+                    MouseButton::Primary => primary_cleanup_required = true,
+                    MouseButton::Secondary => secondary_cleanup_required = true,
+                    MouseButton::Middle | MouseButton::Other(_) => {}
+                },
+                UiInputEvent::PointerButton {
+                    button,
+                    down: false,
+                    ..
+                } => match button {
+                    MouseButton::Primary => primary_cleanup_required = false,
+                    MouseButton::Secondary => secondary_cleanup_required = false,
+                    MouseButton::Middle | MouseButton::Other(_) => {}
+                },
+                UiInputEvent::PointerReleaseAll { .. }
+                | UiInputEvent::WindowFocusChanged(false) => {
+                    primary_cleanup_required = false;
+                    secondary_cleanup_required = false;
+                }
+                _ => {}
+            }
+        }
         let ordinals = localized.iter().map(|(ordinal, _, _)| *ordinal).collect();
         let cleanup_only = localized
             .iter()
@@ -170,31 +215,6 @@ impl SpatialStack {
             .collect();
         let events = localized.into_iter().map(|(_, event, _)| event).collect();
         (events, ordinals, cleanup_only)
-    }
-
-    fn event_is_cleanup_only(
-        &self,
-        event: &UiInputEvent,
-        preserve_primary_release: bool,
-        preserve_secondary_release: bool,
-    ) -> bool {
-        match event {
-            UiInputEvent::PointerButton {
-                button,
-                down: false,
-                position,
-                ..
-            } => {
-                let preserved = (*button == MouseButton::Primary && preserve_primary_release)
-                    || (*button == MouseButton::Secondary && preserve_secondary_release);
-                preserved && !self.ordinary_event_allowed(*position)
-            }
-            UiInputEvent::PointerReleaseAll { position } => {
-                (preserve_primary_release || preserve_secondary_release)
-                    && !self.ordinary_event_allowed(*position)
-            }
-            _ => false,
-        }
     }
 
     fn localize_event(
@@ -258,7 +278,7 @@ impl SpatialStack {
         }
     }
 
-    fn ordinary_event_allowed(&self, position: Option<Point>) -> bool {
+    pub(crate) fn ordinary_event_allowed(&self, position: Option<Point>) -> bool {
         match position {
             Some(position) => self.accepts_screen_point(position),
             None => self.state.screen_to_local.is_some() && self.state.clips.is_empty(),

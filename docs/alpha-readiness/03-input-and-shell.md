@@ -6,7 +6,7 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | In progress; `IN-01`, `IN-02`, and `IN-03A` merged; `IN-03B` implementation and focused verification are in progress |
+| Status | In progress; `IN-01`, `IN-02`, and `IN-03A` merged; `IN-03B` final-depth remedy passes focused verification pending exact-SHA audit |
 | Scope | Sequence-preserving input, platform request execution, and pointer normalization |
 | Impact / confidence | Critical / High (`IN-03` is High / High) |
 | Campaign prerequisite | Stage 2 gate; campaign authorization recorded |
@@ -60,8 +60,13 @@ sidecar and exposes neutral captured-selection actions without changing public
 input or common response layouts. A matching ordered text claim exposes editing
 events with the same ordinals, so `TEXT-01` can merge without pointer reparsing.
 Empty canonical streams remain compatible.
-Focused threshold, conflict, drop-order, ordinal, spatial, and public-surface
-verification is in progress before independent audit and the complete gate.
+Its final-depth remedy preserves initiating gesture mode, sequential same-frame
+cleanup provenance, causal cancellation metadata, and the first terminating
+release as drop authority. Planned drop routing now uses release-time geometry
+and validates the captured source clip while ordinary/wheel routes keep their
+final-pointer basis. Thirty-one focused adversarial tests, the core and Showcase
+all-feature suites, and the public surface pass; exact-SHA audit and the
+complete gate remain pending.
 
 ## Ownership And Overlap
 
