@@ -76,13 +76,8 @@ fn stage1_text_wrapper_matrix_exposes_semantic_contracts() {
             "{}",
             case.name()
         );
-        let canonical_access = matches!(
-            case,
-            TextWrapperCase::TextField | TextWrapperCase::MultiLineTextField
-        );
-        assert_eq!(
-            has_semantic_action(disabled_node, &SemanticActionKind::SetText),
-            !canonical_access,
+        assert!(
+            !has_semantic_action(disabled_node, &SemanticActionKind::SetText),
             "{}",
             case.name()
         );

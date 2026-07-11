@@ -1,11 +1,13 @@
 use super::{
     ComponentState, CursorShape, DropTargetResponse, DropdownModel, DropdownTriggerPresentation,
     IconId, Primitive, Rect, RectPrimitive, Response, SemanticAction, SemanticActionKind,
-    SemanticNode, SemanticRole, SemanticValue, TextEditState, TextFieldOutput, TextLayoutStore,
-    Theme, UiInput, UiMemory, WidgetId, WidgetOutput, drop_target, field_text_primitive,
-    finite_widget_extent, pressable, suppress_disabled_interaction_reporting,
+    SemanticNode, SemanticRole, SemanticValue, TextEditState, TextFieldAccess, TextFieldOutput,
+    TextLayoutStore, Theme, UiInput, UiMemory, WidgetId, WidgetOutput, drop_target,
+    field_text_primitive, finite_widget_extent, pressable, suppress_disabled_interaction_reporting,
+    text_field_with_access_runtime_metadata_and_fence,
     text_field_with_text_layouts_and_caret_visibility, with_hover_cursor, with_response_state,
 };
+use kinetik_ui_core::Ui as CoreUi;
 
 /// Configuration for an inspector select/enum field backed by a dropdown model.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -600,6 +602,118 @@ pub(crate) fn path_field_with_text_layouts_and_caret_visibility(
             .as_ref()
             .is_some_and(|response| response.double_clicked);
 
+    PathFieldOutput {
+        widget,
+        changed: field.changed,
+        field,
+        browse_response,
+        browse_requested,
+        open_requested,
+        read_only: config.read_only,
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(crate) fn path_field_with_access_runtime(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    label: impl Into<String>,
+    state: &mut TextEditState,
+    config: PathFieldConfig,
+    theme: &Theme,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> PathFieldOutput {
+    let label = label.into();
+    let access = if config.disabled {
+        TextFieldAccess::Disabled
+    } else if config.read_only {
+        TextFieldAccess::ReadOnly
+    } else {
+        TextFieldAccess::Editable
+    };
+    let browse_disabled = config.disabled || config.read_only;
+    let browse_width = if config.browse {
+        finite_widget_extent(config.browse_width).min(rect.width.max(0.0))
+    } else {
+        0.0
+    };
+    let gap = if browse_width > 0.0 {
+        finite_widget_extent(config.gap).min((rect.width - browse_width).max(0.0))
+    } else {
+        0.0
+    };
+    let field_width = (rect.width - browse_width - gap).max(0.0);
+    let field_rect = Rect::new(rect.x, rect.y, field_width, rect.height);
+    let button_rect = Rect::new(field_rect.max_x() + gap, rect.y, browse_width, rect.height);
+    let browse_response = if browse_width > 0.0 {
+        let browse_id = id.child("browse");
+        let mut response = {
+            let (input, memory) = runtime.input_and_memory_mut();
+            pressable(browse_id, button_rect, input, memory, browse_disabled)
+        };
+        suppress_disabled_interaction_reporting(&mut response);
+        Some(response)
+    } else {
+        None
+    };
+    let browse_requested = browse_response.as_ref().is_some_and(|response| {
+        !browse_disabled && (response.clicked || response.keyboard_activated)
+    });
+    let (mut field, _, pointer) = text_field_with_access_runtime_metadata_and_fence(
+        runtime,
+        id.child("text"),
+        field_rect,
+        state,
+        theme,
+        access,
+        text_layouts,
+        caret_visible,
+        browse_requested,
+    );
+    if let Some(node) = field.widget.semantics.first_mut() {
+        node.label = Some(label.clone());
+    }
+
+    let mut widget = field.widget.clone();
+    if let Some(response) = browse_response.as_ref() {
+        let browse_id = id.child("browse");
+        let recipe = theme.text_field(ComponentState {
+            hovered: response.state.hovered,
+            pressed: response.state.pressed,
+            focused: response.state.focused,
+            disabled: browse_disabled,
+            selected: false,
+        });
+        widget.primitives.push(Primitive::Rect(RectPrimitive {
+            rect: button_rect,
+            fill: Some(recipe.background),
+            stroke: Some(recipe.border),
+            radius: recipe.radius,
+        }));
+        widget.primitives.push(field_text_primitive(
+            button_rect.inset(2.0),
+            "...",
+            &recipe,
+            theme,
+        ));
+        let mut node = SemanticNode::new(browse_id, SemanticRole::Button, button_rect)
+            .with_label(format!("Browse {label}"))
+            .focusable(!browse_disabled);
+        node.state.disabled = browse_disabled;
+        if !browse_disabled {
+            node.actions
+                .push(SemanticAction::new(SemanticActionKind::Open, "Browse"));
+        }
+        widget.semantics.push(with_response_state(node, response));
+    }
+
+    let open_requested = config.open
+        && !browse_disabled
+        && !browse_requested
+        && !state.text.is_empty()
+        && pointer.accepted_double_click;
     PathFieldOutput {
         widget,
         changed: field.changed,

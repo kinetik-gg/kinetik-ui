@@ -1,7 +1,9 @@
 use super::{
-    Rect, SemanticRole, TextEditState, TextFieldOutput, TextLayoutStore, Theme, UiInput, UiMemory,
-    WidgetId, text_field_with_text_layouts_and_caret_visibility,
+    Rect, SemanticRole, TextEditState, TextFieldAccess, TextFieldOutput, TextLayoutStore, Theme,
+    UiInput, UiMemory, WidgetId, text_field_with_access_runtime,
+    text_field_with_text_layouts_and_caret_visibility,
 };
+use kinetik_ui_core::Ui as CoreUi;
 
 /// Output emitted by search fields.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,6 +75,42 @@ pub(crate) fn search_field_with_text_layouts_and_caret_visibility(
         memory,
         theme,
         disabled,
+        text_layouts,
+        caret_visible,
+    );
+    let query = state.text.clone();
+    for node in &mut field.widget.semantics {
+        if node.id == id {
+            node.role = SemanticRole::SearchField;
+            node.label = Some("Search".to_owned());
+        }
+    }
+
+    SearchFieldOutput {
+        field,
+        empty: query.is_empty(),
+        query,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_field_with_access_runtime(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> SearchFieldOutput {
+    let (mut field, _) = text_field_with_access_runtime(
+        runtime,
+        id,
+        rect,
+        state,
+        theme,
+        access,
         text_layouts,
         caret_visible,
     );

@@ -2,11 +2,13 @@ use super::{
     DEFAULT_NUMERIC_SCRUB_COARSE_FACTOR, DEFAULT_NUMERIC_SCRUB_FINE_FACTOR,
     DEFAULT_NUMERIC_SCRUB_STEP, NumericInputDraft, NumericInputPolicy, OrderedTextInputResult,
     Rect, Response, SemanticAction, SemanticActionKind, SemanticValue, TextEditState,
-    TextFieldOutput, TextLayoutStore, Theme, UiInput, UiMemory, WidgetId,
-    classify_numeric_input_draft, draggable, restore_text_draft,
+    TextFieldAccess, TextFieldOutput, TextFieldPointerSource, TextLayoutStore, Theme, UiInput,
+    UiMemory, WidgetId, classify_numeric_input_draft, draggable, restore_text_draft,
+    text_field_with_access_runtime, text_field_with_pointer_runtime,
     text_field_with_resolved_response_and_ordered_result,
     text_field_with_text_layouts_and_caret_visibility_and_ordered_result,
 };
+use kinetik_ui_core::Ui as CoreUi;
 
 /// Output emitted by numeric input.
 #[derive(Debug, Clone, PartialEq)]
@@ -212,15 +214,36 @@ pub(crate) fn numeric_input_with_text_layouts_and_caret_visibility(
             text_layouts,
             caret_visible,
         );
-    let draft = classify_numeric_input_draft(&state.text);
-    let policy = numeric_input_keyboard_policy(draft, &field, &ordered_result, disabled);
+    numeric_output_from_field(state, field, &ordered_result, !disabled)
+}
 
-    NumericInputOutput {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn numeric_input_with_access_runtime(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> NumericInputOutput {
+    let (field, ordered_result) = text_field_with_access_runtime(
+        runtime,
+        id,
+        rect,
+        state,
+        theme,
+        access,
+        text_layouts,
+        caret_visible,
+    );
+    numeric_output_from_field(
+        state,
         field,
-        policy,
-        value: draft.value(),
-        valid: draft.is_acceptable(),
-    }
+        &ordered_result,
+        access == TextFieldAccess::Editable,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -248,15 +271,7 @@ fn numeric_input_with_resolved_response(
         caret_visible,
         response,
     );
-    let draft = classify_numeric_input_draft(&state.text);
-    let policy = numeric_input_keyboard_policy(draft, &field, &ordered_result, disabled);
-
-    NumericInputOutput {
-        field,
-        policy,
-        value: draft.value(),
-        valid: draft.is_acceptable(),
-    }
+    numeric_output_from_field(state, field, &ordered_result, !disabled)
 }
 
 /// Emits a numeric text field with horizontal scrub adjustment.
@@ -359,7 +374,7 @@ pub(crate) fn numeric_scrub_input_with_text_layouts_and_caret_visibility(
         }
     }
 
-    apply_numeric_scrub_semantics(&mut numeric, resolved.min, resolved.max);
+    apply_numeric_scrub_semantics(&mut numeric, resolved.min, resolved.max, true);
 
     NumericScrubInputOutput {
         input: numeric,
@@ -374,16 +389,184 @@ pub(crate) fn numeric_scrub_input_with_text_layouts_and_caret_visibility(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(crate) fn numeric_scrub_input_with_runtime(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    value: &mut f32,
+    state: &mut TextEditState,
+    config: NumericScrubInputConfig,
+    theme: &Theme,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> NumericScrubInputOutput {
+    let before = *value;
+    let resolved = resolve_numeric_scrub_config(config);
+    let access = numeric_scrub_access(config);
+    let final_modifiers = runtime.input().keyboard.modifiers;
+
+    let (mut numeric, mut scrub_response, causal_modifiers, transaction_allowed) =
+        if access == TextFieldAccess::Editable {
+            let gesture = runtime.captured_domain_drag_gesture(id, rect, false);
+            let scrub_response = gesture.response;
+            let (field, ordered_result, pointer) = text_field_with_pointer_runtime(
+                runtime,
+                id,
+                rect,
+                state,
+                theme,
+                access,
+                text_layouts,
+                caret_visible,
+                TextFieldPointerSource::DomainDrag(gesture),
+                |pointer, preview_state| {
+                    scrub_arithmetic_allows_text_replay(
+                        scrub_response,
+                        &resolved,
+                        preview_state,
+                        pointer.domain_drag_modifiers,
+                    )
+                },
+            );
+            (
+                numeric_output_from_field(state, field, &ordered_result, true),
+                scrub_response,
+                pointer.domain_drag_modifiers,
+                pointer.transaction_allowed,
+            )
+        } else {
+            let (field, ordered_result) = text_field_with_access_runtime(
+                runtime,
+                id,
+                rect,
+                state,
+                theme,
+                access,
+                text_layouts,
+                caret_visible,
+            );
+            let scrub_response = field
+                .widget
+                .response
+                .expect("canonical text fields always emit a response");
+            (
+                numeric_output_from_field(state, field, &ordered_result, false),
+                scrub_response,
+                None,
+                false,
+            )
+        };
+
+    scrub_response.state.focused = runtime.memory().is_focused(id);
+    let selected_step =
+        numeric_scrub_step_for_modifiers(&resolved, causal_modifiers.unwrap_or(final_modifiers));
+    let mut scrubbed = false;
+
+    if access == TextFieldAccess::Editable
+        && scrub_response.dragged
+        && transaction_allowed
+        && causal_modifiers.is_some()
+        && scrub_response.drag_delta.x.is_finite()
+        && selected_step.is_finite()
+        && let NumericInputDraft::Valid(current) = numeric.policy.draft
+        && current.is_finite()
+    {
+        let weighted_delta = scrub_response.drag_delta.x * selected_step;
+        let candidate = current + weighted_delta;
+        if weighted_delta.is_finite() && candidate.is_finite() {
+            let next = clamp_numeric_scrub_value(candidate, resolved.min, resolved.max);
+            if numeric_scrub_value_changed(*value, next) {
+                *value = next;
+                restore_text_draft(state, format_numeric_scrub_value(next));
+                numeric.policy.draft = classify_numeric_input_draft(&state.text);
+                numeric.value = numeric.policy.draft.value();
+                numeric.valid = numeric.policy.draft.is_acceptable();
+                numeric.field.changed = true;
+                scrubbed = true;
+            }
+        }
+    }
+
+    apply_numeric_scrub_semantics(
+        &mut numeric,
+        resolved.min,
+        resolved.max,
+        access == TextFieldAccess::Editable,
+    );
+
+    NumericScrubInputOutput {
+        input: numeric,
+        scrub_response,
+        value: *value,
+        step: selected_step,
+        min: resolved.min,
+        max: resolved.max,
+        scrubbed,
+        value_changed: numeric_scrub_value_changed(before, *value),
+        read_only: config.read_only,
+    }
+}
+
+fn numeric_output_from_field(
+    state: &TextEditState,
+    field: TextFieldOutput,
+    ordered_result: &OrderedTextInputResult,
+    editable: bool,
+) -> NumericInputOutput {
+    let draft = classify_numeric_input_draft(&state.text);
+    let policy = numeric_input_keyboard_policy(draft, &field, ordered_result, editable);
+    NumericInputOutput {
+        field,
+        policy,
+        value: draft.value(),
+        valid: draft.is_acceptable(),
+    }
+}
+
+const fn numeric_scrub_access(config: NumericScrubInputConfig) -> TextFieldAccess {
+    if config.disabled {
+        TextFieldAccess::Disabled
+    } else if config.read_only {
+        TextFieldAccess::ReadOnly
+    } else {
+        TextFieldAccess::Editable
+    }
+}
+
+fn scrub_arithmetic_allows_text_replay(
+    response: Response,
+    config: &ResolvedNumericScrubConfig,
+    state: &TextEditState,
+    causal_modifiers: Option<kinetik_ui_core::Modifiers>,
+) -> bool {
+    if !response.dragged || causal_modifiers.is_none() {
+        return true;
+    }
+    let delta = response.drag_delta.x;
+    if !delta.is_finite() {
+        return false;
+    }
+    let current = match classify_numeric_input_draft(&state.text) {
+        NumericInputDraft::Valid(current) if current.is_finite() => Some(current),
+        NumericInputDraft::Valid(_) => return false,
+        NumericInputDraft::Empty | NumericInputDraft::Invalid => None,
+    };
+    let step = numeric_scrub_step_for_modifiers(config, causal_modifiers.unwrap_or_default());
+    let weighted = delta * step;
+    weighted.is_finite() && current.is_none_or(|current| (current + weighted).is_finite())
+}
+
 fn numeric_input_keyboard_policy(
     draft: NumericInputDraft,
     field: &TextFieldOutput,
     ordered_result: &OrderedTextInputResult,
-    disabled: bool,
+    editable: bool,
 ) -> NumericInputPolicy {
     let Some(response) = field.widget.response.as_ref() else {
         return NumericInputPolicy::idle(draft);
     };
-    if disabled || !response.state.focused || response.state.disabled {
+    if !editable || !response.state.focused || response.state.disabled {
         return NumericInputPolicy::idle(draft);
     }
 
@@ -468,6 +651,7 @@ fn apply_numeric_scrub_semantics(
     numeric: &mut NumericInputOutput,
     min: Option<f32>,
     max: Option<f32>,
+    allow_set_value: bool,
 ) {
     let Some(node) = numeric.field.widget.semantics.first_mut() else {
         return;
@@ -482,10 +666,11 @@ fn apply_numeric_scrub_semantics(
         min: semantic_min.min(semantic_max),
         max: semantic_min.max(semantic_max),
     });
-    if !node
-        .actions
-        .iter()
-        .any(|action| action.kind == SemanticActionKind::SetValue)
+    if allow_set_value
+        && !node
+            .actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::SetValue)
     {
         node.actions.push(SemanticAction::new(
             SemanticActionKind::SetValue,
