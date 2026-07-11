@@ -698,6 +698,106 @@ portable OS setting or widget identity. Drag threshold, release-click
 suppression, canonical pointer transitions, and ordered selection ordinals stay
 in serial packet `IN-03B`; no B-owned behavior is claimed here.
 
+### `IN-03B`: drag threshold and ordered selection gestures
+
+#### Changed files
+
+- `CHANGELOG.md`
+- `crates/kinetik-ui-core/src/{interaction,lib,memory}.rs`
+- `crates/kinetik-ui-core/src/interaction/{drag_select,hit,overlay,press,scroll,tests}.rs`
+- `crates/kinetik-ui-core/src/runtime/{pointer,spatial,tests,ui}.rs`
+- `crates/kinetik-ui-core/tests/{drag_threshold_conformance,ownership_reconciliation_conformance,pointer_arbitration_conformance,runtime_spatial_conformance}.rs`
+- `crates/kinetik-ui-core/tests/pointer_conformance/{drag_capture,drop_target}.rs`
+- `crates/kinetik-ui-widgets/src/components/{numeric_inputs,text_fields}.rs`
+- `crates/kinetik-ui-widgets/tests/component_taxonomy_conformance/controls.rs`
+- `crates/kinetik-ui-widgets/tests/text_field_conformance/numeric_and_scrub.rs`
+- `crates/kinetik-ui/tests/public_api_surface.rs`
+- `docs/specs/{01-foundations,02-layout-and-interaction}.md`
+- `docs/alpha-readiness/{03-input-and-shell,progress}.md`
+
+#### Reasoning and contract decisions
+
+Nonempty canonical pointer transitions now fold once in order; the empty stream
+keeps legacy snapshot behavior. A private retained press origin and inclusive
+four-current-scope-unit latch suppress clicks after crossing. The first domain
+drag update reports full origin displacement and later frames report only new
+movement. Pressable and selection behavior share suppression without becoming
+drop sources; only `draggable` publishes active/released drag identity.
+
+Spatial localization carries original root event indices in a private sidecar
+owned by `Ui`, so public `UiInput`, `UiInputEvent`, and `Response` layouts remain
+unchanged. `Ui::captured_selection_gesture` emits ordinal-bearing Press, Move,
+Release, and Cancel actions, reports below-threshold selection movement, and
+cannot replay actions for the same owner in one frame. Root conflicts block new
+pointer/drop actions while ordered release/cancel evidence can clean an existing
+owner. `Ui::claim_ordered_text_input_events` exposes the corresponding claimed
+editing-domain events with the same original ordinals, so `TEXT-01` does not
+need to parse the pointer stream.
+
+The depth-one remedy retains cleanup-only release provenance, defers ordered
+release-all/focus cancellation until preceding transitions are observable,
+uses event-time release geometry for drops, rejects missing canonical button
+positions, clears disabled secondary owners, blocks conflicted tooltip/scroll
+hover, and prevents selection from publishing a retained domain drag.
+
+The depth-one audit and complete workspace test exposed legacy pre-press delta
+replay, same-frame clipped cleanup loss, mode replay, non-causal cancellation
+metadata, and final-snapshot/multiple-release drop routing. The depth-two
+candidate now resolves numeric scrub as one DomainDrag response, retains global
+ReleaseAll fences through every scope, defers cancellation when an unrelated
+behavior encounters another owner, and preserves pre-fence wheel/move/release
+output. Closed plans require declared domain-drag source intent, derive
+same-frame ownership from the first causal press, latch threshold evidence in
+the source transform, validate source clipping, and route the matching causal
+release. Canonical unplanned commits fail closed; empty-stream legacy drops
+remain compatible. Final audit remedies keep first-release evidence immutable
+across later same-frame transactions, cancel split primary/secondary ownership
+per channel before raising a global fence, block planned releases after owner
+mismatch, share one planner/primitive threshold predicate, and suppress passive
+hover/cursor output after canonical focus loss without discarding pre-fence
+wheel or drag input. Closed plans also expose threshold-crossed active sources
+before release, ignore non-causal earlier releases, and prevent repeated
+selection calls from replaying a direct cancellation. Active previews enforce
+the same captured-source effective clip as release commits.
+
+#### Tests run and results
+
+- New drag-threshold conformance: 46/46 passed, covering boundaries, accumulated
+  and subsequent deltas, move-back latch, same-frame release, pressable
+  suppression, double-click, conflict cleanup, drop order, selection ordinals,
+  spatial gaps and cleanup provenance, release-all cancellation, canonical drop
+  geometry, ordered text merging, missing event positions, and plain-capture
+  cleanup, plus legacy relocation, exact gesture modes, same-frame clipped
+  ownership, unrelated-first cancellation, global fences, pre-fence wheel
+  input, unplanned fail-closed drops, transformed target-first probes,
+  same-frame press/release planning, immutable first-release authority,
+  below-threshold first transactions, split button owners, owner-mismatch
+  fail-closed routing, no-owner focus loss, active target-first drag hover,
+  non-causal earlier releases, captured-source active clipping, no-replay
+  cancellation, and release-time plans.
+- Widget component-taxonomy conformance: 44/44 passed, including canonical
+  accumulated scrub crossing, release publication, pre-press movement rejection,
+  and below-threshold focus preservation without a second pointer pass.
+- Core all-feature suite: passed, including 157 unit tests, 46 drag-threshold
+  cases, 28 pointer-conformance cases, and the remaining integration/doc tests.
+- Widget all-feature suite: passed after updating superseded legacy scrub
+  fixtures to use origin-to-position crossing geometry.
+- Showcase all-feature suite: 128 library plus 25 binary tests passed, including
+  the three legacy click/navigation regressions found by the workspace gate.
+- Facade public API surface with all features: 5/5 passed.
+- Warning-denied all-target/all-feature Clippy across core, widgets, facade, and
+  Showcase passed; formatting and diff checks passed.
+- The complete six-command workspace gate passed on the final evidence
+  candidate; independent exact-SHA re-audit is the remaining pre-PR gate.
+
+#### Remaining risks and deferred findings
+
+The threshold is a fixed private current-scope logical default rather than an OS
+or application setting. Scope changes during a retained gesture, touch/stylus/
+multipointer input, momentum, gesture phases, per-widget adapter click identity,
+and drag payload semantics remain deferred. `TEXT-01` owns actual caret/word/
+selection editing and must consume this seam without reparsing pointer events.
+
 ## Packet Completion Template
 
 Every packet review must use these exact headings and include commands plus concrete results:

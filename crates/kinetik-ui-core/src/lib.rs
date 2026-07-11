@@ -43,7 +43,8 @@ pub use input::{
     TextRange, UiInput, UiInputEvent,
 };
 pub use interaction::{
-    DropTargetResponse, InteractionState, Response, ScrollResponse, clamp_scroll_offset,
+    CapturedSelectionGesture, DropTargetResponse, InteractionState, OrderedTextInputEvent,
+    Response, ScrollResponse, SelectionGestureAction, SelectionGesturePhase, clamp_scroll_offset,
     context_menu_trigger, context_menu_trigger_transformed, draggable, draggable_transformed,
     drop_target, drop_target_transformed, focusable, focusable_transformed, hit_test,
     hit_test_transformed, max_scroll_offset, pressable, pressable_transformed, scrollable,

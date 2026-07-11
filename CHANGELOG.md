@@ -25,6 +25,19 @@ published, or accepted as an alpha release.
   preserving exact logical pixel deltas and the legacy empty-stream magnitude.
   Added timestamped Winit click sequencing; the explicit-count method remains
   available and resets automatic history.
+- Added a fixed four-current-scope-logical-unit drag threshold with latched
+  release-click suppression. Canonical pointer transitions now resolve once in
+  order, and `Ui::captured_selection_gesture` exposes original-root-ordinal
+  selection actions without turning text selection into a domain drag source.
+  `Ui::claim_ordered_text_input_events` supplies the matching ordinal-bearing
+  editing stream so text fields need not parse pointer events again. Text
+  composite numeric scrub fields resolve one domain-drag response without a
+  second press pass. Global cancellation fences preserve earlier owner and
+  wheel output even when primary and secondary owners differ, and planned drops
+  use declared source intent plus immutable first-causal press/release geometry.
+  Owner-mismatched plans and canonical unplanned drop commits now fail closed;
+  passive hover also observes canonical focus-loss fences while pre-fence wheel
+  deltas remain usable. Empty-stream legacy behavior remains compatible.
 
 ### Documentation
 

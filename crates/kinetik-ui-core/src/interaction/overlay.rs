@@ -1,6 +1,12 @@
 use super::hit::HitTarget;
-use super::{DropTargetResponse, InteractionState, Response, pressable, pressable_transformed};
-use crate::{Key, KeyState, Rect, Transform, UiInput, UiMemory, WidgetId};
+use super::{
+    DropTargetResponse, InteractionState, Response, canonical_pointer_fenced, pressable,
+    pressable_transformed,
+};
+use crate::{
+    Key, KeyState, MouseButton, PointerRoute, Rect, Transform, UiInput, UiInputEvent, UiMemory,
+    WidgetId,
+};
 
 /// Resolves neutral context-menu trigger behavior.
 pub fn context_menu_trigger(
@@ -69,7 +75,10 @@ fn tooltip_trigger_with_hit_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> Response {
-    let hovered = !disabled && hit_target.routed_hit_test(id, rect, input, memory);
+    let hovered = !disabled
+        && !memory.pointer_input_conflicted(input)
+        && !canonical_pointer_fenced(input)
+        && hit_target.routed_hit_test(id, rect, input, memory);
     if hovered {
         memory.set_hovered(id);
     }
@@ -131,24 +140,54 @@ fn drop_target_with_hit_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> DropTargetResponse {
-    let pointer_cancelled = memory.pointer_interaction_cancelled();
-    let source_candidate = memory
-        .released_drag_source()
+    let drag_release = drag_release(input, memory);
+    let planned_drag_source = (!input.events.is_empty()
+        && matches!(memory.pointer_drop_route(), PointerRoute::Target(_)))
+    .then(|| memory.planned_drag_source())
+    .flatten();
+    let termination = if drag_release.is_none() && planned_drag_source.is_some() {
+        DragTermination::Pending
+    } else {
+        drag_termination(input, drag_release)
+    };
+    let input_conflicted = memory.pointer_input_conflicted(input);
+    let source_candidate = drag_release
+        .map(|release| release.source)
         .or_else(|| memory.drag_source())
+        .or(planned_drag_source)
         .filter(|source| *source != id);
     let target_hit = hit_target.hit_test(rect, input);
+    let (release_seen, source_hit) = match termination {
+        DragTermination::Pending => (false, target_hit),
+        DragTermination::Release { position } => {
+            (true, hit_target.hit_test_position(rect, position))
+        }
+        DragTermination::Cancelled => (false, false),
+    };
+    let route_allows = match termination {
+        DragTermination::Release { .. } if input.events.is_empty() => {
+            memory.pointer_drop_route_allows(id)
+        }
+        DragTermination::Release { .. } => memory.pointer_drop_route_is_planned_for(id),
+        DragTermination::Pending => memory.pointer_drop_route_allows(id),
+        DragTermination::Cancelled => false,
+    };
+    let pointer_cancelled = input_conflicted
+        || matches!(termination, DragTermination::Cancelled)
+        || (matches!(termination, DragTermination::Pending)
+            && memory.pointer_interaction_cancelled());
     let hovered = !pointer_cancelled
         && !disabled
         && if source_candidate.is_some() {
-            target_hit && memory.pointer_drop_route_allows(id)
+            source_hit && route_allows
         } else {
             hit_target.routed_hit_test(id, rect, input, memory)
         };
     let source = if !pointer_cancelled
         && !disabled
         && source_candidate.is_some()
-        && target_hit
-        && memory.pointer_drop_route_allows(id)
+        && source_hit
+        && route_allows
     {
         source_candidate
     } else {
@@ -157,11 +196,7 @@ fn drop_target_with_hit_target(
     if hovered {
         memory.set_hovered(id);
     }
-    let dropped = !pointer_cancelled
-        && !disabled
-        && hovered
-        && input.pointer.primary.released
-        && source.is_some();
+    let dropped = !pointer_cancelled && !disabled && hovered && release_seen && source.is_some();
     let response = Response::new(
         id,
         rect,
@@ -179,6 +214,99 @@ fn drop_target_with_hit_target(
         response,
         source,
         dropped,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DragTermination {
+    Pending,
+    Release { position: Option<crate::Point> },
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DragRelease {
+    source: WidgetId,
+    position: Option<crate::Point>,
+}
+
+fn drag_release(input: &UiInput, memory: &UiMemory) -> Option<DragRelease> {
+    if input.events.is_empty() {
+        let source = memory
+            .released_drag_source()
+            .or_else(|| memory.drag_source())?;
+        return input.pointer.primary.released.then_some(DragRelease {
+            source,
+            position: input.pointer.position,
+        });
+    }
+
+    match memory.pointer_drop_route() {
+        PointerRoute::Target(_) => memory.planned_drag_release().and_then(|release| {
+            canonical_drag_release(input, memory, release.source, release.ordinal)
+        }),
+        PointerRoute::Blocked => None,
+        PointerRoute::Unplanned => {
+            let (source, release_ordinal) = (
+                memory.released_drag_source()?,
+                memory.released_drag_ordinal()?,
+            );
+            canonical_drag_release(input, memory, source, release_ordinal)
+        }
+    }
+}
+
+fn canonical_drag_release(
+    input: &UiInput,
+    memory: &UiMemory,
+    source: WidgetId,
+    release_ordinal: usize,
+) -> Option<DragRelease> {
+    input
+        .events
+        .iter()
+        .enumerate()
+        .find_map(|(event_index, event)| {
+            (memory.scoped_pointer_event_ordinal(event_index) == release_ordinal)
+                .then_some((event_index, event))
+        })
+        .and_then(|(event_index, event)| match event {
+            UiInputEvent::PointerButton {
+                button: MouseButton::Primary,
+                down: false,
+                position,
+                ..
+            } if !memory.scoped_pointer_event_is_cleanup(event_index) => Some(DragRelease {
+                source,
+                position: *position,
+            }),
+            _ => None,
+        })
+}
+
+fn drag_termination(input: &UiInput, release: Option<DragRelease>) -> DragTermination {
+    if let Some(release) = release {
+        return DragTermination::Release {
+            position: release.position,
+        };
+    }
+    if input.events.is_empty() {
+        return DragTermination::Pending;
+    }
+    if input.events.iter().any(|event| {
+        matches!(
+            event,
+            UiInputEvent::PointerButton {
+                button: MouseButton::Primary,
+                down: false,
+                ..
+            } | UiInputEvent::PointerReleaseAll { .. }
+                | UiInputEvent::WindowFocusChanged(false)
+        )
+    }) {
+        DragTermination::Cancelled
+    } else {
+        DragTermination::Pending
     }
 }
 
