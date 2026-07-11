@@ -190,10 +190,15 @@ Logical text ownership and active native IME are separate runtime states.
 Editable and ReadOnly fields may retain logical ownership and claim ordered
 input; only Editable may emit native `StartTextInput` or
 `UpdateTextInputRect`. Transitioning an active owner to ReadOnly stops native
-IME without discarding logical selection ownership, while returning to Editable
-starts it once. Disabled, removed, clipped, or replaced owners retire logical
-ownership and emit at most one required stop. Owner replacement remains ordered
-Stop then Start.
+IME without discarding logical selection ownership. Returning the logical mode
+to Editable remains platform-inactive until `publish_text_input_rect` accepts
+visible caret geometry; that publication then emits exactly one Start.
+Rejected hidden or clipped caret publication is side-effect free: it preserves
+focus, logical owner/mode, pending lifecycle state, and the previous native
+rectangle while the field stages reveal. It does not itself retire ownership.
+Separate widget-eligibility reconciliation may retire a fully clipped field;
+disabled, removed, or replaced owners retire logical ownership and emit at most
+one required stop. Owner replacement remains ordered Stop then Start.
 
 `UpdateTextInputRect` carries the visible clipped caret rectangle in
 screen-logical coordinates. The platform boundary must not substitute the
