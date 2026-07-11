@@ -6,11 +6,11 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | Current / Authorized; `ASYNC-01`, `TEXT-01`, and `REND-01A` accepted; `REND-01B` implemented under Issue #550; 4A waits on its merge and combined closure |
+| Status | Current / Authorized; checkpoint 4A is Complete / Accepted; Stage 4B is current and `TEXT-02` is next |
 | Scope | Async liveness, desktop/Unicode text, bounded caches, and renderer correctness |
 | Impact / confidence | Critical / Medium-high overall |
 | Campaign prerequisite | Stage 3 gate; campaign authorization recorded |
-| Token checkpoint | Very large; run 4A, checkpoint it, then continue to 4B only when 4A passes |
+| Token checkpoint | Very large; 4A passed its checkpoint, and execution continues through the remaining 4B packets and Stage 4 gate |
 
 ## Packets
 
@@ -40,6 +40,11 @@ requirement.
 
 ## Accepted 4A Evidence
 
+Checkpoint 4A is Complete / Accepted. Its accepted evidence covers async
+incarnation cleanup, canonical desktop editing and true read-only behavior,
+balanced invalid-transform recovery, and documented/tested sRGB, alpha, and
+tint semantics. Stage 4 remains Current / Authorized at 4B.
+
 `ASYNC-01` is Complete / Accepted. Issue #526 closed through PR #527 and
 squash-merged as `9d026c5`. Durable presence/incarnation, cancellation,
 same-ID replacement, observer validation, tombstone cleanup, non-cloneable
@@ -54,10 +59,9 @@ record below owns the cross-layer sRGB, alpha, tint, gradient, and image policy.
 
 ### `REND-01B`: sRGB, alpha, and tint contract
 
-Status: Implemented under Issue #550; acceptance remains pending its exact-SHA
-reviews, cross-platform/PR checks, squash merge, and the separate combined
-`REND-01-CLOSE` evidence packet. This record does not claim `REND-01`,
-checkpoint 4A, or Stage 4 complete.
+Status: Complete / Accepted. Issue #550 closed through PR #551. Candidate
+`609ae127` passed all local gates and three exact-SHA critics, three-OS run
+29165037981, and PR run 29165219725 before squash merge `9c1c044`.
 
 #### Changed files
 
@@ -102,6 +106,9 @@ snapshot structures and text grammar remain unchanged.
   warning-denied workspace Clippy, workspace tests, workspace build, all-feature
   example checks, and warning-denied workspace docs passed with the isolated
   `.target-rend01b` cache.
+- Three exact-SHA critics reported P0/P1/P2=`0/0/0` on candidate `609ae127`.
+  Ubuntu, Windows, and macOS passed run 29165037981; PR-context run 29165219725
+  passed before PR #551 squash-merged as `9c1c044`.
 
 #### Remaining risks and deferred findings
 
@@ -112,6 +119,22 @@ Premultiplied payload correctness is caller-owned and deliberately not scanned.
 `InvalidGeometry` remains the alpha-cycle diagnostic name for invalid colors.
 HDR, wide gamut, ICC conversion, external GPU resources, presenter ownership,
 and CPU/GPU pixel goldens remain later work or explicit deferrals.
+
+### `REND-01`: integrated renderer closure
+
+Status: Complete / Accepted. Audit §§6.12-6.13 are closed by two serialized,
+accepted packets. `REND-01A` closed Issue #518 through PR #520 and squash merge
+`1aee4f4`; three-OS run 29141679730 and its PR checks passed, accepting balanced
+recovery frames for rejected non-finite and overflowing transform begins.
+`REND-01B` closed Issue #550 through PR #551 and squash merge `9c1c044` after
+candidate `609ae127`, all local gates, three exact-SHA critics, three-OS run
+29165037981, and PR run 29165219725 passed, accepting the cross-layer straight
+sRGB/alpha, explicit gradient interpolation, and exact straight/premultiplied
+tint contract.
+
+Together with accepted `ASYNC-01` and `TEXT-01`, this closes checkpoint 4A.
+It does not close Stage 4: Unicode cluster authority, bounded text-store
+resources, and authoritative fractional-DPI text layout remain checkpoint 4B.
 
 `TEXT-01` is Complete / Accepted at `93d6a5f` after this integrated evidence
 closure. Its implementation was deliberately serialized into the following
@@ -142,11 +165,11 @@ authority remains `TEXT-02`; bounded undo/layout/resource budgets remain
 remains `REND-02`.
 
 The `TEXT-01` semantic prerequisites of `TEXT-02`, `TEXT-03`, and dependent
-editor packets are satisfied. Campaign execution remains serialized: `REND-01B`
-and the 4A checkpoint precede `TEXT-02`; `TEXT-03` also waits for the text-store
-API freeze; inspector/outliner still wait for their Stage 5 composition and
-collection prerequisites. The 4A checkpoint and Stage 4 are therefore not yet
-complete.
+editor packets are satisfied, and accepted `REND-01` unblocks the renderer side
+of 4B. `TEXT-02` is the next packet. `TEXT-03` remains behind the text-store API
+freeze, and `REND-02` remains behind both `TEXT-02` and accepted `REND-01`;
+inspector/outliner still wait for their Stage 5 composition and collection
+prerequisites. Checkpoint 4A is complete, while Stage 4 remains Current at 4B.
 
 ## Ownership And Overlap
 
@@ -160,7 +183,7 @@ Halt if Unicode work requires an unplanned shaping-engine replacement.
 
 ## Acceptance Gate And Verification Expectations
 
-The 4A checkpoint requires deterministic desktop editing/read-only behavior, async incarnation cleanup, balanced invalid-transform recovery, and a documented/tested color/tint contract. Record and review that checkpoint before 4B; continue without intermediate approval only when it passes and no stop condition triggers.
+The 4A checkpoint is Complete / Accepted with deterministic desktop editing/read-only behavior, async incarnation cleanup, balanced invalid-transform recovery, and a documented/tested color/tint contract. `TEXT-02` begins 4B; continue without intermediate approval only while packet gates pass and no stop condition triggers.
 
 The Stage 4 gate requires Unicode/grapheme/bidi fixtures; paint/hit/caret/selection agreement at scales 1.25, 1.5, and 1.75; asserted long-session text/undo/cache budgets; and proof that read-only differs from disabled. Packet tasks define exact deterministic checks. Passing the gate advances to the already Authorized / Queued Stage 5; a failed checkpoint halts the campaign.
 
