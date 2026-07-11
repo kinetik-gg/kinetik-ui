@@ -6,7 +6,7 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | In progress; `IN-01` and `IN-02` merged, `IN-03A` focused implementation gates passed pending audit |
+| Status | In progress; `IN-01` and `IN-02` merged, `IN-03A` audit and local full gate passed pending exact-SHA three-OS CI |
 | Scope | Sequence-preserving input, platform request execution, and pointer normalization |
 | Impact / confidence | Critical / High (`IN-03` is High / High) |
 | Campaign prerequisite | Stage 2 gate; campaign authorization recorded |
@@ -47,7 +47,9 @@ The live Winit path now calculates click counts from inclusive 500 ms/four-unit
 press boundaries, carries counts through matching releases, resets invalid
 history deterministically, and retains the explicit-count compatibility API.
 Focused core, routing, spatial, Winit, showcase, and warning-denied Clippy gates
-pass; independent audit remains before the full packet gate.
+pass. Three depth-one re-reviewers closed the DPI-evidence and rustdoc findings
+with no P0/P1/P2 findings, and the complete local CI-equivalent gate passes.
+Exact-SHA three-OS CI, PR checks, and squash merge remain.
 
 ## Ownership And Overlap
 

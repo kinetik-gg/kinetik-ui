@@ -685,7 +685,10 @@ method remains exact and documents its automatic-history reset. The live showcas
   incomplete public mouse-button lifecycle docs. Depth one records PointerLeft
   on a real sanitized scale change, clears private/projected evidence, documents
   exact reset/output semantics, and passes its focused regression and Clippy.
-- Independent audit and complete workspace gate: pending.
+- Three independent depth-one re-reviewers passed with no P0/P1/P2 findings.
+- Complete workspace gate: formatting, warning-denied Clippy, all-feature tests,
+  all-feature build, all-feature examples, and warning-denied documentation all
+  passed on the audited code candidate.
 
 #### Remaining risks and deferred findings
 
