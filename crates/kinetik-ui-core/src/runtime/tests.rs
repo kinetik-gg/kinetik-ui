@@ -828,7 +828,26 @@ fn selection_clicked_release_provenance_rejects_inexact_completions() {
         position: Some(Point::new(10.0, 5.0)),
     });
 
-    for input in [missing_position, cancelled, crossed] {
+    let mut outside_below_threshold = UiInput::default();
+    outside_below_threshold.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: true,
+        click_count: 2,
+        position: Some(Point::new(19.0, 5.0)),
+    });
+    outside_below_threshold.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: false,
+        click_count: 2,
+        position: Some(Point::new(20.5, 5.0)),
+    });
+
+    for input in [
+        missing_position,
+        cancelled,
+        crossed,
+        outside_below_threshold,
+    ] {
         let mut memory = UiMemory::new();
         let mut ui = Ui::begin_frame(runtime_test_context(input), &mut memory);
         let (gesture, clicked_releases) =
@@ -836,6 +855,95 @@ fn selection_clicked_release_provenance_rejects_inexact_completions() {
         assert!(!gesture.response.clicked);
         assert!(clicked_releases.is_empty());
     }
+}
+
+#[test]
+fn conflicted_retained_selection_release_has_no_clicked_provenance() {
+    let id = WidgetId::from_key("conflicted-retained-selection");
+    let rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let mut memory = UiMemory::new();
+    let pressed = UiInput {
+        pointer: PointerInput {
+            position: Some(Point::new(5.0, 5.0)),
+            primary: PointerButtonState::new(true, true, false),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    };
+    let mut ui = Ui::begin_frame(runtime_test_context(pressed), &mut memory);
+    ui.register_id(id);
+    let _ = ui.captured_selection_gesture(id, rect, false);
+    let _ = ui.end_frame();
+
+    let mut conflicted_release = UiInput::default();
+    conflicted_release.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: false,
+        click_count: 2,
+        position: Some(Point::new(5.0, 5.0)),
+    });
+    conflicted_release.pointer.position = Some(Point::new(6.0, 5.0));
+    let mut ui = Ui::begin_frame(runtime_test_context(conflicted_release), &mut memory);
+    let (gesture, provenance) =
+        ui.captured_selection_gesture_with_clicked_releases(id, rect, false);
+
+    assert!(!gesture.response.clicked);
+    assert!(provenance.is_empty());
+    assert!(
+        gesture
+            .actions
+            .iter()
+            .all(|action| action.phase == crate::SelectionGesturePhase::Cancel)
+    );
+}
+
+#[test]
+fn clipped_cleanup_selection_release_has_no_clicked_provenance() {
+    let id = WidgetId::from_key("clipped-cleanup-selection");
+    let rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let clip = ClipId::from_raw(91);
+    let clip_rect = Rect::new(0.0, 0.0, 10.0, 20.0);
+    let mut pressed = UiInput::default();
+    pressed.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: true,
+        click_count: 2,
+        position: Some(Point::new(9.0, 5.0)),
+    });
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::begin_frame(runtime_test_context(pressed), &mut memory);
+    ui.push_primitive(Primitive::ClipBegin {
+        id: clip,
+        rect: clip_rect,
+    });
+    ui.register_id(id);
+    let _ = ui.captured_selection_gesture(id, rect, false);
+    ui.push_primitive(Primitive::ClipEnd { id: clip });
+    let _ = ui.end_frame();
+
+    let mut released = UiInput::default();
+    released.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: false,
+        click_count: 2,
+        position: Some(Point::new(10.5, 5.0)),
+    });
+    let mut ui = Ui::begin_frame(runtime_test_context(released), &mut memory);
+    ui.push_primitive(Primitive::ClipBegin {
+        id: clip,
+        rect: clip_rect,
+    });
+    let (gesture, provenance) =
+        ui.captured_selection_gesture_with_clicked_releases(id, rect, false);
+
+    assert!(!gesture.response.clicked);
+    assert!(provenance.is_empty());
+    assert!(
+        gesture
+            .actions
+            .iter()
+            .all(|action| action.phase == crate::SelectionGesturePhase::Cancel)
+    );
 }
 
 #[test]
@@ -873,6 +981,39 @@ fn selection_capture_old_and_new_methods_share_one_claim() {
     assert_eq!(first_provenance, [Some(1)]);
     assert!(second.actions.is_empty());
     assert!(second_provenance.is_empty());
+}
+
+#[test]
+fn selection_claim_blocks_recovered_cancel_after_mode_mismatch() {
+    let id = WidgetId::from_key("selection-mismatch");
+    let rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let pressed = UiInput {
+        pointer: PointerInput {
+            position: Some(Point::new(5.0, 5.0)),
+            primary: PointerButtonState::new(true, true, false),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    };
+
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::begin_frame(runtime_test_context(pressed.clone()), &mut memory);
+    let (first, provenance) = ui.captured_selection_gesture_with_clicked_releases(id, rect, false);
+    assert!(!first.actions.is_empty());
+    assert!(provenance.is_empty());
+    let _ = ui.captured_domain_drag_gesture(id, rect, false);
+    let repeated = ui.captured_selection_gesture(id, rect, false);
+    assert!(repeated.actions.is_empty());
+
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::begin_frame(runtime_test_context(pressed), &mut memory);
+    let first = ui.captured_selection_gesture(id, rect, false);
+    assert!(!first.actions.is_empty());
+    let _ = ui.captured_domain_drag_gesture(id, rect, false);
+    let (repeated, provenance) =
+        ui.captured_selection_gesture_with_clicked_releases(id, rect, false);
+    assert!(repeated.actions.is_empty());
+    assert!(provenance.is_empty());
 }
 
 #[test]

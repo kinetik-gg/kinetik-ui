@@ -183,6 +183,7 @@ fn captured_domain_drag_gesture_with_hit_target(
         PointerGestureKind::DomainDrag,
         event_ordinals,
         true,
+        false,
     );
     memory.cache_domain_drag_response(id, resolution.response);
     let mut actions = resolution.domain_drag_actions;
@@ -197,13 +198,14 @@ fn captured_domain_drag_gesture_with_hit_target(
     }
 }
 
-pub(crate) fn captured_selection_gesture_with_ordinals_and_clicked_releases(
+pub(crate) fn captured_selection_gesture_with_ordinals(
     id: WidgetId,
     rect: Rect,
     input: &UiInput,
     event_ordinals: &[usize],
     memory: &mut UiMemory,
     disabled: bool,
+    capture_clicked_releases: bool,
 ) -> (CapturedSelectionGesture, Vec<Option<usize>>) {
     let process_events = memory.claim_selection_gesture(id);
     let resolution = resolve_pressable_with_hit_target(
@@ -216,6 +218,7 @@ pub(crate) fn captured_selection_gesture_with_ordinals_and_clicked_releases(
         PointerGestureKind::Selection,
         Some(event_ordinals),
         process_events,
+        capture_clicked_releases,
     );
     let mut actions = resolution.selection_actions;
     if input.events.is_empty() {

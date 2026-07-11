@@ -2,8 +2,7 @@ use std::hash::Hash;
 
 use crate::input::{InputStreamConflict, UiInput, UiInputEvent};
 use crate::interaction::{
-    captured_domain_drag_gesture_with_ordinals,
-    captured_selection_gesture_with_ordinals_and_clicked_releases,
+    captured_domain_drag_gesture_with_ordinals, captured_selection_gesture_with_ordinals,
 };
 use crate::memory::{TextInputOwnerMode, UiMemory};
 use crate::render::Primitive;
@@ -178,8 +177,7 @@ impl<'a> Ui<'a> {
         rect: Rect,
         disabled: bool,
     ) -> CapturedSelectionGesture {
-        self.captured_selection_gesture_with_clicked_releases(id, rect, disabled)
-            .0
+        self.capture_selection_gesture(id, rect, disabled, false).0
     }
 
     /// Resolves selection and returns the exact ordinals of accepted click releases.
@@ -190,15 +188,25 @@ impl<'a> Ui<'a> {
         rect: Rect,
         disabled: bool,
     ) -> (CapturedSelectionGesture, Vec<Option<usize>>) {
-        let (mut gesture, clicked_release_ordinals) =
-            captured_selection_gesture_with_ordinals_and_clicked_releases(
-                id,
-                rect,
-                &self.context.input,
-                &self.input_event_ordinals,
-                self.memory,
-                disabled,
-            );
+        self.capture_selection_gesture(id, rect, disabled, true)
+    }
+
+    fn capture_selection_gesture(
+        &mut self,
+        id: WidgetId,
+        rect: Rect,
+        disabled: bool,
+        capture_clicked_releases: bool,
+    ) -> (CapturedSelectionGesture, Vec<Option<usize>>) {
+        let (mut gesture, clicked_release_ordinals) = captured_selection_gesture_with_ordinals(
+            id,
+            rect,
+            &self.context.input,
+            &self.input_event_ordinals,
+            self.memory,
+            disabled,
+            capture_clicked_releases,
+        );
         for action in &mut gesture.actions {
             if let Some(ordinal) = action.ordinal {
                 debug_assert!(ordinal < self.root_event_modifiers.len());

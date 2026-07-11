@@ -1206,7 +1206,7 @@ impl UiMemory {
 #[cfg(test)]
 mod tests {
     use super::{PointerGestureKind, TextInputOwnerMode, UiMemory};
-    use crate::interaction::captured_selection_gesture_with_ordinals_and_clicked_releases;
+    use crate::interaction::captured_selection_gesture_with_ordinals;
     use crate::{
         MouseButton, Point, PointerRoute, PointerRoutes, Rect, UiInput, UiInputEvent, Vec2,
         WidgetId,
@@ -1229,12 +1229,13 @@ mod tests {
     fn resolve_selection_event(memory: &mut UiMemory, owner: WidgetId, event: UiInputEvent) {
         let mut input = UiInput::default();
         input.push_event(event);
-        let _ = captured_selection_gesture_with_ordinals_and_clicked_releases(
+        let _ = captured_selection_gesture_with_ordinals(
             owner,
             Rect::new(0.0, 0.0, 20.0, 20.0),
             &input,
             &[0],
             memory,
+            false,
             false,
         );
     }
