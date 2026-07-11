@@ -3,9 +3,11 @@ use std::collections::HashSet;
 use super::helpers::{
     ACTION_COMMAND_PALETTE, ACTION_COMPONENTS_RUN, ACTION_EDITOR_DOCK_JOIN,
     ACTION_SYSTEMS_DISPATCH, ACTION_VIEWPORT_GRID, ACTION_WORKSPACE_SAVE, ActionContext, ActionId,
-    ActionInvocation, ActionSource, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, Point,
-    ShowcaseApp, ShowcasePage, click, showcase_action_router, showcase_actions,
+    ActionInvocation, ActionSource, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
+    PlatformRequest, Point, ShowcaseApp, ShowcaseInput, ShowcasePage, click,
+    showcase_action_router, showcase_actions,
 };
+use crate::editor::{ACTION_DOCS, DOCUMENTATION_URL};
 
 #[test]
 fn clicking_button_changes_action_state() {
@@ -195,4 +197,46 @@ fn showcase_action_truth_play_shortcut_respects_running_state() {
     app.resolve_shortcuts(&grid);
 
     assert_eq!(app.action_count(), 2);
+}
+
+#[test]
+fn documentation_action_sources_emit_one_identical_fixed_https_request() {
+    for source in [
+        ActionSource::Menu,
+        ActionSource::Button,
+        ActionSource::Shortcut,
+    ] {
+        let mut app = ShowcaseApp::new();
+
+        assert!(app.invoke_action(ACTION_DOCS, source));
+        app.update(&ShowcaseInput::default());
+
+        assert_eq!(
+            app.output().platform_requests,
+            vec![PlatformRequest::OpenUrl(DOCUMENTATION_URL.to_owned())]
+        );
+        assert!(DOCUMENTATION_URL.starts_with("https://"));
+    }
+}
+
+#[test]
+fn documentation_f1_shortcut_routes_through_the_same_application_action() {
+    let mut app = ShowcaseApp::new();
+    let keyboard = KeyboardInput {
+        modifiers: Modifiers::default(),
+        events: vec![KeyEvent::new(
+            Key::Function(1),
+            KeyState::Pressed,
+            Modifiers::default(),
+            false,
+        )],
+    };
+
+    app.resolve_shortcuts(&keyboard);
+    app.update(&ShowcaseInput::default());
+
+    assert_eq!(
+        app.output().platform_requests,
+        vec![PlatformRequest::OpenUrl(DOCUMENTATION_URL.to_owned())]
+    );
 }

@@ -37,6 +37,10 @@ impl EditorShowcase {
                 status.clone_into(&mut self.status);
                 true
             }
+            ACTION_DOCS => {
+                "Online documentation requested".clone_into(&mut self.status);
+                true
+            }
             ACTION_ABOUT => self.open_about_modal(),
             ACTION_ABOUT_CLOSE => self.close_about_modal(),
             ACTION_TOOL_SELECT => self.select_tool(EditorTool::Select),
@@ -409,7 +413,7 @@ impl EditorShowcase {
             .with_body(format!("{ABOUT_MODAL_VERSION}\n{ABOUT_MODAL_READINESS}"))
             .with_actions([
                 ModalAction::new(
-                    modal_action(ACTION_DOCS, "Documentation (Experimental)", false),
+                    modal_action(ACTION_DOCS, "Documentation", self.about_modal_open),
                     ModalActionRole::Primary,
                 ),
                 ModalAction::new(
@@ -563,7 +567,7 @@ impl EditorShowcase {
             docs.y + 18.0,
             &documentation.action.label,
             10.0,
-            rgb(104, 110, 121),
+            rgb(204, 210, 220),
         );
 
         let cancel = overlay

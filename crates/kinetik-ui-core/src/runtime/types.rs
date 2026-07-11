@@ -158,6 +158,14 @@ pub enum PlatformRequest {
         /// Logical rectangle for caret/composition placement.
         rect: Option<Rect>,
     },
+    /// Update candidate-window geometry for the current text-input owner.
+    ///
+    /// Unlike [`Self::StartTextInput`], this does not restart platform text
+    /// input or composition.
+    UpdateTextInputRect {
+        /// Logical rectangle for caret/composition placement.
+        rect: Rect,
+    },
     /// Stop platform text input or IME.
     StopTextInput,
     /// Set the host window title.

@@ -6,7 +6,7 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | In progress; `IN-01` accepted pending PR CI and squash merge |
+| Status | In progress; `IN-01` merged, `IN-02` implementation gates passed pending independent audit |
 | Scope | Sequence-preserving input, platform request execution, and pointer normalization |
 | Impact / confidence | Critical / High (`IN-03` is High / High) |
 | Campaign prerequisite | Stage 2 gate; campaign authorization recorded |
@@ -26,6 +26,14 @@ claim, event-time pointer localization, and deterministic mixed-mode conflict
 diagnostics. Its depth-two remedy and independent re-review passed, as did the
 complete local CI-equivalent gate. Existing pointer primitives intentionally remain snapshot-driven;
 event-aware click, drag, and wheel policy stays in `IN-03`.
+
+`IN-02` now uses one consumed Winit batch, ordered injectable shell services,
+payload-free failures, targeted one-shot clipboard responses, same-owner IME
+rectangle updates, stateful repaint replacement, and a live-loop rollover path
+that cannot replay shell work after a recoverable surface failure. Help, About,
+and F1 route one fixed HTTPS Documentation action. Focused deterministic and
+warning-denied Clippy gates pass; independent audit, the complete workspace
+gate, PR CI, and squash merge remain before acceptance.
 
 ## Ownership And Overlap
 
