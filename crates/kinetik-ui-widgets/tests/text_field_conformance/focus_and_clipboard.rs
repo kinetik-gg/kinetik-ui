@@ -48,19 +48,23 @@ fn ui_text_field_focus_handoff_stops_previous_owner_before_starting_new_owner() 
         .iter()
         .position(|request| matches!(request, PlatformRequest::StopTextInput))
         .expect("previous text input owner stopped");
-    let second_start_index = output
+    let (second_start_index, second_caret) = output
         .platform_requests
         .iter()
-        .position(|request| {
-            matches!(
-                request,
-                PlatformRequest::StartTextInput { rect: Some(rect) }
-                    if *rect == Rect::new(0.0, 32.0, 160.0, 24.0)
-            )
+        .enumerate()
+        .find_map(|(index, request)| {
+            if let PlatformRequest::StartTextInput { rect: Some(rect) } = request {
+                Some((index, *rect))
+            } else {
+                None
+            }
         })
         .expect("new text input owner started");
 
     assert!(stop_index < second_start_index);
+    assert!(second_caret.width > 0.0 && second_caret.height > 0.0);
+    assert!(Rect::new(0.0, 32.0, 160.0, 24.0).contains_rect(second_caret));
+    assert_ne!(second_caret, Rect::new(0.0, 32.0, 160.0, 24.0));
     assert_eq!(memory.focused(), Some(second));
     assert_eq!(memory.text_input_owner(), Some(second));
 }
@@ -163,8 +167,8 @@ fn ui_disabled_text_field_cannot_acquire_focus_or_text_ownership() {
         disabled_output.widget.response.expect("response").id,
         disabled
     );
-    assert_eq!(memory.focused(), Some(active));
-    assert_eq!(memory.text_input_owner(), Some(active));
+    assert_eq!(memory.focused(), None);
+    assert_eq!(memory.text_input_owner(), None);
     assert!(!output.platform_requests.iter().any(|request| matches!(
         request,
         PlatformRequest::StartTextInput {
@@ -172,7 +176,7 @@ fn ui_disabled_text_field_cannot_acquire_focus_or_text_ownership() {
         } if *rect == Rect::new(0.0, 32.0, 160.0, 24.0)
     )));
     assert!(
-        !output
+        output
             .platform_requests
             .contains(&PlatformRequest::StopTextInput)
     );

@@ -682,3 +682,254 @@ fn widget_semantics_map_roles_states_values_and_actions() {
     assert_eq!(search.role, SemanticRole::SearchField);
     assert_eq!(panel.role, SemanticRole::Panel);
 }
+
+#[test]
+fn canonical_replay_resolves_impossible_equal_ordinals_pointer_first() {
+    use crate::TextFieldAccess;
+    use crate::components::text_interaction::{
+        ResolvedTextPointerAction, TextPointerPhase, replay_text_field_events,
+    };
+    use kinetik_ui_core::{OrderedTextInputEvent, TextInputEvent, UiInputEvent};
+    use kinetik_ui_text::TextEditMode;
+
+    let mut state = TextEditState::new("ab");
+    let result = replay_text_field_events(
+        &mut state,
+        TextFieldAccess::Editable,
+        TextEditMode::SingleLine,
+        WidgetId::from_key("field"),
+        false,
+        0,
+        None,
+        vec![ResolvedTextPointerAction {
+            ordinal: Some(7),
+            phase: TextPointerPhase::Press,
+            model_offset: Some(1),
+            click_count: 1,
+            modifiers: Modifiers::default(),
+        }],
+        vec![OrderedTextInputEvent {
+            ordinal: Some(7),
+            event: UiInputEvent::Text(TextInputEvent::Commit("X".to_owned())),
+        }],
+    );
+
+    assert!(result.accepted_press);
+    assert_eq!(state.text, "aXb");
+    assert_eq!(state.selection, TextSelection::new(2, 2));
+}
+
+#[test]
+fn canonical_replay_retains_one_outer_focus_loss_fence() {
+    use crate::TextFieldAccess;
+    use crate::components::text_interaction::{
+        ResolvedTextPointerAction, TextPointerPhase, replay_text_field_events,
+    };
+    use kinetik_ui_core::{OrderedTextInputEvent, TextInputEvent, UiInputEvent};
+    use kinetik_ui_text::TextEditMode;
+
+    let mut state = TextEditState::new("ab");
+    let result = replay_text_field_events(
+        &mut state,
+        TextFieldAccess::Editable,
+        TextEditMode::SingleLine,
+        WidgetId::from_key("field"),
+        true,
+        2,
+        None,
+        vec![ResolvedTextPointerAction {
+            ordinal: Some(3),
+            phase: TextPointerPhase::Press,
+            model_offset: Some(0),
+            click_count: 1,
+            modifiers: Modifiers::default(),
+        }],
+        vec![
+            OrderedTextInputEvent {
+                ordinal: Some(1),
+                event: UiInputEvent::Text(TextInputEvent::Commit("X".to_owned())),
+            },
+            OrderedTextInputEvent {
+                ordinal: Some(2),
+                event: UiInputEvent::WindowFocusChanged(false),
+            },
+            OrderedTextInputEvent {
+                ordinal: Some(4),
+                event: UiInputEvent::WindowFocusChanged(true),
+            },
+            OrderedTextInputEvent {
+                ordinal: Some(5),
+                event: UiInputEvent::Text(TextInputEvent::Commit("Y".to_owned())),
+            },
+        ],
+    );
+
+    assert!(result.focus_lost);
+    assert!(!result.accepted_press);
+    assert_eq!(state.text, "abX");
+    assert_eq!(state.selection, TextSelection::new(3, 3));
+}
+
+#[test]
+fn canonical_replay_retains_press_anchor_across_an_interleaved_edit() {
+    use crate::TextFieldAccess;
+    use crate::components::text_interaction::{
+        ResolvedTextPointerAction, TextPointerPhase, replay_text_field_events,
+    };
+    use kinetik_ui_core::{OrderedTextInputEvent, TextInputEvent, UiInputEvent};
+    use kinetik_ui_text::TextEditMode;
+
+    let mut state = TextEditState::new("abcd");
+    let result = replay_text_field_events(
+        &mut state,
+        TextFieldAccess::Editable,
+        TextEditMode::SingleLine,
+        WidgetId::from_key("field"),
+        false,
+        4,
+        None,
+        vec![
+            ResolvedTextPointerAction {
+                ordinal: Some(1),
+                phase: TextPointerPhase::Press,
+                model_offset: Some(1),
+                click_count: 1,
+                modifiers: Modifiers::default(),
+            },
+            ResolvedTextPointerAction {
+                ordinal: Some(3),
+                phase: TextPointerPhase::Move,
+                model_offset: Some(4),
+                click_count: 0,
+                modifiers: Modifiers::default(),
+            },
+        ],
+        vec![OrderedTextInputEvent {
+            ordinal: Some(2),
+            event: UiInputEvent::Text(TextInputEvent::Commit("X".to_owned())),
+        }],
+    );
+
+    assert!(result.accepted_press);
+    assert_eq!(state.text, "aXbcd");
+    assert_eq!(state.selection, TextSelection::new(1, 4));
+}
+
+#[test]
+fn fallback_wrapped_geometry_shares_rows_for_paint_hit_selection_caret_and_extent() {
+    use crate::components::text_geometry::{TextFieldGeometry, TextFieldKind};
+    use kinetik_ui_core::{Brush, ComponentState};
+
+    let theme = default_dark_theme();
+    let recipe = theme.text_field(ComponentState {
+        hovered: false,
+        pressed: false,
+        focused: true,
+        disabled: false,
+        selected: false,
+    });
+    let line_height = recipe.font.line_height.max(1.0);
+    let rect = Rect::new(
+        0.0,
+        0.0,
+        recipe.padding_x * 2.0 + 9.0,
+        recipe.padding_y * 2.0 + line_height * 2.0,
+    );
+    let mut state = TextEditState::new("abcd");
+    state.set_selection(TextSelection::new(1, 3));
+    let geometry = TextFieldGeometry::build(
+        rect,
+        &state,
+        &recipe,
+        TextFieldKind::WrappedMultiLine,
+        kinetik_ui_core::Vec2::ZERO,
+        None,
+    );
+    let primitives = geometry.primitives(WidgetId::from_key("field"), true, true, true);
+    let fallback_rows = primitives
+        .iter()
+        .filter_map(|primitive| match primitive {
+            Primitive::Text(text) if text.layout.is_none() => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let selection_rows = primitives
+        .iter()
+        .filter(|primitive| {
+            matches!(
+                primitive,
+                Primitive::Rect(rect) if rect.fill == Some(recipe.selection)
+            )
+        })
+        .count();
+    let painted_caret = primitives.iter().find_map(|primitive| match primitive {
+        Primitive::Rect(rect) if rect.fill == Some(Brush::Solid(recipe.caret)) => Some(rect.rect),
+        _ => None,
+    });
+    let third_row_hit = geometry.model_offset_at_with_layout(
+        Point::new(
+            rect.x + recipe.padding_x + 1.0,
+            rect.y + recipe.padding_y + line_height * 2.0 + 1.0,
+        ),
+        None,
+    );
+
+    assert_eq!(fallback_rows, ["a", "b", "c", "d"]);
+    assert_eq!(third_row_hit, 2);
+    assert_eq!(selection_rows, 2);
+    assert_approx(geometry.caret_content_rect().y, line_height * 3.0);
+    assert_eq!(
+        painted_caret,
+        Some(
+            geometry
+                .caret_content_rect()
+                .translate(kinetik_ui_core::Vec2::new(
+                    recipe.padding_x,
+                    recipe.padding_y,
+                ))
+        )
+    );
+    assert_approx(geometry.viewport().content_size().height, line_height * 4.0);
+    assert!(geometry.viewport().content_size().height > geometry.viewport().viewport_size().height);
+}
+
+#[test]
+fn preedit_model_selection_keeps_insertion_leading_affinity() {
+    use crate::components::text_geometry::{TextFieldGeometry, TextFieldKind};
+    use kinetik_ui_core::ComponentState;
+    use kinetik_ui_text::TextComposition;
+
+    let theme = default_dark_theme();
+    let recipe = theme.text_field(ComponentState {
+        hovered: false,
+        pressed: false,
+        focused: true,
+        disabled: false,
+        selected: false,
+    });
+    let rect = Rect::new(0.0, 0.0, 160.0, 24.0);
+    let selection_width = |selection| {
+        let mut state = TextEditState::new("ab");
+        state.set_selection(selection);
+        state.composition = Some(TextComposition::new("XY", None));
+        TextFieldGeometry::build(
+            rect,
+            &state,
+            &recipe,
+            TextFieldKind::SingleLine,
+            kinetik_ui_core::Vec2::ZERO,
+            None,
+        )
+        .primitives(WidgetId::from_key("field"), true, true, true)
+        .into_iter()
+        .filter_map(|primitive| match primitive {
+            Primitive::Rect(rect) if rect.fill == Some(recipe.selection) => Some(rect.rect.width),
+            _ => None,
+        })
+        .sum::<f32>()
+    };
+    let char_width = (recipe.font.size * 0.55).max(1.0);
+
+    assert_approx(selection_width(TextSelection::new(0, 1)), char_width);
+    assert_approx(selection_width(TextSelection::new(2, 1)), char_width * 3.0);
+}

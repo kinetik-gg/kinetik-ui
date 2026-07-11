@@ -11,7 +11,8 @@ use kinetik_ui_core::{
 };
 #[allow(unused_imports)]
 use kinetik_ui_text::{
-    TextComposition, TextEditState, TextLayoutKey, TextLayoutStore, TextSelection, TextStyle,
+    OrderedTextInputResult, TextComposition, TextEditState, TextLayoutKey, TextLayoutStore,
+    TextSelection, TextStyle,
 };
 
 #[allow(unused_imports)]
@@ -28,8 +29,8 @@ use crate::{
     IconId, IconLibrary, MenuOverlay, MultiLineTextFieldOutput, NumericInputOutput,
     NumericScrubInputConfig, NumericScrubInputOutput, OverlayStack, PanelFrame, PathFieldConfig,
     PathFieldOutput, PropertyGridAffordanceOutput, PropertyGridAffordanceRects, PropertyGridRow,
-    SearchFieldOutput, SelectFieldConfig, SelectFieldOutput, SliderStep, TextFieldOutput,
-    VectorScrubInputConfig, VectorScrubInputOutput, WidgetOutput,
+    SearchFieldOutput, SelectFieldConfig, SelectFieldOutput, SliderStep, TextFieldAccess,
+    TextFieldOutput, VectorScrubInputConfig, VectorScrubInputOutput, WidgetOutput,
     asset_slot_field as asset_slot_field_widget, button as button_widget,
     checkbox as checkbox_widget, checkbox_with_label as checkbox_with_label_widget,
     checkbox_with_label_target as checkbox_with_label_target_widget,
@@ -41,6 +42,7 @@ use crate::{
     image_icon_selectable_button as image_icon_selectable_button_widget,
     image_icon_selectable_button_sized as image_icon_selectable_button_sized_widget,
     image_semantics, label as label_widget, label_semantics, list_row as list_row_widget,
+    multi_line_text_field_with_access_runtime as multi_line_text_field_access_widget,
     multi_line_text_field_with_text_layouts_and_caret_visibility as multi_line_text_field_widget,
     numeric_input_with_text_layouts_and_caret_visibility as numeric_input_widget,
     numeric_scrub_input_with_text_layouts_and_caret_visibility as numeric_scrub_input_widget,
@@ -54,6 +56,7 @@ use crate::{
     slider_with_label as slider_with_label_widget,
     slider_with_label_and_step as slider_with_label_and_step_widget,
     slider_with_step as slider_with_step_widget, tab_button as tab_button_widget,
+    text_field_with_access_runtime as text_field_access_widget,
     text_field_with_text_layouts_and_caret_visibility as text_field_widget,
     toggle as toggle_widget, toggle_with_label as toggle_with_label_widget,
     toggle_with_label_target as toggle_with_label_target_widget,
@@ -70,27 +73,55 @@ impl Ui<'_> {
         state: &mut TextEditState,
         disabled: bool,
     ) -> TextFieldOutput {
+        self.text_field_with_access(
+            key,
+            rect,
+            state,
+            if disabled {
+                TextFieldAccess::Disabled
+            } else {
+                TextFieldAccess::Editable
+            },
+        )
+    }
+
+    /// Emits a single-line text field with an explicit access policy.
+    pub fn text_field_with_access(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        state: &mut TextEditState,
+        access: TextFieldAccess,
+    ) -> TextFieldOutput {
         let id = self.id(key);
+        self.text_field_with_access_id(id, rect, state, access).0
+    }
+
+    pub(super) fn text_field_with_access_id(
+        &mut self,
+        id: WidgetId,
+        rect: Rect,
+        state: &mut TextEditState,
+        access: TextFieldAccess,
+    ) -> (TextFieldOutput, OrderedTextInputResult) {
         let theme = self.theme;
         let before = TextVisualState::from_state(state);
         let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
-        let (input, memory) = self.runtime.input_and_memory_mut();
-        let output = text_field_widget(
+        let (output, ordered) = text_field_access_widget(
+            &mut self.runtime,
             id,
             rect,
             state,
-            input,
-            memory,
             theme,
-            disabled,
+            access,
             text_layouts,
             caret_visible,
         );
         self.push_widget_output(&output.widget);
         self.request_text_caret_blink_repaint(&output.widget);
         self.request_repaint_if_text_visual_changed(&before, state);
-        output
+        (output, ordered)
     }
 
     /// Emits a multi-line text field.
@@ -101,20 +132,38 @@ impl Ui<'_> {
         state: &mut TextEditState,
         disabled: bool,
     ) -> MultiLineTextFieldOutput {
+        self.multi_line_text_field_with_access(
+            key,
+            rect,
+            state,
+            if disabled {
+                TextFieldAccess::Disabled
+            } else {
+                TextFieldAccess::Editable
+            },
+        )
+    }
+
+    /// Emits a wrapped multi-line text field with an explicit access policy.
+    pub fn multi_line_text_field_with_access(
+        &mut self,
+        key: impl Hash,
+        rect: Rect,
+        state: &mut TextEditState,
+        access: TextFieldAccess,
+    ) -> MultiLineTextFieldOutput {
         let id = self.id(key);
         let theme = self.theme;
         let before = TextVisualState::from_state(state);
         let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
-        let (input, memory) = self.runtime.input_and_memory_mut();
-        let output = multi_line_text_field_widget(
+        let output = multi_line_text_field_access_widget(
+            &mut self.runtime,
             id,
             rect,
             state,
-            input,
-            memory,
             theme,
-            disabled,
+            access,
             text_layouts,
             caret_visible,
         );

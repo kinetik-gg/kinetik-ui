@@ -6,6 +6,40 @@ use super::{
     text_field_layout, text_field_semantics, text_input_platform_requests, text_line_fragments,
     with_hover_cursor, with_response_state,
 };
+use kinetik_ui_core::{RepaintRequest, TextInputOwnerMode, Ui as CoreUi};
+use kinetik_ui_text::TextViewport;
+
+use super::semantics::text_field_semantics_with_access;
+use super::text_geometry::{TextFieldGeometry, TextFieldKind};
+use super::text_interaction::{
+    ResolvedTextPointerAction, TextPointerPhase, TextReplayResult, replay_text_field_events,
+    text_wheel_delta,
+};
+
+/// Access policy for a canonical text field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextFieldAccess {
+    /// Focusable text that accepts selection, editing, clipboard, and IME input.
+    Editable,
+    /// Focusable text that permits navigation, selection, and copy without mutation or IME.
+    ReadOnly,
+    /// Non-interactive text that cannot focus, select, scroll, copy, edit, or own IME.
+    Disabled,
+}
+
+impl TextFieldAccess {
+    const fn is_disabled(self) -> bool {
+        matches!(self, Self::Disabled)
+    }
+
+    const fn owner_mode(self) -> Option<TextInputOwnerMode> {
+        match self {
+            Self::Editable => Some(TextInputOwnerMode::Editable),
+            Self::ReadOnly => Some(TextInputOwnerMode::ReadOnly),
+            Self::Disabled => None,
+        }
+    }
+}
 
 /// Output emitted by editable text widgets.
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +48,38 @@ pub struct TextFieldOutput {
     pub widget: WidgetOutput,
     /// Whether the text changed this frame.
     pub changed: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn text_field_with_access_runtime(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> (TextFieldOutput, OrderedTextInputResult) {
+    let result = canonical_text_field_runtime(
+        runtime,
+        id,
+        rect,
+        state,
+        theme,
+        access,
+        text_layouts,
+        caret_visible,
+        TextFieldKind::SingleLine,
+        TextEditMode::SingleLine,
+    );
+    (
+        TextFieldOutput {
+            widget: result.widget,
+            changed: result.changed,
+        },
+        result.ordered,
+    )
 }
 
 /// Emits a single-line text field and applies text input while focused.
@@ -219,6 +285,36 @@ pub struct MultiLineTextFieldOutput {
     pub changed: bool,
     /// Visible line count emitted by the widget.
     pub visible_lines: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn multi_line_text_field_with_access_runtime(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+) -> MultiLineTextFieldOutput {
+    let result = canonical_text_field_runtime(
+        runtime,
+        id,
+        rect,
+        state,
+        theme,
+        access,
+        text_layouts,
+        caret_visible,
+        TextFieldKind::WrappedMultiLine,
+        TextEditMode::MultiLine,
+    );
+    MultiLineTextFieldOutput {
+        widget: result.widget,
+        changed: result.changed,
+        visible_lines: text_line_fragments(&state.text).len(),
+    }
 }
 
 /// Parsed state of a numeric input draft.
@@ -439,4 +535,238 @@ pub(crate) fn multi_line_text_field_with_text_layouts_and_caret_visibility(
         changed: before != state.text,
         visible_lines: text_line_fragments(&state.text).len(),
     }
+}
+
+struct CanonicalTextFieldResult {
+    widget: WidgetOutput,
+    changed: bool,
+    ordered: OrderedTextInputResult,
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn canonical_text_field_runtime(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    rect: Rect,
+    state: &mut TextEditState,
+    theme: &Theme,
+    access: TextFieldAccess,
+    mut text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+    kind: TextFieldKind,
+    edit_mode: TextEditMode,
+) -> CanonicalTextFieldResult {
+    if access == TextFieldAccess::ReadOnly && state.composition.is_some() {
+        let _ = state.apply_read_only_ordered_input(&[], edit_mode);
+    }
+    let before = state.text.clone();
+    let entry_focused = runtime.memory().is_focused(id);
+    let entry_selection_anchor = state.selection.anchor;
+    let retained_gesture_anchor = runtime.memory().selection_gesture_anchor(id);
+    let retained_offset = runtime.memory().scroll_offset(id);
+    let gesture = runtime.captured_selection_gesture(id, rect, access.is_disabled());
+    let mut response = gesture.response;
+    let entry_recipe = theme.text_field(ComponentState {
+        hovered: response.state.hovered,
+        pressed: response.state.pressed,
+        focused: entry_focused,
+        disabled: access.is_disabled(),
+        selected: false,
+    });
+    let entry_geometry = TextFieldGeometry::build(
+        rect,
+        state,
+        &entry_recipe,
+        kind,
+        retained_offset,
+        text_layouts.as_deref_mut(),
+    );
+    let mut pointer_actions = gesture
+        .actions
+        .into_iter()
+        .map(|action| ResolvedTextPointerAction {
+            ordinal: action.ordinal,
+            phase: TextPointerPhase::from(action.phase),
+            model_offset: action.position.map(|position| {
+                entry_geometry.model_offset_at_with_layout(position, text_layouts.as_deref())
+            }),
+            click_count: action.click_count,
+            modifiers: action.modifiers,
+        })
+        .collect::<Vec<_>>();
+
+    let final_root_press = runtime.last_root_primary_press_ordinal();
+    let legacy_snapshot_press =
+        runtime.input().events.is_empty() && runtime.input().pointer.primary.pressed;
+    let root_press_present = final_root_press.is_some() || legacy_snapshot_press;
+    let owns_press = if let Some(final_ordinal) = final_root_press {
+        final_primary_press_is_unambiguous(&pointer_actions, final_ordinal)
+            && pointer_actions
+                .iter()
+                .filter(|action| {
+                    action.phase == TextPointerPhase::Press
+                        && action.ordinal == Some(final_ordinal)
+                        && action.model_offset.is_some()
+                })
+                .count()
+                == 1
+    } else if legacy_snapshot_press {
+        pointer_actions
+            .iter()
+            .filter(|action| {
+                action.phase == TextPointerPhase::Press
+                    && action.ordinal.is_none()
+                    && action.model_offset.is_some()
+            })
+            .count()
+            == 1
+    } else {
+        false
+    };
+
+    if let Some(final_ordinal) = final_root_press {
+        if owns_press {
+            pointer_actions.retain(|action| {
+                action
+                    .ordinal
+                    .is_some_and(|ordinal| ordinal >= final_ordinal)
+            });
+        } else {
+            pointer_actions.clear();
+        }
+    } else if legacy_snapshot_press && !owns_press {
+        pointer_actions.clear();
+    }
+
+    if access.is_disabled() || (root_press_present && !owns_press) {
+        if runtime.memory().is_focused(id) {
+            runtime.memory_mut().clear_focus();
+        }
+    } else if owns_press {
+        runtime.memory_mut().focus(id);
+    }
+
+    let entry_accepts_input = entry_focused && (!root_press_present || owns_press);
+    let prepared = access.owner_mode().is_some_and(|mode| {
+        runtime.memory().is_focused(id) && runtime.prepare_text_input_owner(id, mode)
+    });
+    let ordered_events = if prepared {
+        runtime
+            .claim_ordered_text_input_events(id)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let replay = if access.is_disabled() {
+        TextReplayResult::default()
+    } else {
+        replay_text_field_events(
+            state,
+            access,
+            edit_mode,
+            id,
+            entry_accepts_input,
+            entry_selection_anchor,
+            retained_gesture_anchor,
+            pointer_actions,
+            ordered_events,
+        )
+    };
+    if let Some(anchor) = replay.accepted_gesture_anchor {
+        let _ = runtime
+            .memory_mut()
+            .set_selection_gesture_anchor(id, anchor);
+    }
+    if replay.focus_lost && runtime.memory().is_focused(id) {
+        runtime.memory_mut().clear_focus();
+    }
+
+    response.state.focused = runtime.memory().is_focused(id) && !access.is_disabled();
+    response.state.disabled = access.is_disabled();
+    let recipe = theme.text_field(ComponentState {
+        hovered: response.state.hovered,
+        pressed: response.state.pressed,
+        focused: response.state.focused,
+        disabled: access.is_disabled(),
+        selected: false,
+    });
+    let geometry =
+        TextFieldGeometry::build(rect, state, &recipe, kind, retained_offset, text_layouts);
+
+    if !access.is_disabled() {
+        let wheel = text_wheel_delta(runtime.input(), runtime.memory(), id, rect, kind, false);
+        let viewport = geometry.viewport();
+        let mut candidate = viewport.scroll_by(wheel);
+        let candidate_viewport = TextViewport::new(
+            kind.viewport_mode(),
+            viewport.viewport_size(),
+            viewport.content_size(),
+            candidate,
+        );
+        if response.state.focused {
+            candidate = candidate_viewport.reveal(geometry.caret_content_rect());
+        }
+        if retained_offset != candidate {
+            runtime.stage_scroll_offset(id, candidate);
+            runtime.request_repaint(RepaintRequest::NextFrame);
+        }
+    }
+
+    if access == TextFieldAccess::Editable
+        && response.state.focused
+        && !replay.focus_lost
+        && let Some(caret) = geometry.visible_caret_rect()
+    {
+        let _ = runtime.publish_text_input_rect(id, caret);
+    }
+
+    let primitives = geometry.primitives(
+        id,
+        response.state.focused,
+        !access.is_disabled(),
+        caret_visible,
+    );
+    let widget = with_hover_cursor(
+        WidgetOutput::new(Some(response), primitives)
+            .with_semantic(with_response_state(
+                text_field_semantics_with_access(
+                    id,
+                    rect,
+                    "Text field",
+                    state.text.clone(),
+                    access,
+                ),
+                &response,
+            ))
+            .with_platform_requests(replay.ordered.platform_requests.iter().cloned()),
+        &response,
+        CursorShape::Text,
+    );
+
+    CanonicalTextFieldResult {
+        widget,
+        changed: before != state.text,
+        ordered: replay.ordered,
+    }
+}
+
+fn final_primary_press_is_unambiguous(
+    actions: &[ResolvedTextPointerAction],
+    final_ordinal: usize,
+) -> bool {
+    let mut primary_open = false;
+    for action in actions.iter().filter(|action| {
+        action
+            .ordinal
+            .is_some_and(|ordinal| ordinal < final_ordinal)
+    }) {
+        match action.phase {
+            TextPointerPhase::Press => primary_open = true,
+            TextPointerPhase::Release | TextPointerPhase::Cancel => primary_open = false,
+            TextPointerPhase::Move => {}
+        }
+    }
+    !primary_open
 }
