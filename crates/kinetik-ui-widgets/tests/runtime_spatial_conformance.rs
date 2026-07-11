@@ -5,7 +5,10 @@ use kinetik_ui_core::{
     WidgetId, default_dark_theme, inspect_primitives,
 };
 use kinetik_ui_text::TextEditState;
-use kinetik_ui_widgets::{ItemId, PropertyGridLayout, PropertyGridRow, TreeLayout, TreeRow, Ui};
+use kinetik_ui_widgets::{
+    ItemId, NumericScrubInputConfig, PropertyGridLayout, PropertyGridRow, TreeLayout, TreeRow, Ui,
+    VectorComponentLayout, VectorScrubInputConfig, vector3_component_rects,
+};
 
 fn assert_close(actual: f32, expected: f32) {
     assert!((actual - expected).abs() < 1.0e-4, "{actual} != {expected}");
@@ -188,6 +191,76 @@ fn nested_scroll_projects_focused_text_semantics_and_ime_to_one_screen_rect() {
             _ => None,
         });
     assert_eq!(ime_rect, Some(expected_caret_screen));
+}
+
+#[test]
+fn nested_scroll_projects_vector_component_caret_once_and_clips_it() {
+    let root = WidgetId::from_key("root");
+    let scroll_id = root.child("wrapper-scroll");
+    let offset = Vec2::new(10.0, 20.0);
+    let outer_rect = Rect::new(0.0, 0.0, 160.0, 50.0);
+    let vector_rect = Rect::new(20.0, 30.0, 220.0, 24.0);
+    let component_rects = vector3_component_rects(vector_rect, VectorComponentLayout::default());
+    let local_target = component_rects[0].value_rect.center();
+    let screen_target = Point::new(local_target.x - offset.x, local_target.y - offset.y);
+    let input = UiInput {
+        pointer: PointerInput {
+            position: Some(screen_target),
+            primary: PointerButtonState::new(false, true, true),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    };
+    let mut memory = UiMemory::new();
+    memory.set_scroll_offset(scroll_id, offset);
+    let theme = default_dark_theme();
+    let mut values = [1.0, 2.0, 3.0];
+    let mut states = [
+        TextEditState::new("1"),
+        TextEditState::new("2"),
+        TextEditState::new("3"),
+    ];
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+
+    let vector = ui.scroll_area(
+        "wrapper-scroll",
+        outer_rect,
+        Size::new(260.0, 100.0),
+        false,
+        |ui, retained| {
+            assert_eq!(retained, offset);
+            ui.vector3_scrub_input(
+                "vector",
+                vector_rect,
+                "Position",
+                &mut values,
+                &mut states,
+                VectorScrubInputConfig::new(NumericScrubInputConfig::default()),
+            )
+        },
+    );
+    let frame = ui.finish_output();
+
+    assert!(!vector.inner.components[0].scrubbed);
+    let caret = frame
+        .platform_requests
+        .iter()
+        .find_map(|request| match request {
+            PlatformRequest::StartTextInput { rect: Some(rect) } => Some(*rect),
+            _ => None,
+        })
+        .expect("nested vector component starts IME");
+    let projected_field = Rect::new(
+        component_rects[0].value_rect.x - offset.x,
+        component_rects[0].value_rect.y - offset.y,
+        component_rects[0].value_rect.width,
+        component_rects[0].value_rect.height,
+    );
+    assert_close(caret.width, 1.0);
+    assert_ne!(caret, projected_field);
+    assert!(outer_rect.contains_point(caret.center()));
+    assert!(projected_field.contains_point(caret.center()));
+    assert!(frame.warnings.is_empty());
 }
 
 #[test]

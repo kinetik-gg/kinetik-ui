@@ -3,11 +3,12 @@ use super::{
     NumericScrubInputOutput, Point, Primitive, Rect, RectPrimitive, Response, SemanticAction,
     SemanticActionKind, SemanticNode, SemanticRole, SemanticValue, TextEditState, TextLayoutStore,
     TextPrimitive, Theme, UiInput, UiMemory, VectorComponentLayout, VectorComponentRect, WidgetId,
-    WidgetOutput, control_text_origin, finite_widget_extent,
+    WidgetOutput, control_text_origin, finite_widget_extent, numeric_scrub_input_with_runtime,
     numeric_scrub_input_with_text_layouts_and_caret_visibility, pressable,
     suppress_disabled_interaction_reporting, vector2_component_rects, vector3_component_rects,
     vector4_component_rects, with_hover_cursor,
 };
+use kinetik_ui_core::Ui as CoreUi;
 
 /// Configuration for vector numeric scrub fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -370,6 +371,76 @@ pub(crate) fn vector_scrub_input_with_text_layouts_and_caret_visibility<const N:
             component_config,
             input,
             memory,
+            theme,
+            component_text_layouts,
+            caret_visible,
+        );
+        if let Some(node) = output.input.field.widget.semantics.first_mut() {
+            node.label = Some(semantic_label);
+        }
+        widget.primitives.push(vector_component_label_primitive(
+            component.label_rect,
+            component.label,
+            theme,
+            component_config.disabled || component_config.read_only,
+        ));
+        widget
+            .primitives
+            .extend(output.input.field.widget.primitives.iter().cloned());
+        widget
+            .semantics
+            .extend(output.input.field.widget.semantics.iter().cloned());
+        widget
+            .platform_requests
+            .extend(output.input.field.widget.platform_requests.iter().cloned());
+        scrubbed |= output.scrubbed;
+        value_changed |= output.value_changed;
+        components.push(output);
+    }
+
+    VectorScrubInputOutput {
+        widget,
+        component_rects,
+        components,
+        scrubbed,
+        value_changed,
+        disabled: component_config.disabled,
+        read_only: component_config.read_only,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn vector_scrub_input_with_runtime<const N: usize>(
+    runtime: &mut CoreUi<'_>,
+    id: WidgetId,
+    label: &str,
+    values: &mut [f32; N],
+    states: &mut [TextEditState; N],
+    config: VectorScrubInputConfig,
+    theme: &Theme,
+    mut text_layouts: Option<&mut TextLayoutStore>,
+    caret_visible: bool,
+    component_rects: [VectorComponentRect; N],
+) -> VectorScrubInputOutput<N> {
+    let mut widget = WidgetOutput::new(None, Vec::new());
+    let mut components = Vec::with_capacity(N);
+    let mut scrubbed = false;
+    let mut value_changed = false;
+    let mut component_config = config.numeric;
+    component_config.disabled = component_config.disabled || config.disabled;
+    component_config.read_only = component_config.read_only || config.read_only;
+
+    for component in component_rects {
+        let component_id = id.child(component.label);
+        let semantic_label = format!("{label} {}", component.label);
+        let component_text_layouts = text_layouts.as_deref_mut();
+        let mut output = numeric_scrub_input_with_runtime(
+            runtime,
+            component_id,
+            component.value_rect,
+            &mut values[component.index],
+            &mut states[component.index],
+            component_config,
             theme,
             component_text_layouts,
             caret_visible,

@@ -816,6 +816,140 @@ fn canonical_replay_retains_press_anchor_across_an_interleaved_edit() {
 }
 
 #[test]
+fn canonical_place_caret_is_release_ordered_pointer_first_without_press_activation() {
+    use crate::TextFieldAccess;
+    use crate::components::text_interaction::{
+        ResolvedTextPointerAction, TextPointerPhase, replay_text_field_events,
+    };
+    use kinetik_ui_core::{OrderedTextInputEvent, TextInputEvent, UiInputEvent};
+    use kinetik_ui_text::TextEditMode;
+
+    let mut state = TextEditState::new("ab");
+    let result = replay_text_field_events(
+        &mut state,
+        TextFieldAccess::Editable,
+        TextEditMode::SingleLine,
+        WidgetId::from_key("field"),
+        false,
+        0,
+        None,
+        vec![
+            ResolvedTextPointerAction {
+                ordinal: Some(1),
+                phase: TextPointerPhase::OwnershipPress,
+                model_offset: Some(0),
+                click_count: 1,
+                modifiers: Modifiers::default(),
+            },
+            ResolvedTextPointerAction {
+                ordinal: Some(7),
+                phase: TextPointerPhase::PlaceCaret,
+                model_offset: Some(1),
+                click_count: 1,
+                modifiers: Modifiers::default(),
+            },
+        ],
+        vec![
+            OrderedTextInputEvent {
+                ordinal: Some(2),
+                event: UiInputEvent::Text(TextInputEvent::Commit("X".to_owned())),
+            },
+            OrderedTextInputEvent {
+                ordinal: Some(7),
+                event: UiInputEvent::Text(TextInputEvent::Commit("Y".to_owned())),
+            },
+        ],
+    );
+
+    assert!(!result.accepted_press);
+    assert_eq!(state.text, "aYb");
+    assert_eq!(state.selection, TextSelection::new(2, 2));
+}
+
+#[test]
+fn focus_loss_fences_place_caret_and_release_metadata_drives_selection() {
+    use crate::TextFieldAccess;
+    use crate::components::text_interaction::{
+        ResolvedTextPointerAction, TextPointerPhase, replay_text_field_events,
+    };
+    use kinetik_ui_core::{OrderedTextInputEvent, TextInputEvent, UiInputEvent};
+    use kinetik_ui_text::TextEditMode;
+
+    let mut fenced = TextEditState::new("alpha beta");
+    let result = replay_text_field_events(
+        &mut fenced,
+        TextFieldAccess::Editable,
+        TextEditMode::SingleLine,
+        WidgetId::from_key("fenced"),
+        false,
+        0,
+        None,
+        vec![ResolvedTextPointerAction {
+            ordinal: Some(2),
+            phase: TextPointerPhase::PlaceCaret,
+            model_offset: Some(7),
+            click_count: 2,
+            modifiers: Modifiers::new(true, false, false, false),
+        }],
+        vec![
+            OrderedTextInputEvent {
+                ordinal: Some(1),
+                event: UiInputEvent::WindowFocusChanged(false),
+            },
+            OrderedTextInputEvent {
+                ordinal: Some(3),
+                event: UiInputEvent::Text(TextInputEvent::Commit("X".to_owned())),
+            },
+        ],
+    );
+    assert!(result.focus_lost);
+    assert_eq!(fenced.text, "alpha beta");
+    assert_eq!(fenced.selection, TextSelection::new(10, 10));
+
+    let mut selected = TextEditState::new("alpha beta");
+    let result = replay_text_field_events(
+        &mut selected,
+        TextFieldAccess::Editable,
+        TextEditMode::SingleLine,
+        WidgetId::from_key("selected"),
+        false,
+        0,
+        None,
+        vec![ResolvedTextPointerAction {
+            ordinal: Some(2),
+            phase: TextPointerPhase::PlaceCaret,
+            model_offset: Some(7),
+            click_count: 2,
+            modifiers: Modifiers::new(true, false, false, false),
+        }],
+        Vec::new(),
+    );
+    assert!(!result.accepted_press);
+    assert_eq!(selected.selected_text(), Some("beta"));
+
+    let mut shifted = TextEditState::new("alpha beta");
+    shifted.set_caret(0);
+    let _ = replay_text_field_events(
+        &mut shifted,
+        TextFieldAccess::Editable,
+        TextEditMode::SingleLine,
+        WidgetId::from_key("shifted"),
+        false,
+        0,
+        None,
+        vec![ResolvedTextPointerAction {
+            ordinal: Some(2),
+            phase: TextPointerPhase::PlaceCaret,
+            model_offset: Some(5),
+            click_count: 1,
+            modifiers: Modifiers::new(true, false, false, false),
+        }],
+        Vec::new(),
+    );
+    assert_eq!(shifted.selection, TextSelection::new(0, 5));
+}
+
+#[test]
 fn fallback_wrapped_geometry_shares_rows_for_paint_hit_selection_caret_and_extent() {
     use crate::components::text_geometry::{TextFieldGeometry, TextFieldKind};
     use kinetik_ui_core::{Brush, ComponentState};

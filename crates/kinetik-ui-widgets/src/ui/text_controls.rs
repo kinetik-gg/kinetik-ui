@@ -44,15 +44,14 @@ use crate::{
     image_semantics, label as label_widget, label_semantics, list_row as list_row_widget,
     multi_line_text_field_with_access_runtime as multi_line_text_field_access_widget,
     multi_line_text_field_with_text_layouts_and_caret_visibility as multi_line_text_field_widget,
-    numeric_input_with_text_layouts_and_caret_visibility as numeric_input_widget,
+    numeric_input_with_access_runtime as numeric_input_widget,
     numeric_scrub_input_with_text_layouts_and_caret_visibility as numeric_scrub_input_widget,
-    panel as panel_widget, panel_semantics,
-    path_field_with_text_layouts_and_caret_visibility as path_field_widget,
+    panel as panel_widget, panel_semantics, path_field_with_access_runtime as path_field_widget,
     property_grid_row_affordance_controls as property_grid_row_affordance_controls_widget,
     radio_button as radio_button_widget, radio_button_with_label as radio_button_with_label_widget,
     radio_button_with_label_target as radio_button_with_label_target_widget,
-    search_field_with_text_layouts_and_caret_visibility as search_field_widget,
-    select_field as select_field_widget, separator as separator_widget, slider as slider_widget,
+    search_field_with_access_runtime as search_field_widget, select_field as select_field_widget,
+    separator as separator_widget, slider as slider_widget,
     slider_with_label as slider_with_label_widget,
     slider_with_label_and_step as slider_with_label_and_step_widget,
     slider_with_step as slider_with_step_widget, tab_button as tab_button_widget,
@@ -186,15 +185,17 @@ impl Ui<'_> {
         let before = TextVisualState::from_state(state);
         let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
-        let (input, memory) = self.runtime.input_and_memory_mut();
         let output = numeric_input_widget(
+            &mut self.runtime,
             id,
             rect,
             state,
-            input,
-            memory,
             theme,
-            disabled,
+            if disabled {
+                TextFieldAccess::Disabled
+            } else {
+                TextFieldAccess::Editable
+            },
             text_layouts,
             caret_visible,
         );
@@ -217,15 +218,13 @@ impl Ui<'_> {
         let before = TextVisualState::from_state(state);
         let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
-        let (input, memory) = self.runtime.input_and_memory_mut();
         let output = path_field_widget(
+            &mut self.runtime,
             id,
             rect,
             label,
             state,
             config,
-            input,
-            memory,
             theme,
             text_layouts,
             caret_visible,
@@ -249,15 +248,17 @@ impl Ui<'_> {
         let before = TextVisualState::from_state(state);
         let caret_visible = text_caret_visible(self.time());
         let text_layouts = self.text_layouts.as_deref_mut();
-        let (input, memory) = self.runtime.input_and_memory_mut();
         let output = search_field_widget(
+            &mut self.runtime,
             id,
             rect,
             state,
-            input,
-            memory,
             theme,
-            disabled,
+            if disabled {
+                TextFieldAccess::Disabled
+            } else {
+                TextFieldAccess::Editable
+            },
             text_layouts,
             caret_visible,
         );

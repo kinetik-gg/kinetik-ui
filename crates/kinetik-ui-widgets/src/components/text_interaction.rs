@@ -17,6 +17,11 @@ pub(crate) enum TextPointerPhase {
     Move,
     Release,
     Cancel,
+    OwnershipPress,
+    OwnershipMove,
+    OwnershipRelease,
+    OwnershipCancel,
+    PlaceCaret,
 }
 
 impl From<SelectionGesturePhase> for TextPointerPhase {
@@ -102,7 +107,7 @@ pub(crate) fn replay_text_field_events(
         }
         match item {
             ReplayItem::Pointer(action) => match action.phase {
-                TextPointerPhase::Press => {
+                TextPointerPhase::Press | TextPointerPhase::PlaceCaret => {
                     let Some(offset) = action.model_offset else {
                         continue;
                     };
@@ -117,7 +122,7 @@ pub(crate) fn replay_text_field_events(
                         gesture_anchor = offset;
                     }
                     active = true;
-                    result.accepted_press = true;
+                    result.accepted_press |= action.phase == TextPointerPhase::Press;
                     result.accepted_gesture_anchor = Some(gesture_anchor);
                     if access == TextFieldAccess::ReadOnly {
                         let _ = state.apply_read_only_ordered_input(&[], mode);
@@ -128,7 +133,13 @@ pub(crate) fn replay_text_field_events(
                         state.set_selection(TextSelection::new(gesture_anchor, offset));
                     }
                 }
-                TextPointerPhase::Move | TextPointerPhase::Release | TextPointerPhase::Cancel => {}
+                TextPointerPhase::Move
+                | TextPointerPhase::Release
+                | TextPointerPhase::Cancel
+                | TextPointerPhase::OwnershipPress
+                | TextPointerPhase::OwnershipMove
+                | TextPointerPhase::OwnershipRelease
+                | TextPointerPhase::OwnershipCancel => {}
             },
             ReplayItem::Text(event) => {
                 let loses_focus = matches!(event.event, UiInputEvent::WindowFocusChanged(false));

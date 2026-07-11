@@ -103,3 +103,124 @@ fn root_exports_access_aware_text_field_api_without_expanding_prelude_usage() {
         widgets::TextFieldAccess::Editable
     );
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn text_wrapper_signatures_and_output_shapes_remain_source_compatible() {
+    fn numeric(_: &widgets::NumericInputOutput) {}
+    fn scrub(_: &widgets::NumericScrubInputOutput) {}
+    fn search(_: &widgets::SearchFieldOutput) {}
+    fn path(_: &widgets::PathFieldOutput) {}
+    fn vector<const N: usize>(_: &widgets::VectorScrubInputOutput<N>) {}
+
+    let theme = default_dark_theme();
+    let input = UiInput::default();
+    let mut memory = UiMemory::new();
+    let rect = Rect::new(0.0, 0.0, 240.0, 24.0);
+    let mut numeric_state = kinetik_ui_text::TextEditState::new("1");
+    let numeric_output = widgets::numeric_input(
+        WidgetId::from_key("numeric"),
+        rect,
+        &mut numeric_state,
+        &input,
+        &mut memory,
+        &theme,
+        false,
+    );
+    numeric(&numeric_output);
+
+    let mut search_state = kinetik_ui_text::TextEditState::new("find");
+    let search_output = prelude::search_field(
+        WidgetId::from_key("search"),
+        rect,
+        &mut search_state,
+        &input,
+        &mut memory,
+        &theme,
+        false,
+    );
+    search(&search_output);
+
+    let mut scrub_value = 1.0;
+    let mut scrub_state = kinetik_ui_text::TextEditState::new("1");
+    let scrub_output = prelude::numeric_scrub_input(
+        WidgetId::from_key("scrub"),
+        rect,
+        &mut scrub_value,
+        &mut scrub_state,
+        widgets::NumericScrubInputConfig::default(),
+        &input,
+        &mut memory,
+        &theme,
+    );
+    scrub(&scrub_output);
+
+    let mut path_state = kinetik_ui_text::TextEditState::new("src/lib.rs");
+    let path_output = widgets::path_field(
+        WidgetId::from_key("path"),
+        rect,
+        "Source",
+        &mut path_state,
+        widgets::PathFieldConfig::default(),
+        &input,
+        &mut memory,
+        &theme,
+    );
+    path(&path_output);
+
+    let mut values = [1.0, 2.0];
+    let mut states = [
+        kinetik_ui_text::TextEditState::new("1"),
+        kinetik_ui_text::TextEditState::new("2"),
+    ];
+    let vector_output = widgets::vector2_scrub_input(
+        WidgetId::from_key("vector"),
+        rect,
+        "Offset",
+        &mut values,
+        &mut states,
+        widgets::VectorScrubInputConfig::default(),
+        &input,
+        &mut memory,
+        &theme,
+    );
+    vector(&vector_output);
+
+    let mut memory = UiMemory::new();
+    let mut ui_numeric = kinetik_ui_text::TextEditState::new("1");
+    let mut ui_search = kinetik_ui_text::TextEditState::new("find");
+    let mut ui_path = kinetik_ui_text::TextEditState::new("src/lib.rs");
+    let mut ui_value = 1.0;
+    let mut ui_scrub = kinetik_ui_text::TextEditState::new("1");
+    let mut ui_values = [1.0, 2.0];
+    let mut ui_states = [
+        kinetik_ui_text::TextEditState::new("1"),
+        kinetik_ui_text::TextEditState::new("2"),
+    ];
+    let mut ui = widgets::Ui::new(&input, &mut memory, &theme);
+    numeric(&ui.numeric_input("numeric", rect, &mut ui_numeric, false));
+    search(&ui.search_field("search", rect, &mut ui_search, false));
+    path(&ui.path_field(
+        "path",
+        rect,
+        "Source",
+        &mut ui_path,
+        widgets::PathFieldConfig::default(),
+    ));
+    scrub(&ui.numeric_scrub_input(
+        "scrub",
+        rect,
+        &mut ui_value,
+        &mut ui_scrub,
+        widgets::NumericScrubInputConfig::default(),
+    ));
+    vector(&ui.vector2_scrub_input(
+        "vector",
+        rect,
+        "Offset",
+        &mut ui_values,
+        &mut ui_states,
+        widgets::VectorScrubInputConfig::default(),
+    ));
+    let _ = ui.finish_output();
+}
