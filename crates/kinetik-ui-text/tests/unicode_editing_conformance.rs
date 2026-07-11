@@ -203,6 +203,114 @@ fn affinity_defaults_transitions_invalidation_and_semantic_equality_are_fixed() 
 }
 
 #[test]
+fn affinity_transition_matrix_covers_words_selection_setters_and_edits() {
+    let mut word_left = TextEditState::new("one two");
+    word_left.move_word_left();
+    assert_eq!(
+        word_left.caret_position(),
+        TextCaret::new(4, TextAffinity::After)
+    );
+    let mut word_right = TextEditState::new("one two");
+    word_right.set_caret(0);
+    word_right.move_word_right();
+    assert_eq!(
+        word_right.caret_position(),
+        TextCaret::new(4, TextAffinity::Before)
+    );
+
+    let mut extend_left = TextEditState::new("one two");
+    extend_left.extend_word_left();
+    assert_eq!(
+        extend_left.caret_position(),
+        TextCaret::new(4, TextAffinity::After)
+    );
+    let mut extend_right = TextEditState::new("one two");
+    extend_right.set_caret(0);
+    extend_right.extend_word_right();
+    assert_eq!(
+        extend_right.caret_position(),
+        TextCaret::new(4, TextAffinity::Before)
+    );
+
+    let mut collapse_left = TextEditState::new("abc");
+    collapse_left.set_selection(TextSelection::new(1, 2));
+    collapse_left.move_left();
+    assert_eq!(
+        collapse_left.caret_position(),
+        TextCaret::new(1, TextAffinity::After)
+    );
+    let mut collapse_right = TextEditState::new("abc");
+    collapse_right.set_selection(TextSelection::new(1, 2));
+    collapse_right.move_right();
+    assert_eq!(
+        collapse_right.caret_position(),
+        TextCaret::new(2, TextAffinity::Before)
+    );
+
+    let mut edges = TextEditState::new("abc");
+    edges.set_caret(1);
+    edges.move_home();
+    assert_eq!(
+        edges.caret_position(),
+        TextCaret::new(0, TextAffinity::After)
+    );
+    edges.set_caret(1);
+    edges.move_end();
+    assert_eq!(
+        edges.caret_position(),
+        TextCaret::new(3, TextAffinity::Before)
+    );
+
+    edges.set_selection(TextSelection::new(0, 1));
+    assert_eq!(
+        edges.caret_position(),
+        TextCaret::new(1, TextAffinity::After)
+    );
+    edges.set_selection(TextSelection::new(0, 3));
+    assert_eq!(
+        edges.caret_position(),
+        TextCaret::new(3, TextAffinity::Before)
+    );
+    edges.set_selection_with_affinity(TextSelection::new(0, 1), TextAffinity::Before);
+    assert_eq!(
+        edges.caret_position(),
+        TextCaret::new(1, TextAffinity::Before)
+    );
+    edges.set_selection_with_affinity(TextSelection::new(1, 0), TextAffinity::Before);
+    assert_eq!(
+        edges.caret_position(),
+        TextCaret::new(0, TextAffinity::After)
+    );
+    edges.set_selection_with_affinity(TextSelection::new(0, 3), TextAffinity::After);
+    assert_eq!(
+        edges.caret_position(),
+        TextCaret::new(3, TextAffinity::Before)
+    );
+
+    let mut backward = TextEditState::new("abc");
+    backward.set_caret(2);
+    backward.backspace();
+    assert_eq!(
+        backward.caret_position(),
+        TextCaret::new(1, TextAffinity::Before)
+    );
+    let mut forward = TextEditState::new("abc");
+    forward.set_caret(1);
+    forward.delete_forward();
+    assert_eq!(
+        forward.caret_position(),
+        TextCaret::new(1, TextAffinity::Before)
+    );
+    let mut replacement = TextEditState::new("abc");
+    replacement.set_selection(TextSelection::new(1, 2));
+    replacement.insert_text("X");
+    assert_eq!(
+        replacement.caret_position(),
+        TextCaret::new(2, TextAffinity::Before)
+    );
+}
+
+#[test]
 fn undo_restores_effective_affinity_and_edge_noops_preserve_it() {
     let mut state = TextEditState::new("ab");
     state.set_caret_position(TextCaret::new(1, TextAffinity::After));
@@ -247,6 +355,18 @@ fn raw_public_endpoints_canonicalize_before_delete_and_preserve_true_noop_redo()
     word_delete.backspace_word();
     assert_eq!(word_delete.text, "e\u{301}B");
 
+    let mut forward_delete = TextEditState::new("Ae\u{301}B");
+    forward_delete.selection = TextSelection::new(2, 3);
+    forward_delete.delete_forward();
+    assert_eq!(forward_delete.text, "AB");
+    assert_eq!(forward_delete.caret(), 1);
+
+    let mut forward_word_delete = TextEditState::new("Ae\u{301}B");
+    forward_word_delete.selection = TextSelection::new(2, 3);
+    forward_word_delete.delete_word_forward();
+    assert_eq!(forward_word_delete.text, "A");
+    assert_eq!(forward_word_delete.caret(), 1);
+
     let mut no_op = TextEditState::new("e\u{301}");
     no_op.insert_text("x");
     assert!(no_op.undo());
@@ -256,6 +376,21 @@ fn raw_public_endpoints_canonicalize_before_delete_and_preserve_true_noop_redo()
     assert_eq!(no_op.selection, TextSelection::new(0, 0));
     assert!(no_op.redo(), "canonical no-op keeps redo available");
     assert_eq!(no_op.text, "e\u{301}x");
+}
+
+#[test]
+fn crlf_forward_navigation_and_delete_are_atomic() {
+    let mut movement = TextEditState::new("A\r\nB");
+    movement.set_caret(1);
+    movement.move_right();
+    assert_eq!(movement.caret(), 3);
+
+    let mut deletion = TextEditState::new("A\r\nB");
+    deletion.set_caret(1);
+    deletion.delete_forward();
+    assert_eq!(deletion.text, "AB");
+    assert_eq!(deletion.caret(), 1);
+    assert_eq!(deletion.caret_position().affinity, TextAffinity::Before);
 }
 
 #[test]

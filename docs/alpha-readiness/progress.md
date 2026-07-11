@@ -1127,12 +1127,12 @@ path and true no-ops preserve redo.
 
 #### Tests run and results
 
-- Dedicated Unicode editing conformance passed 10/10, covering combining,
+- Dedicated Unicode editing conformance passed 12/12, covering combining,
   emoji modifier/flag/ZWJ, CRLF and grapheme columns, contextual words,
   punctuation/whitespace ties, affinity/equality/undo, malformed public
   selections, ordered insertion/navigation, composition, and ReadOnly copy.
 - Complete text verification passed: 65 unit, 9 ReadOnly ordered-input, 14 text
-  viewport, and 10 Unicode editing tests; doc tests also passed.
+  viewport, and 12 Unicode editing tests; doc tests also passed.
 - Facade public API conformance passed 8/8, including qualified additive caret
   APIs and unchanged legacy byte-offset calls.
 - All six workspace gates passed in ignored `target/runway/text02a`: formatting,
