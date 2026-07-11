@@ -394,6 +394,48 @@ impl TextEditState {
         result
     }
 
+    /// Applies the non-mutating subset of one authoritative ordered input stream.
+    ///
+    /// Read-only input may move or extend the selection, select all, and copy a
+    /// non-empty selection. Text insertion, composition, deletion, cut, paste,
+    /// undo, redo, and commit/revert intent are ignored. A focus-loss event
+    /// fences every later event in the supplied stream, even after focus gain.
+    /// Callers that split one authoritative stream into pointer-interleaved
+    /// chunks must retain that focus-loss fence across calls; each invocation
+    /// otherwise represents a new independent stream.
+    #[must_use]
+    pub fn apply_read_only_ordered_input(
+        &mut self,
+        events: &[UiInputEvent],
+        mode: TextEditMode,
+    ) -> Vec<PlatformRequest> {
+        self.composition = None;
+        let mut platform_requests = Vec::new();
+        let mut accepts_input = true;
+
+        for event in events {
+            match event {
+                UiInputEvent::WindowFocusChanged(false) => accepts_input = false,
+                UiInputEvent::WindowFocusChanged(true) => {}
+                _ if !accepts_input => {}
+                UiInputEvent::Key(event) => {
+                    self.apply_read_only_key(event, mode, &mut platform_requests);
+                }
+                UiInputEvent::PointerMoved { .. }
+                | UiInputEvent::PointerLeft
+                | UiInputEvent::PointerButton { .. }
+                | UiInputEvent::PointerReleaseAll { .. }
+                | UiInputEvent::Wheel { .. }
+                | UiInputEvent::ModifiersChanged(_)
+                | UiInputEvent::Text(_)
+                | UiInputEvent::ClipboardText(_)
+                | UiInputEvent::ImeEnabled(_) => {}
+            }
+        }
+
+        platform_requests
+    }
+
     /// Applies legacy separate text and key slices.
     ///
     /// This compatibility helper cannot recover interleaving. Production text
@@ -573,6 +615,100 @@ impl TextEditState {
         }
         if let Some(text) = event.text.as_deref().and_then(sanitize_hardware_text) {
             self.insert_text(&text);
+        }
+    }
+
+    fn apply_read_only_key(
+        &mut self,
+        event: &KeyEvent,
+        mode: TextEditMode,
+        platform_requests: &mut Vec<PlatformRequest>,
+    ) {
+        if event.state != KeyState::Pressed {
+            return;
+        }
+
+        if let Some(shortcut) = clipboard_shortcut(event) {
+            if shortcut == ClipboardShortcut::Copy
+                && let Some(selected) = self.selected_text()
+            {
+                platform_requests.push(PlatformRequest::CopyToClipboard(selected.to_owned()));
+            }
+            return;
+        }
+
+        if has_command_modifier(event)
+            && let Key::Character(character) = &event.key
+            && character.eq_ignore_ascii_case("a")
+        {
+            self.select_all();
+            return;
+        }
+
+        if has_word_modifier(event) {
+            let handled = match event.key {
+                Key::ArrowLeft if event.modifiers.shift => {
+                    self.extend_word_left();
+                    true
+                }
+                Key::ArrowRight if event.modifiers.shift => {
+                    self.extend_word_right();
+                    true
+                }
+                Key::ArrowLeft => {
+                    self.move_word_left();
+                    true
+                }
+                Key::ArrowRight => {
+                    self.move_word_right();
+                    true
+                }
+                _ => false,
+            };
+            if handled {
+                return;
+            }
+        }
+
+        match event.key {
+            Key::ArrowLeft if event.modifiers.shift => self.extend_left(),
+            Key::ArrowRight if event.modifiers.shift => self.extend_right(),
+            Key::ArrowUp if event.modifiers.shift && mode == TextEditMode::MultiLine => {
+                self.extend_line_up();
+            }
+            Key::ArrowDown if event.modifiers.shift && mode == TextEditMode::MultiLine => {
+                self.extend_line_down();
+            }
+            Key::Home if event.modifiers.shift && mode == TextEditMode::MultiLine => {
+                self.extend_line_home();
+            }
+            Key::End if event.modifiers.shift && mode == TextEditMode::MultiLine => {
+                self.extend_line_end();
+            }
+            Key::Home if event.modifiers.shift => self.extend_home(),
+            Key::End if event.modifiers.shift => self.extend_end(),
+            Key::ArrowLeft => self.move_left(),
+            Key::ArrowRight => self.move_right(),
+            Key::ArrowUp if mode == TextEditMode::MultiLine => self.move_line_up(),
+            Key::ArrowDown if mode == TextEditMode::MultiLine => self.move_line_down(),
+            Key::Home if mode == TextEditMode::MultiLine => self.move_line_home(),
+            Key::End if mode == TextEditMode::MultiLine => self.move_line_end(),
+            Key::Home => self.move_home(),
+            Key::End => self.move_end(),
+            Key::Character(_)
+            | Key::Enter
+            | Key::Escape
+            | Key::Tab
+            | Key::Backspace
+            | Key::Delete
+            | Key::Insert
+            | Key::PageUp
+            | Key::PageDown
+            | Key::ArrowUp
+            | Key::ArrowDown
+            | Key::Space
+            | Key::Function(_)
+            | Key::Unidentified => {}
         }
     }
 
