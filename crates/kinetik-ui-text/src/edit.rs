@@ -3,7 +3,8 @@ use kinetik_ui_core::{
 };
 
 use crate::boundary::{
-    clamp_boundary, line_range_at_offset, next_boundary, previous_boundary, vertical_line_target,
+    clamp_boundary, line_range_at_offset, next_boundary, next_word_boundary, previous_boundary,
+    previous_word_boundary, scalar_run_range_at, vertical_line_target,
 };
 use crate::{EditSnapshot, TextComposition, TextSelection, TextUndoStack};
 
@@ -164,6 +165,94 @@ impl TextEditState {
             self.selection.active = next;
             self.selection = self.selection.clamp_to_text(&self.text);
         }
+    }
+
+    /// Moves the caret left across preceding whitespace and one scalar-class run.
+    ///
+    /// ASCII alphanumeric scalars and `_` form word runs, whitespace forms
+    /// whitespace runs, and every other scalar forms other runs.
+    pub fn move_word_left(&mut self) {
+        if !self.selection.is_caret() {
+            let start = self.selection.range_in(&self.text).start;
+            self.set_caret(start);
+            return;
+        }
+
+        let target = previous_word_boundary(&self.text, self.caret());
+        self.set_caret(target);
+    }
+
+    /// Moves the caret right across the current scalar-class run and following whitespace.
+    pub fn move_word_right(&mut self) {
+        if !self.selection.is_caret() {
+            let end = self.selection.range_in(&self.text).end;
+            self.set_caret(end);
+            return;
+        }
+
+        let target = next_word_boundary(&self.text, self.caret());
+        self.set_caret(target);
+    }
+
+    /// Extends the selection left using [`Self::move_word_left`] boundary policy.
+    pub fn extend_word_left(&mut self) {
+        self.selection = self.selection.clamp_to_text(&self.text);
+        self.selection.active = previous_word_boundary(&self.text, self.selection.active);
+    }
+
+    /// Extends the selection right using [`Self::move_word_right`] boundary policy.
+    pub fn extend_word_right(&mut self) {
+        self.selection = self.selection.clamp_to_text(&self.text);
+        self.selection.active = next_word_boundary(&self.text, self.selection.active);
+    }
+
+    /// Deletes the current selection or the span to [`Self::move_word_left`]'s target.
+    pub fn backspace_word(&mut self) {
+        if !self.selection.is_caret() {
+            self.record_undo();
+            self.replace_selection("");
+            return;
+        }
+
+        let caret = clamp_boundary(&self.text, self.caret());
+        self.set_caret(caret);
+        let target = previous_word_boundary(&self.text, caret);
+        if target == caret {
+            return;
+        }
+
+        self.record_undo();
+        self.text.replace_range(target..caret, "");
+        self.set_caret(target);
+    }
+
+    /// Deletes the current selection or the span to [`Self::move_word_right`]'s target.
+    pub fn delete_word_forward(&mut self) {
+        if !self.selection.is_caret() {
+            self.record_undo();
+            self.replace_selection("");
+            return;
+        }
+
+        let caret = clamp_boundary(&self.text, self.caret());
+        self.set_caret(caret);
+        let target = next_word_boundary(&self.text, caret);
+        if target == caret {
+            return;
+        }
+
+        self.record_undo();
+        self.text.replace_range(caret..target, "");
+        self.set_caret(caret);
+    }
+
+    /// Selects the scalar-class run containing the clamped offset.
+    ///
+    /// ASCII alphanumeric scalars and `_`, whitespace, and all other scalars
+    /// are the three distinct classes.
+    pub fn select_word_at(&mut self, offset: usize) {
+        let range = scalar_run_range_at(&self.text, offset);
+        self.set_selection(TextSelection::new(range.start, range.end));
     }
 
     /// Moves the caret to the start of the buffer.
@@ -333,6 +422,9 @@ impl TextEditState {
             if self.apply_shortcut_event(event) {
                 continue;
             }
+            if self.apply_word_edit_command(event) {
+                continue;
+            }
             match event.key {
                 Key::Backspace => self.backspace(),
                 Key::Delete => self.delete_forward(),
@@ -379,6 +471,9 @@ impl TextEditState {
                 continue;
             }
             if self.apply_shortcut_event(event) {
+                continue;
+            }
+            if self.apply_word_edit_command(event) {
                 continue;
             }
             match event.key {
@@ -467,7 +562,10 @@ impl TextEditState {
             return;
         }
 
-        if self.apply_ordered_edit_command(event, mode) || has_command_modifier(event) {
+        if self.apply_word_edit_command(event)
+            || self.apply_ordered_edit_command(event, mode)
+            || has_command_modifier(event)
+        {
             return;
         }
         if self.composition.is_some() {
@@ -569,6 +667,23 @@ impl TextEditState {
         }
     }
 
+    fn apply_word_edit_command(&mut self, event: &KeyEvent) -> bool {
+        if !has_word_modifier(event) {
+            return false;
+        }
+
+        match event.key {
+            Key::ArrowLeft if event.modifiers.shift => self.extend_word_left(),
+            Key::ArrowRight if event.modifiers.shift => self.extend_word_right(),
+            Key::ArrowLeft => self.move_word_left(),
+            Key::ArrowRight => self.move_word_right(),
+            Key::Backspace => self.backspace_word(),
+            Key::Delete => self.delete_word_forward(),
+            _ => return false,
+        }
+        true
+    }
+
     fn apply_clipboard_shortcut(
         &mut self,
         event: &KeyEvent,
@@ -664,6 +779,10 @@ fn clipboard_shortcut(event: &KeyEvent) -> Option<ClipboardShortcut> {
 
 fn has_command_modifier(event: &KeyEvent) -> bool {
     event.modifiers.super_key || (event.modifiers.ctrl && !event.modifiers.alt)
+}
+
+fn has_word_modifier(event: &KeyEvent) -> bool {
+    !event.modifiers.super_key && (event.modifiers.ctrl ^ event.modifiers.alt)
 }
 
 fn sanitize_hardware_text(text: &str) -> Option<String> {
