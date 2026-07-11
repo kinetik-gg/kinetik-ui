@@ -49,7 +49,10 @@ published, or accepted as an alpha release.
   transformed, and captured DomainDrag calls now share one exact first response
   per begun frame, deliver actions once, and keep public action ordinals
   separate from internal release/drop authority. Unframed standalone
-  `draggable` calls remain uncached.
+  `draggable` calls remain uncached. This is a provisional breaking behavioral
+  change for callers that resolve the same `WidgetId` more than once in a begun
+  frame: use one authoritative call and share its `Response`, or use distinct
+  widget IDs for genuinely distinct interactions.
 
 ### Documentation
 

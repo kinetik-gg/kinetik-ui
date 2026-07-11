@@ -77,6 +77,7 @@ pub(crate) enum PointerGestureKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CancelledPointerGesture {
     owner: WidgetId,
+    kind: Option<PointerGestureKind>,
     click_count: u8,
 }
 
@@ -554,9 +555,18 @@ impl UiMemory {
         }
     }
 
-    pub(crate) fn take_cancelled_pointer_gesture(&mut self, owner: WidgetId) -> Option<u8> {
-        self.cancelled_pointer_gesture
-            .filter(|gesture| gesture.owner == owner)?;
+    pub(crate) fn take_cancelled_pointer_gesture(
+        &mut self,
+        owner: WidgetId,
+        kind: PointerGestureKind,
+        allow_kind_mismatch: bool,
+    ) -> Option<u8> {
+        self.cancelled_pointer_gesture.filter(|gesture| {
+            gesture.owner == owner
+                && (gesture.kind == Some(kind)
+                    || (gesture.kind.is_none() && kind == PointerGestureKind::Selection)
+                    || allow_kind_mismatch)
+        })?;
         self.cancelled_pointer_gesture
             .take()
             .map(|gesture| gesture.click_count)
@@ -654,6 +664,13 @@ impl UiMemory {
         let cancelled_click_count = cancelled_owner
             .and_then(|owner| self.pointer_gesture_click_count(owner))
             .unwrap_or(0);
+        let cancelled_kind = cancelled_owner
+            .and_then(|owner| self.pointer_gesture_kind(owner))
+            .or_else(|| {
+                cancelled_owner
+                    .filter(|owner| self.drag_source == Some(*owner))
+                    .map(|_| PointerGestureKind::DomainDrag)
+            });
         let cancelled = self.active.is_some()
             || self.pressed.is_some()
             || self.pointer_capture.is_some()
@@ -662,6 +679,7 @@ impl UiMemory {
         if cancelled {
             self.cancelled_pointer_gesture = cancelled_owner.map(|owner| CancelledPointerGesture {
                 owner,
+                kind: cancelled_kind,
                 click_count: cancelled_click_count,
             });
             self.clear_active_drag();

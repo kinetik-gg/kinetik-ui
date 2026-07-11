@@ -105,20 +105,15 @@ pub(super) fn resolve_pressable_with_hit_target(
         memory.cancel_pointer_interaction();
     }
 
-    if kind == PointerGestureKind::Selection
-        && let Some(cancelled_click_count) = memory.take_cancelled_pointer_gesture(id)
-        && let Some((ordinal, position, event_click_count)) =
-            cancellation_evidence(input, event_ordinals)
-    {
-        outcome.selection_actions.push(SelectionGestureAction {
-            ordinal,
-            phase: SelectionGesturePhase::Cancel,
-            position,
-            delta: Vec2::ZERO,
-            click_count: event_click_count.unwrap_or(cancelled_click_count),
-            modifiers: Modifiers::default(),
-        });
-    }
+    recover_cancelled_gesture_action(
+        id,
+        input,
+        memory,
+        kind,
+        event_ordinals,
+        mode_mismatch && kind == PointerGestureKind::Selection,
+        &mut outcome,
+    );
 
     if process_events && !disabled && !memory.pointer_interaction_cancelled() {
         if input.events.is_empty() {
@@ -192,6 +187,43 @@ pub(super) fn resolve_pressable_with_hit_target(
         selection_actions: outcome.selection_actions,
         domain_drag_actions: outcome.domain_drag_actions,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recover_cancelled_gesture_action(
+    id: WidgetId,
+    input: &UiInput,
+    memory: &mut UiMemory,
+    kind: PointerGestureKind,
+    event_ordinals: Option<&[usize]>,
+    allow_kind_mismatch: bool,
+    outcome: &mut PointerOutcome,
+) {
+    if !matches!(
+        kind,
+        PointerGestureKind::Selection | PointerGestureKind::DomainDrag
+    ) {
+        return;
+    }
+    let Some(cancelled_click_count) =
+        memory.take_cancelled_pointer_gesture(id, kind, allow_kind_mismatch)
+    else {
+        return;
+    };
+    let Some((ordinal, position, event_click_count)) = cancellation_evidence(input, event_ordinals)
+    else {
+        return;
+    };
+    push_gesture_action(
+        kind,
+        outcome,
+        ordinal,
+        SelectionGesturePhase::Cancel,
+        position,
+        Vec2::ZERO,
+        event_click_count.unwrap_or(cancelled_click_count),
+        false,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -328,8 +360,13 @@ fn resolve_canonical_pointer(
                     );
                 }
                 resolve_pointer_fence(memory, id, owns_primary, owns_secondary);
-                if owns_primary && kind == PointerGestureKind::Selection {
-                    let _ = memory.take_cancelled_pointer_gesture(id);
+                if owns_primary
+                    && matches!(
+                        kind,
+                        PointerGestureKind::Selection | PointerGestureKind::DomainDrag
+                    )
+                {
+                    let _ = memory.take_cancelled_pointer_gesture(id, kind, false);
                 }
                 break;
             }
@@ -350,8 +387,13 @@ fn resolve_canonical_pointer(
                     );
                 }
                 resolve_pointer_fence(memory, id, owns_primary, owns_secondary);
-                if owns_primary && kind == PointerGestureKind::Selection {
-                    let _ = memory.take_cancelled_pointer_gesture(id);
+                if owns_primary
+                    && matches!(
+                        kind,
+                        PointerGestureKind::Selection | PointerGestureKind::DomainDrag
+                    )
+                {
+                    let _ = memory.take_cancelled_pointer_gesture(id, kind, false);
                 }
                 break;
             }

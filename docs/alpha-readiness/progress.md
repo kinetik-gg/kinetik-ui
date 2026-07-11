@@ -890,16 +890,19 @@ Ordinary, transformed, and captured DomainDrag calls share one first response
 per widget in an explicitly begun memory frame. Later observations return that
 exact per-frame response, deliver no actions, and do not mutate memory. Runtime
 frame finalization closes the cache, while unframed standalone `draggable`
-calls retain their previous uncached behavior. No public free captured adapter
-or local ordinal namespace was added.
+calls retain their previous uncached behavior. This is a provisional breaking
+behavioral change for duplicate same-ID calls; callers migrate to one
+authoritative call or distinct IDs. No public free captured adapter or local
+ordinal namespace was added.
 
 #### Tests run and results
 
-- New DomainDrag action conformance: 12/12 passed, covering threshold outcomes,
+- New DomainDrag action conformance: 16/16 passed, covering threshold outcomes,
   multiple releases, outside/missing positions, spatial ordinal gaps and
-  modifiers, legacy input, focus loss, exact response caching, ordinary/
-  captured/transformed orders, disabled-first reset, standalone compatibility,
-  claim independence, and planned/unplanned drops.
+  modifiers, full action metadata, legacy/disabled/focus/release-all/conflict/
+  clipped cancellation, exact response caching, ordinary/captured/transformed
+  orders, disabled-first reset, standalone compatibility, claim independence,
+  and transformed/clipped planned/unplanned drops.
 - Existing selection modifier, drag threshold, pointer, and runtime spatial
   conformance passed at 11/11, 46/46, 28/28, and 12/12 respectively.
 - Facade public API surface passed 5/5; warning-denied core Clippy passed.

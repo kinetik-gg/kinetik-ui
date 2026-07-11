@@ -63,12 +63,18 @@ fn captured_domain_drag_action(
 ) -> (
     Option<usize>,
     kinetik_ui::core::DomainDragGesturePhase,
+    Option<kinetik_ui::core::Point>,
+    kinetik_ui::core::Vec2,
+    u8,
     kinetik_ui::core::Modifiers,
     bool,
 ) {
     (
         action.ordinal,
         action.phase,
+        action.position,
+        action.delta,
+        action.click_count,
         action.modifiers,
         action.release_clicked,
     )
