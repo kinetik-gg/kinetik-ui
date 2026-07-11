@@ -2,7 +2,7 @@
 
 [Back to the alpha-readiness index](../alpha-readiness.md)
 
-Stages 0-3 are Complete. Stage 4 is Current / Authorized. Stages 5-7 are Authorized / Queued for continuous sequential execution without intermediate approval. Every packet still has to pass its deterministic gates, and any Runway stop condition halts the active packet or stage.
+Stages 0-3 are Complete. Stage 4A is Complete / Accepted; Stage 4B is Current / Authorized with `TEXT-02` next. Stages 5-7 are Authorized / Queued for continuous sequential execution without intermediate approval. Every remaining packet still has to pass its deterministic gates, and any Runway stop condition halts the active packet or stage.
 
 Campaign workflow policy: `create-if-available` issues, `create-if-gates-pass` pull requests, and `squash-after-gates` merges. Tagging, package publishing, and an alpha release remain outside this authorization.
 
@@ -1006,8 +1006,8 @@ non-cloneable memory migration; it does not semantically depend on liveness.
 
 Status: Complete / Accepted at implementation merge `93d6a5f` after the
 documentation-only Issue #548 closure. Audit §6.10 is closed on canonical
-retained `Ui` paths. Stage 4 remains Current: `REND-01B` and the accepted 4A
-checkpoint precede `TEXT-02`.
+retained `Ui` paths. Checkpoint 4A is accepted and Stage 4B is Current, with
+`TEXT-02` next.
 
 Implementation ledger:
 
@@ -1091,9 +1091,9 @@ aggregate-pointer authority.
 
 ### `REND-01B`: sRGB, alpha, and tint contract
 
-Status: Implemented under Issue #550; acceptance is pending exact candidate
-criticism, remote checks, squash merge, and the combined `REND-01-CLOSE`
-packet. This does not close `REND-01`, checkpoint 4A, or Stage 4.
+Status: Complete / Accepted. Issue #550 closed through PR #551. Candidate
+`609ae127` passed all local gates and three exact-SHA critics, three-OS run
+29165037981, and PR run 29165219725 before squash merge `9c1c044`.
 
 #### Changed files
 
@@ -1134,6 +1134,9 @@ remain sorted payload-presence inventories without new format/alpha fields.
   isolated `.target-rend01b` cache: format check, warning-denied workspace
   Clippy, workspace tests, workspace build, all-feature example checks, and
   warning-denied workspace docs.
+- Three exact-SHA critics reported P0/P1/P2=`0/0/0` on candidate `609ae127`.
+  Ubuntu, Windows, and macOS passed run 29165037981; PR-context run 29165219725
+  passed before PR #551 squash-merged as `9c1c044`.
 
 #### Remaining risks and deferred findings
 
@@ -1143,6 +1146,62 @@ is source-verified residual evidence. Premultiplied payload bytes are trusted.
 The public diagnostic retains the `InvalidGeometry` name for invalid colors.
 HDR/wide-gamut/ICC conversion, external textures, presentation, and pixel
 goldens are not introduced by this packet.
+
+### `REND-01-CLOSE`: integrated renderer evidence and checkpoint 4A
+
+Status: Complete / Accepted. The merged evidence for `REND-01A` and
+`REND-01B` closes audit §§6.12-6.13 and, together with accepted `ASYNC-01` and
+`TEXT-01`, accepts checkpoint 4A. Stage 4 remains Current / Authorized at 4B.
+
+#### Changed files
+
+- `docs/alpha-readiness/04-text-renderer-lifetime.md`
+- `docs/alpha-readiness/progress.md`
+
+#### Reasoning and contract decisions
+
+`REND-01A` accepts balanced recovery frames for rejected non-finite and
+overflowing transform begins. `REND-01B` accepts straight sRGB plus straight
+alpha as the public color contract, Vello translation as the sanitization
+authority, explicit sRGB/premultiplied gradient interpolation, and exact
+straight/premultiplied tint rounding without expanding public resource
+snapshots. Their merged evidence is sufficient to accept `REND-01` and the 4A
+checkpoint; no source, test, spec, changelog, workflow, or audit-output behavior
+changes in this documentation-only closure.
+
+`TEXT-02` is explicitly next. `TEXT-03` remains behind the text-store API
+freeze, and `REND-02` remains behind both `TEXT-02` and accepted `REND-01`.
+Unicode editing, text-store budgets, and authoritative fractional-DPI text
+layout therefore remain checkpoint 4B requirements.
+
+#### Tests run and results
+
+- `REND-01A` closed Issue #518 through PR #520 and squash merge `1aee4f4`.
+  Its focused transform-recovery evidence, local gates, exact-SHA review,
+  three-OS run 29141679730, and PR checks passed.
+- `REND-01B` closed Issue #550 through PR #551 and squash merge `9c1c044`.
+  Candidate `609ae127` passed core color conformance 2/2, render color/alpha
+  conformance 3/3, private Vello color/alpha conformance 7/7, public Vello
+  submission conformance 1/1, exact sanitization ordering 1/1, the complete
+  core/render/Vello suites, and all six workspace gates.
+- Three exact-SHA `REND-01B` critics reported P0/P1/P2=`0/0/0`. Ubuntu,
+  Windows, and macOS passed run 29165037981, and PR-context run 29165219725
+  passed before merge.
+- This documentation-only closure candidate passed the exact path/residue
+  guard, every prescribed focused test, the complete core/render/Vello suites,
+  and all six workspace gates using ignored `target/runway/rend01-close`.
+
+#### Remaining risks and deferred findings
+
+Vello's resolved 512-sample gradient ramp remains private and source-verified
+rather than directly executable. Premultiplied payload correctness remains
+caller-owned, and `InvalidGeometry` remains the diagnostic name for invalid
+colors. HDR/wide-gamut/ICC conversion, external GPU resources,
+presenter/swapchain ownership, and CPU/GPU pixel goldens remain deferred.
+Fractional-DPI authoritative text layout remains `REND-02`; Unicode clusters
+remain `TEXT-02`; bounded/coalesced undo and text layout/resource budgets remain
+`TEXT-03`. Checkpoint 4A is accepted, but Stage 4 and the campaign are not
+complete.
 
 ## Packet Completion Template
 
