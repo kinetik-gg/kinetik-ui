@@ -664,8 +664,10 @@ Winit retains a private click sequence across frames. Inclusive 500 ms and
 four-logical-unit press boundaries increment with saturation; matching releases
 carry, unmatched releases emit zero, and mismatch, missing evidence, backwards
 time, pointer leave, focus loss, real sanitized scale change, or explicit input
-clears continuation. The existing explicit-count method remains exact. The live
-showcase uses `mouse_button_at(..., Instant::now())` instead of hardcoded one.
+clears continuation. A scale change also records pointer leave to invalidate
+stale logical pointer evidence until the next move. The existing explicit-count
+method remains exact and documents its automatic-history reset. The live showcase uses
+`mouse_button_at(..., Instant::now())` instead of hardcoded one.
 
 #### Tests run and results
 
@@ -675,9 +677,14 @@ showcase uses `mouse_button_at(..., Instant::now())` instead of hardcoded one.
 - Scrollable pointer conformance filter: 2/2 passed.
 - Ordered spatial localization filter: 1/1 passed.
 - Core all-feature suite: passed, including all routing and spatial regressions.
-- Winit all features: 44 unit plus 4 shell integration tests passed.
+- Winit all features: 45 unit plus 4 shell integration tests passed after the
+  depth-one DPI-evidence remedy.
 - Showcase all features: 128 library plus 25 binary tests passed.
 - Warning-denied focused Clippy across core, Winit, and showcase: passed.
+- Depth-zero audit found stale logical pointer evidence after a DPI change and
+  incomplete public mouse-button lifecycle docs. Depth one records PointerLeft
+  on a real sanitized scale change, clears private/projected evidence, documents
+  exact reset/output semantics, and passes its focused regression and Clippy.
 - Independent audit and complete workspace gate: pending.
 
 #### Remaining risks and deferred findings

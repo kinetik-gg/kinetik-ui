@@ -165,10 +165,16 @@ impl WinitInputAdapter {
     }
 
     /// Updates the current scale factor.
+    ///
+    /// A real sanitized change invalidates automatic click history and records
+    /// pointer leave so no projected position or delta survives from the old
+    /// logical coordinate basis. An equal sanitized value has no input effect.
     pub fn set_scale_factor(&mut self, scale_factor: ScaleFactor) {
         let scale_factor = sanitize_scale_factor(scale_factor);
         if self.scale_factor != scale_factor {
             self.click_sequence.reset();
+            self.last_pointer_position = None;
+            self.input.push_event(UiInputEvent::PointerLeft);
             self.scale_factor = scale_factor;
         }
     }
@@ -208,7 +214,11 @@ impl WinitInputAdapter {
         self.last_pointer_position = None;
     }
 
-    /// Applies a mouse button event.
+    /// Applies a mouse button event with an explicit click count.
+    ///
+    /// The supplied count is emitted unchanged. Calling this method clears all
+    /// automatic click history, so a later [`Self::mouse_button_at`] transition
+    /// starts a new sequence.
     pub fn mouse_button(&mut self, button: WinitMouseButton, state: ElementState, click_count: u8) {
         self.click_sequence.reset();
         self.push_mouse_button(button, state, click_count);
@@ -217,8 +227,12 @@ impl WinitInputAdapter {
     /// Applies a timestamped mouse button event with automatic click sequencing.
     ///
     /// Repeated presses of the same button within 500 milliseconds and four
-    /// logical pixels increment the click count. Matching releases carry the
-    /// active press count without incrementing it.
+    /// logical pixels increment the count with saturation. Matching releases
+    /// carry the active press count without incrementing; unmatched or duplicate
+    /// releases emit zero. Missing position, backwards time, overlapping or
+    /// different-button transitions, pointer leave, focus loss, a real sanitized
+    /// scale-factor change, or explicit-count input clears continuation. A scale
+    /// change also invalidates logical pointer evidence until the next move.
     pub fn mouse_button_at(&mut self, button: WinitMouseButton, state: ElementState, at: Instant) {
         let core_button = mouse_button_from_winit(button);
         let click_count = self.click_sequence.transition(

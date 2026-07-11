@@ -480,6 +480,54 @@ fn automatic_click_sequence_resets_for_explicit_input_leave_focus_and_scale_chan
 }
 
 #[test]
+fn scale_change_cannot_seed_click_history_from_stale_logical_pointer_evidence() {
+    let started = Instant::now();
+    let mut adapter = WinitInputAdapter::new(ScaleFactor::ONE);
+    adapter.pointer_moved(PhysicalPosition::new(10.0, 10.0));
+    adapter.mouse_button_at(WinitMouseButton::Left, ElementState::Pressed, started);
+    adapter.mouse_button_at(
+        WinitMouseButton::Left,
+        ElementState::Released,
+        started + Duration::from_millis(1),
+    );
+
+    adapter.set_scale_factor(ScaleFactor::new(2.0));
+    assert_eq!(adapter.input().pointer.position, None);
+    assert_eq!(adapter.input().pointer.delta, Vec2::ZERO);
+    assert!(matches!(
+        adapter.input().events.last(),
+        Some(UiInputEvent::PointerLeft)
+    ));
+    adapter.begin_frame();
+    adapter.mouse_button_at(
+        WinitMouseButton::Left,
+        ElementState::Pressed,
+        started + Duration::from_millis(2),
+    );
+    adapter.mouse_button_at(
+        WinitMouseButton::Left,
+        ElementState::Released,
+        started + Duration::from_millis(3),
+    );
+    assert_eq!(pointer_button_counts(&adapter), vec![1, 1]);
+
+    adapter.begin_frame();
+    adapter.pointer_moved(PhysicalPosition::new(10.0, 10.0));
+    assert_eq!(adapter.input().pointer.delta, Vec2::ZERO);
+    adapter.mouse_button_at(
+        WinitMouseButton::Left,
+        ElementState::Pressed,
+        started + Duration::from_millis(4),
+    );
+    adapter.mouse_button_at(
+        WinitMouseButton::Left,
+        ElementState::Released,
+        started + Duration::from_millis(5),
+    );
+    assert_eq!(pointer_button_counts(&adapter), vec![1, 1]);
+}
+
+#[test]
 fn automatic_click_sequence_saturates_at_u8_max() {
     let started = Instant::now();
     let mut adapter = WinitInputAdapter::new(ScaleFactor::ONE);
