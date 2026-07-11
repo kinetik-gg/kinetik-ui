@@ -6,7 +6,7 @@ use crate::{
     InputStreamConflict, LivenessRegistry, LivenessTargetId, LivenessToken, LivenessUpdateStatus,
     ObserverDelivery, ObserverDrain, ObserverNotification, ObserverNotificationId,
     ObserverPublishStatus, ObserverRegistry, ObserverSubscriptionHandle, ObserverSubscriptionId,
-    UiInput, UiInputEvent, Vec2, WidgetId,
+    Point, UiInput, UiInputEvent, Vec2, WidgetId,
 };
 
 /// Frame-local routing decision for one pointer event class.
@@ -58,6 +58,34 @@ enum RootInputValidation {
     Conflict(InputStreamConflict),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PointerGesture {
+    owner: WidgetId,
+    press_origin: Point,
+    threshold_crossed: bool,
+    kind: PointerGestureKind,
+    click_count: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PointerGestureKind {
+    Press,
+    DomainDrag,
+    Selection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CancelledPointerGesture {
+    owner: WidgetId,
+    click_count: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlannedDragRelease {
+    pub source: WidgetId,
+    pub ordinal: usize,
+}
+
 /// Retained interaction and widget state owned by the UI runtime.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiMemory {
@@ -77,12 +105,23 @@ pub struct UiMemory {
     pointer_capture_released: Option<WidgetId>,
     /// Pointer interaction was cancelled at this frame's runtime boundary.
     pointer_interaction_cancelled: bool,
+    /// Owner whose retained primary gesture was cancelled during this frame.
+    cancelled_pointer_gesture: Option<CancelledPointerGesture>,
     pointer_routes: PointerRoutes,
+    planned_drag_release: Option<PlannedDragRelease>,
+    planned_drag_source: Option<WidgetId>,
     pointer_cursor_equivalents: HashSet<WidgetId>,
+    scoped_pointer_cleanup_events: HashSet<usize>,
+    scoped_pointer_event_ordinals: Vec<usize>,
+    selection_gesture_claims: HashSet<WidgetId>,
+    /// Retained primary press origin and threshold latch.
+    pointer_gesture: Option<PointerGesture>,
     /// Widget currently acting as an active drag source.
     drag_source: Option<WidgetId>,
     /// Drag source released during this frame.
     released_drag_source: Option<WidgetId>,
+    /// Canonical root event ordinal that released the drag source.
+    released_drag_ordinal: Option<usize>,
     /// Text-editing widget currently owning platform text input or IME.
     text_input_owner: Option<WidgetId>,
     /// Text-input owner that claimed this frame's ordered editing stream.
@@ -110,9 +149,16 @@ impl UiMemory {
         self.hovered = None;
         self.pointer_capture_released = None;
         self.released_drag_source = None;
+        self.released_drag_ordinal = None;
         self.pointer_interaction_cancelled = false;
+        self.cancelled_pointer_gesture = None;
         self.pointer_routes = PointerRoutes::default();
+        self.planned_drag_release = None;
+        self.planned_drag_source = None;
         self.pointer_cursor_equivalents.clear();
+        self.scoped_pointer_cleanup_events.clear();
+        self.scoped_pointer_event_ordinals.clear();
+        self.selection_gesture_claims.clear();
         self.text_input_event_claim = None;
         self.root_input_validation = RootInputValidation::Unvalidated;
         self.liveness.begin_frame();
@@ -193,8 +239,12 @@ impl UiMemory {
         &mut self,
         routes: PointerRoutes,
         cursor_equivalents: impl IntoIterator<Item = WidgetId>,
+        planned_drag_release: Option<PlannedDragRelease>,
+        planned_drag_source: Option<WidgetId>,
     ) {
         self.pointer_routes = routes;
+        self.planned_drag_release = planned_drag_release;
+        self.planned_drag_source = planned_drag_source;
         self.pointer_cursor_equivalents.clear();
         self.pointer_cursor_equivalents.extend(cursor_equivalents);
     }
@@ -213,8 +263,24 @@ impl UiMemory {
         !self.pointer_interaction_cancelled && self.pointer_routes.drop.allows(id)
     }
 
+    pub(crate) fn pointer_drop_route_is_planned_for(&self, id: WidgetId) -> bool {
+        self.pointer_routes.drop == PointerRoute::Target(id)
+    }
+
+    pub(crate) const fn planned_drag_release(&self) -> Option<PlannedDragRelease> {
+        self.planned_drag_release
+    }
+
+    pub(crate) const fn planned_drag_source(&self) -> Option<WidgetId> {
+        self.planned_drag_source
+    }
+
     pub(crate) fn pointer_wheel_route_allows(&self, id: WidgetId) -> bool {
         !self.pointer_interaction_cancelled && self.pointer_routes.wheel.allows(id)
+    }
+
+    pub(crate) fn pointer_wheel_route_matches(&self, id: WidgetId) -> bool {
+        self.pointer_routes.wheel.allows(id)
     }
 
     pub(crate) fn cursor_owner_matches_capture(
@@ -243,6 +309,10 @@ impl UiMemory {
     #[must_use]
     pub const fn released_drag_source(&self) -> Option<WidgetId> {
         self.released_drag_source
+    }
+
+    pub(crate) const fn released_drag_ordinal(&self) -> Option<usize> {
+        self.released_drag_ordinal
     }
 
     /// Returns the widget currently owning platform text input or IME.
@@ -346,6 +416,14 @@ impl UiMemory {
         }
     }
 
+    pub(crate) fn pointer_input_conflicted(&self, input: &UiInput) -> bool {
+        match self.root_input_validation {
+            RootInputValidation::Unvalidated => input.validate_event_stream().is_err(),
+            RootInputValidation::Valid => false,
+            RootInputValidation::Conflict(_) => true,
+        }
+    }
+
     /// Marks the widget as hovered for this frame.
     pub fn set_hovered(&mut self, id: WidgetId) {
         self.hovered = Some(id);
@@ -396,6 +474,105 @@ impl UiMemory {
         self.pointer_capture = Some(id);
     }
 
+    pub(crate) fn begin_pointer_gesture(
+        &mut self,
+        owner: WidgetId,
+        press_origin: Point,
+        kind: PointerGestureKind,
+        click_count: u8,
+    ) {
+        self.pointer_gesture = Some(PointerGesture {
+            owner,
+            press_origin,
+            threshold_crossed: false,
+            kind,
+            click_count,
+        });
+    }
+
+    pub(crate) fn pointer_gesture(&self, owner: WidgetId) -> Option<(Point, bool)> {
+        self.pointer_gesture
+            .filter(|gesture| gesture.owner == owner)
+            .map(|gesture| (gesture.press_origin, gesture.threshold_crossed))
+    }
+
+    pub(crate) const fn pointer_gesture_owner(&self) -> Option<WidgetId> {
+        match self.pointer_gesture {
+            Some(gesture) => Some(gesture.owner),
+            None => None,
+        }
+    }
+
+    pub(crate) fn pointer_gesture_kind(&self, owner: WidgetId) -> Option<PointerGestureKind> {
+        self.pointer_gesture
+            .filter(|gesture| gesture.owner == owner)
+            .map(|gesture| gesture.kind)
+    }
+
+    pub(crate) fn domain_drag_gesture(&self) -> Option<(WidgetId, Point, bool)> {
+        self.pointer_gesture
+            .filter(|gesture| gesture.kind == PointerGestureKind::DomainDrag)
+            .map(|gesture| {
+                (
+                    gesture.owner,
+                    gesture.press_origin,
+                    gesture.threshold_crossed,
+                )
+            })
+    }
+
+    pub(crate) fn pointer_gesture_click_count(&self, owner: WidgetId) -> Option<u8> {
+        self.pointer_gesture
+            .filter(|gesture| gesture.owner == owner)
+            .map(|gesture| gesture.click_count)
+    }
+
+    pub(crate) fn mark_pointer_threshold_crossed(&mut self, owner: WidgetId) {
+        if let Some(gesture) = &mut self.pointer_gesture
+            && gesture.owner == owner
+        {
+            gesture.threshold_crossed = true;
+        }
+    }
+
+    pub(crate) fn take_cancelled_pointer_gesture(&mut self, owner: WidgetId) -> Option<u8> {
+        self.cancelled_pointer_gesture
+            .filter(|gesture| gesture.owner == owner)?;
+        self.cancelled_pointer_gesture
+            .take()
+            .map(|gesture| gesture.click_count)
+    }
+
+    pub(crate) const fn pointer_release_cleanup_required(&self) -> bool {
+        self.pointer_capture.is_some() || self.cancelled_pointer_gesture.is_some()
+    }
+
+    pub(crate) fn claim_selection_gesture(&mut self, owner: WidgetId) -> bool {
+        self.selection_gesture_claims.insert(owner)
+    }
+
+    pub(crate) fn install_scoped_pointer_events(
+        &mut self,
+        event_ordinals: impl IntoIterator<Item = usize>,
+        event_indices: impl IntoIterator<Item = usize>,
+    ) {
+        self.scoped_pointer_event_ordinals.clear();
+        self.scoped_pointer_event_ordinals.extend(event_ordinals);
+        self.scoped_pointer_cleanup_events.clear();
+        self.scoped_pointer_cleanup_events.extend(event_indices);
+    }
+
+    pub(crate) fn scoped_pointer_event_is_cleanup(&self, event_index: usize) -> bool {
+        self.scoped_pointer_cleanup_events.contains(&event_index)
+    }
+
+    pub(crate) fn scoped_pointer_event_ordinal(&self, event_index: usize) -> usize {
+        self.scoped_pointer_event_ordinals
+            .get(event_index)
+            .copied()
+            .unwrap_or(event_index)
+    }
+
     /// Marks a widget as the active drag source.
     pub fn start_drag(&mut self, id: WidgetId) {
         self.drag_source = Some(id);
@@ -403,32 +580,86 @@ impl UiMemory {
 
     /// Finishes an active drag and keeps the released source visible this frame.
     pub fn finish_drag(&mut self, id: WidgetId) {
+        self.finish_drag_at(id, None);
+    }
+
+    pub(crate) fn finish_drag_at(&mut self, id: WidgetId, ordinal: Option<usize>) {
         if self.drag_source == Some(id) {
             self.drag_source = None;
-            self.released_drag_source = Some(id);
+            if self.released_drag_source.is_none() {
+                self.released_drag_source = Some(id);
+                self.released_drag_ordinal = ordinal;
+            }
         }
+    }
+
+    pub(crate) fn clear_active_drag(&mut self) {
+        self.drag_source = None;
     }
 
     /// Clears active and released drag source state.
     pub fn clear_drag(&mut self) {
         self.drag_source = None;
         self.released_drag_source = None;
+        self.released_drag_ordinal = None;
     }
 
     /// Cancels active pointer interaction while preserving unrelated retained state.
     pub fn cancel_pointer_interaction(&mut self) -> bool {
-        let cancelled = self.active.is_some()
-            || self.pressed.is_some()
-            || self.secondary_pressed.is_some()
-            || self.pointer_capture.is_some()
-            || self.drag_source.is_some();
+        let cancelled_primary = self.cancel_primary_pointer_interaction();
+        let cancelled_secondary = self.secondary_pressed.take().is_some();
+        let cancelled = cancelled_primary || cancelled_secondary;
         if cancelled {
-            self.clear_drag();
-            self.clear_interaction();
-            self.pointer_capture_released = None;
             self.pointer_interaction_cancelled = true;
         }
         cancelled
+    }
+
+    pub(crate) fn cancel_primary_pointer_interaction(&mut self) -> bool {
+        let cancelled_owner = self
+            .pointer_gesture_owner()
+            .or(self.pointer_capture)
+            .or(self.active);
+        let cancelled_click_count = cancelled_owner
+            .and_then(|owner| self.pointer_gesture_click_count(owner))
+            .unwrap_or(0);
+        let cancelled = self.active.is_some()
+            || self.pressed.is_some()
+            || self.pointer_capture.is_some()
+            || self.drag_source.is_some()
+            || self.pointer_gesture.is_some();
+        if cancelled {
+            self.cancelled_pointer_gesture = cancelled_owner.map(|owner| CancelledPointerGesture {
+                owner,
+                click_count: cancelled_click_count,
+            });
+            self.clear_active_drag();
+            self.clear_primary_interaction();
+            self.pointer_capture_released = None;
+        }
+        cancelled
+    }
+
+    pub(crate) fn cancel_secondary_pointer_interaction(&mut self, id: WidgetId) -> bool {
+        if self.secondary_pressed == Some(id) {
+            self.secondary_pressed = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) const fn has_pointer_transaction(&self) -> bool {
+        self.active.is_some()
+            || self.pressed.is_some()
+            || self.secondary_pressed.is_some()
+            || self.pointer_capture.is_some()
+            || self.drag_source.is_some()
+            || self.pointer_gesture.is_some()
+    }
+
+    pub(crate) fn fence_pointer_stream(&mut self) {
+        self.pointer_interaction_cancelled = true;
     }
 
     /// Reconciles persistent interaction ownership against widgets present this frame.
@@ -442,6 +673,7 @@ impl UiMemory {
             self.pressed,
             self.secondary_pressed,
             self.drag_source,
+            self.pointer_gesture_owner(),
         ]
         .into_iter()
         .flatten()
@@ -470,16 +702,24 @@ impl UiMemory {
     pub fn release_pointer_capture(&mut self, id: WidgetId) {
         if self.pointer_capture == Some(id) {
             self.pointer_capture = None;
+            if self.pointer_gesture_owner() == Some(id) {
+                self.pointer_gesture = None;
+            }
         }
     }
 
     /// Clears interaction capture state at the end of an interaction.
     pub fn clear_interaction(&mut self) {
+        self.clear_primary_interaction();
+        self.secondary_pressed = None;
+    }
+
+    pub(crate) fn clear_primary_interaction(&mut self) {
         self.pointer_capture_released = self.pointer_capture;
         self.active = None;
         self.pressed = None;
-        self.secondary_pressed = None;
         self.pointer_capture = None;
+        self.pointer_gesture = None;
     }
 
     /// Records the widget that should receive platform text input or IME events.

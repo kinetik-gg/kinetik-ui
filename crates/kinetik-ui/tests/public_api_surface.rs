@@ -34,6 +34,25 @@ mod current_prelude_inventory {
     }
 }
 
+fn captured_selection_method(
+    ui: &mut kinetik_ui::core::Ui<'_>,
+    id: kinetik_ui::core::WidgetId,
+    rect: kinetik_ui::core::Rect,
+    disabled: bool,
+) -> kinetik_ui::core::CapturedSelectionGesture {
+    ui.captured_selection_gesture(id, rect, disabled)
+}
+
+fn ordered_text_input_method(
+    ui: &mut kinetik_ui::core::Ui<'_>,
+    id: kinetik_ui::core::WidgetId,
+) -> Result<
+    Option<Vec<kinetik_ui::core::OrderedTextInputEvent>>,
+    kinetik_ui::core::InputStreamConflict,
+> {
+    ui.claim_ordered_text_input_events(id)
+}
+
 #[test]
 fn facade_root_and_feature_qualified_paths_compile() {
     use kinetik_ui::{UiState, core, render, text, widgets};
@@ -41,11 +60,18 @@ fn facade_root_and_feature_qualified_paths_compile() {
     let _ = UiState::new();
     let paths = [
         std::any::type_name::<core::UiInput>(),
+        std::any::type_name::<core::CapturedSelectionGesture>(),
+        std::any::type_name::<core::OrderedTextInputEvent>(),
+        std::any::type_name::<core::SelectionGestureAction>(),
+        std::any::type_name::<core::SelectionGesturePhase>(),
         std::any::type_name::<text::TextLayoutStore>(),
         std::any::type_name::<render::RenderResources>(),
         std::any::type_name::<widgets::Ui<'static>>(),
     ];
     assert!(paths.iter().all(|path| !path.is_empty()));
+
+    let _ = captured_selection_method;
+    let _ = ordered_text_input_method;
 
     #[cfg(feature = "platform-winit")]
     {

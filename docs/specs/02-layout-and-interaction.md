@@ -266,6 +266,40 @@ movement there. Transform and clip scopes localize all `Ui` input accessors,
 while response rectangles stay local and semantic/debug/IME rectangles export
 screen-logical geometry.
 
+A primary gesture retains its press origin in the current logical scope. Net
+displacement crosses the private drag threshold at four units inclusive and
+then remains latched. The crossing update reports the full origin-to-current
+displacement; later frames report only newly accumulated movement. A crossed
+release never clicks, even after moving back. `pressable` uses the same latch
+for click suppression but never becomes a domain drag; only `draggable` sets
+`drag_source` and can produce a released source for drop targets. The retained
+transaction records its gesture family. A composite resolves that family once:
+numeric scrub fields resolve one DomainDrag response, then derive focus, caret,
+and text-input behavior from that response without replaying pointer events.
+Selection is isolated and cannot become or release a domain drag. Legacy
+snapshot input starts a fresh press at the current position and does not
+reinterpret that frame's aggregate pointer delta as post-press movement.
+
+Text selection uses `Ui::captured_selection_gesture`, a visually neutral
+capture seam that returns the common `Response` plus ordered Press, Move,
+Release, and Cancel actions. Canonical actions retain their original root event
+ordinal through transforms and clips; legacy snapshot actions have no ordinal.
+Selection reports movement below the domain threshold and never publishes a
+drag source. `Ui::claim_ordered_text_input_events` returns the single claimed
+key, text, clipboard, modifier, IME, and focus stream with the same root
+ordinals (or no ordinals for legacy synthesis). A field merges those events
+with selection actions instead of parsing pointer input a second time.
+Releases preserved outside an effective clip are cancellation-only, even when
+their transformed point remains inside a larger widget rectangle. A canonical
+release with no event-time position cannot click, cross a threshold, or drop.
+Spatial localization preserves a same-frame outside cleanup edge when an
+earlier accepted press created its potential owner. ReleaseAll survives every
+spatial scope as a global ordered fence, even without a retained owner.
+ReleaseAll and focus loss preserve earlier movement, wheel input, or a completed
+drop while making later pointer transitions inert. An unrelated behavior defers
+retained-owner cleanup so it cannot erase the owner's pre-fence output, and
+focus cancellation never borrows a future event's position or click count.
+
 Overlapping interaction uses a predeclared `PointerTargetPlan`. Each visual
 target has one canonical identity, at most one ordinary event owner, at most
 one drop owner, optional wheel ownership, and explicit cursor equivalents.
@@ -278,9 +312,16 @@ points outside its own rectangle.
 `pressable`, `selectable`, `draggable`, `focusable`, context-menu, and tooltip
 behavior use the ordinary route. Drop behavior with an active source uses the
 drop route. `scrollable` uses ordinary routing for hover but the independent
-wheel route for mutation. When no plan is installed, low-level compatibility
-behavior remains available; audited layered components must install a complete
-plan before any behavior call.
+wheel route for mutation. A planned draggable source must opt in with
+`PointerTarget::domain_drag_source`; this makes target-first eligibility
+explicit instead of speculating that every pressable is a drag source. For a
+same-frame transaction the first causal press selects the ordinary owner, and
+the first causal release supplies drop geometry. The source's declared
+transform and clip validate the threshold and release before a target-first
+commit can escape. Canonical drop commits fail closed without a matching plan;
+empty-stream legacy drop behavior remains compatible. Other low-level
+unplanned hover and press behavior remains available, while audited layered
+components must install a complete plan before any behavior call.
 
 Examples:
 

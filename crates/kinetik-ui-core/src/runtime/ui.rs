@@ -1,11 +1,13 @@
 use std::hash::Hash;
 
-use crate::input::UiInput;
+use crate::input::{InputStreamConflict, UiInput, UiInputEvent};
+use crate::interaction::captured_selection_gesture_with_ordinals;
 use crate::memory::UiMemory;
 use crate::render::Primitive;
 use crate::{
-    ActionContext, ActionId, ActionInvocation, ActionSource, IdStack, LivenessTargetId,
-    LivenessToken, Rect, SemanticActionKind, SemanticNode, WidgetId,
+    ActionContext, ActionId, ActionInvocation, ActionSource, CapturedSelectionGesture, IdStack,
+    LivenessTargetId, LivenessToken, OrderedTextInputEvent, Rect, SemanticActionKind, SemanticNode,
+    WidgetId,
 };
 
 use super::focus::{
@@ -13,7 +15,9 @@ use super::focus::{
     apply_window_focus_text_blur,
 };
 use super::output::FrameOutput;
-use super::pointer::{PointerPlanError, PointerTargetPlan};
+use super::pointer::{
+    PointerDropProbe, PointerPlanError, PointerPressProbe, PointerTargetPlan, RetainedDragProbe,
+};
 use super::primitive_stack::validate_primitive_stack;
 use super::spatial::SpatialStack;
 use super::types::{CursorShape, FrameContext, FrameWarning, PlatformRequest, RepaintRequest};
@@ -26,11 +30,13 @@ use super::types::{CursorShape, FrameContext, FrameWarning, PlatformRequest, Rep
 pub struct Ui<'a> {
     context: FrameContext,
     root_input: UiInput,
+    input_event_ordinals: Vec<usize>,
     memory: &'a mut UiMemory,
     ids: IdStack,
     output: FrameOutput,
     spatial: SpatialStack,
     pointer_plan_installed: bool,
+    pointer_cancel_pending: bool,
 }
 
 impl<'a> Ui<'a> {
@@ -41,10 +47,21 @@ impl<'a> Ui<'a> {
         let input_validation = context.input.validate_event_stream();
         let input_conflict = input_validation.as_ref().err().copied();
         memory.set_root_input_validation(input_validation);
-        if !context.input.window_focused || pointer_release_all_cancelled(&context.input) {
+        let pointer_cancel_pending = !context.input.events.is_empty()
+            && context.input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    UiInputEvent::PointerReleaseAll { .. }
+                        | UiInputEvent::WindowFocusChanged(false)
+                )
+            });
+        let legacy_pointer_cancel = context.input.events.is_empty()
+            && (!context.input.window_focused || pointer_release_all_cancelled(&context.input));
+        if legacy_pointer_cancel {
             memory.cancel_pointer_interaction();
         }
         let root_input = context.input.clone();
+        let input_event_ordinals = (0..root_input.events.len()).collect();
         let mut output = FrameOutput::new();
         if let Some(conflict) = input_conflict {
             output.push_warning(FrameWarning::InputStreamConflict { conflict });
@@ -52,11 +69,13 @@ impl<'a> Ui<'a> {
         Self {
             context,
             root_input,
+            input_event_ordinals,
             memory,
             ids: IdStack::new(),
             output,
             spatial: SpatialStack::default(),
             pointer_plan_installed: false,
+            pointer_cancel_pending,
         }
     }
 
@@ -86,6 +105,79 @@ impl<'a> Ui<'a> {
     /// Returns input and mutable memory as separate borrows for widget composition.
     pub fn input_and_memory_mut(&mut self) -> (&UiInput, &mut UiMemory) {
         (&self.context.input, self.memory)
+    }
+
+    /// Resolves a neutral captured pointer gesture for text selection.
+    ///
+    /// Canonical actions retain their original root event ordinals even when
+    /// the current spatial scope filtered earlier events. Legacy snapshot
+    /// actions use `None`. Selection capture never creates a domain drag source.
+    pub fn captured_selection_gesture(
+        &mut self,
+        id: WidgetId,
+        rect: Rect,
+        disabled: bool,
+    ) -> CapturedSelectionGesture {
+        captured_selection_gesture_with_ordinals(
+            id,
+            rect,
+            &self.context.input,
+            &self.input_event_ordinals,
+            self.memory,
+            disabled,
+        )
+    }
+
+    /// Claims editing-domain input with original root event ordinals.
+    ///
+    /// A successful canonical claim returns `Some` ordinals even when spatial
+    /// filtering removed earlier pointer events. Legacy synthesized input uses
+    /// `None`. `Ok(None)` means the caller did not own or had already claimed
+    /// this frame's editing stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the root input conflict recorded for this frame.
+    pub fn claim_ordered_text_input_events(
+        &mut self,
+        id: WidgetId,
+    ) -> Result<Option<Vec<OrderedTextInputEvent>>, InputStreamConflict> {
+        if !self.memory.claim_text_input_events(id) {
+            return match self.memory.root_input_conflict() {
+                Some(conflict) => Err(conflict),
+                None => Ok(None),
+            };
+        }
+
+        let events = self
+            .memory
+            .effective_text_input_events(&self.context.input)?;
+        if self.root_input.events.is_empty() {
+            return Ok(Some(
+                events
+                    .into_iter()
+                    .filter(is_editing_domain_event)
+                    .map(|event| OrderedTextInputEvent {
+                        ordinal: None,
+                        event,
+                    })
+                    .collect(),
+            ));
+        }
+
+        debug_assert_eq!(events.len(), self.input_event_ordinals.len());
+        Ok(Some(
+            events
+                .into_iter()
+                .zip(self.input_event_ordinals.iter().copied())
+                .filter_map(|(event, ordinal)| {
+                    is_editing_domain_event(&event).then_some(OrderedTextInputEvent {
+                        ordinal: Some(ordinal),
+                        event,
+                    })
+                })
+                .collect(),
+        ))
     }
 
     /// Derives and registers a widget ID in the current scope.
@@ -120,21 +212,46 @@ impl<'a> Ui<'a> {
         if self.pointer_plan_installed {
             self.memory.cancel_pointer_interaction();
             self.memory
-                .install_pointer_routes(crate::PointerRoutes::BLOCKED, []);
+                .install_pointer_routes(crate::PointerRoutes::BLOCKED, [], None, None);
             return Err(PointerPlanError::AlreadyInstalled);
         }
         self.pointer_plan_installed = true;
 
         let captured = self.memory.pointer_capture();
-        let mut plan =
-            PointerTargetPlan::new(self.root_input.pointer.position, self.spatial.clone());
+        let retained_drag = self
+            .memory
+            .domain_drag_gesture()
+            .map(|(source, origin, threshold_crossed)| RetainedDragProbe {
+                source,
+                origin: Some(origin),
+                threshold_crossed,
+            })
+            .or_else(|| {
+                self.memory.drag_source().map(|source| RetainedDragProbe {
+                    source,
+                    origin: None,
+                    threshold_crossed: true,
+                })
+            });
+        let (press_probe, drop_probe) = pointer_transaction_probe(
+            &self.root_input,
+            captured.is_some() || self.memory.drag_source().is_some(),
+        );
+        let mut plan = PointerTargetPlan::new(
+            self.root_input.pointer.position,
+            press_probe,
+            drop_probe,
+            retained_drag,
+            self.root_input.events.clone(),
+            self.spatial.clone(),
+        );
         declare(&mut plan);
         let resolved = match plan.resolve(captured) {
             Ok(resolved) => resolved,
             Err(error) => {
                 self.memory.cancel_pointer_interaction();
                 self.memory
-                    .install_pointer_routes(crate::PointerRoutes::BLOCKED, []);
+                    .install_pointer_routes(crate::PointerRoutes::BLOCKED, [], None, None);
                 return Err(error);
             }
         };
@@ -149,16 +266,26 @@ impl<'a> Ui<'a> {
                 self.memory.pressed(),
                 self.memory.secondary_pressed(),
                 self.memory.drag_source(),
+                self.memory.pointer_gesture_owner(),
             ]
             .into_iter()
             .flatten()
             .any(|owner| Some(owner) != selected_owner);
-        if owner_mismatch {
+        let mut routes = resolved.routes;
+        let (planned_drag_release, planned_drag_source) = if owner_mismatch {
             self.memory.cancel_pointer_interaction();
-        }
-        self.memory
-            .install_pointer_routes(resolved.routes, resolved.cursor_equivalents);
-        Ok(resolved.routes)
+            routes.drop = crate::PointerRoute::Blocked;
+            (None, None)
+        } else {
+            (resolved.planned_drag_release, resolved.planned_drag_source)
+        };
+        self.memory.install_pointer_routes(
+            routes,
+            resolved.cursor_equivalents,
+            planned_drag_release,
+            planned_drag_source,
+        );
+        Ok(routes)
     }
 
     /// Registers an externally derived widget ID as present and checks duplicates.
@@ -279,6 +406,7 @@ impl<'a> Ui<'a> {
     /// output until a later frame establishes fresh hover or capture state.
     pub fn request_cursor_for(&mut self, owner: WidgetId, cursor: CursorShape) -> bool {
         if self.memory.pointer_interaction_cancelled()
+            || crate::interaction::canonical_pointer_fenced(&self.context.input)
             || self.context.input.pointer.position.is_none()
         {
             return false;
@@ -364,6 +492,10 @@ impl<'a> Ui<'a> {
                 .push_warning(FrameWarning::DuplicateWidgetId { id: duplicate.id });
         }
 
+        if self.pointer_cancel_pending && self.memory.cancel_pointer_interaction() {
+            self.output.request_repaint(RepaintRequest::NextFrame);
+        }
+
         let semantic_tree_valid = match self.output.semantics.validate() {
             Ok(()) => true,
             Err(error) => {
@@ -407,15 +539,83 @@ impl<'a> Ui<'a> {
     }
 
     fn refresh_scoped_input(&mut self) {
-        self.context.input = self.spatial.localize_input(
+        let localized = self.spatial.localize_input(
             &self.root_input,
-            self.memory.pointer_capture().is_some(),
+            self.memory.pointer_release_cleanup_required(),
             self.memory.secondary_pressed().is_some(),
             self.memory.root_input_conflict().is_some(),
         );
+        self.memory.install_scoped_pointer_events(
+            localized.event_ordinals.iter().copied(),
+            localized
+                .cleanup_only
+                .iter()
+                .enumerate()
+                .filter_map(|(index, cleanup_only)| cleanup_only.then_some(index)),
+        );
+        self.context.input = localized.input;
+        self.input_event_ordinals = localized.event_ordinals;
     }
 }
 
 fn pointer_release_all_cancelled(input: &UiInput) -> bool {
     input.pointer.release_all_cancelled()
+}
+
+fn pointer_transaction_probe(
+    input: &UiInput,
+    retained_transaction: bool,
+) -> (Option<PointerPressProbe>, PointerDropProbe) {
+    if input.events.is_empty() {
+        return (None, PointerDropProbe::Snapshot);
+    }
+    let mut transaction_started = retained_transaction;
+    let mut press_probe = None;
+    for (ordinal, event) in input.events.iter().enumerate() {
+        match event {
+            UiInputEvent::PointerButton {
+                button: crate::MouseButton::Primary,
+                down: true,
+                position,
+                ..
+            } if !transaction_started => {
+                transaction_started = true;
+                press_probe = Some(PointerPressProbe {
+                    ordinal,
+                    position: *position,
+                });
+            }
+            UiInputEvent::PointerButton {
+                button: crate::MouseButton::Primary,
+                down: false,
+                position,
+                ..
+            } if transaction_started => {
+                return (
+                    press_probe,
+                    PointerDropProbe::Release {
+                        ordinal,
+                        position: *position,
+                    },
+                );
+            }
+            UiInputEvent::PointerReleaseAll { .. } | UiInputEvent::WindowFocusChanged(false) => {
+                return (press_probe, PointerDropProbe::Cancelled);
+            }
+            _ => {}
+        }
+    }
+    (press_probe, PointerDropProbe::Snapshot)
+}
+
+fn is_editing_domain_event(event: &UiInputEvent) -> bool {
+    matches!(
+        event,
+        UiInputEvent::ModifiersChanged(_)
+            | UiInputEvent::Key(_)
+            | UiInputEvent::Text(_)
+            | UiInputEvent::ClipboardText(_)
+            | UiInputEvent::ImeEnabled(_)
+            | UiInputEvent::WindowFocusChanged(_)
+    )
 }

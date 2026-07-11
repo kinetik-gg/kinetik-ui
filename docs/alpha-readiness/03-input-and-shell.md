@@ -6,7 +6,7 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | In progress; `IN-01` and `IN-02` merged, `IN-03A` audit and local full gate passed pending exact-SHA three-OS CI |
+| Status | In progress; `IN-01`, `IN-02`, and `IN-03A` merged; `IN-03B` final-depth candidate passes focused verification pending exact-SHA audit |
 | Scope | Sequence-preserving input, platform request execution, and pointer normalization |
 | Impact / confidence | Critical / High (`IN-03` is High / High) |
 | Campaign prerequisite | Stage 2 gate; campaign authorization recorded |
@@ -49,7 +49,31 @@ history deterministically, and retains the explicit-count compatibility API.
 Focused core, routing, spatial, Winit, showcase, and warning-denied Clippy gates
 pass. Three depth-one re-reviewers closed the DPI-evidence and rustdoc findings
 with no P0/P1/P2 findings, and the complete local CI-equivalent gate passes.
-Exact-SHA three-OS CI, PR checks, and squash merge remain.
+Exact-SHA three-OS CI run `29135844832`, PR checks, and squash merge
+`889c3762` passed; issue `#514` is closed.
+
+`IN-03B` folds nonempty canonical primary/secondary transitions once, retains
+a private four-current-scope-unit inclusive threshold latch, and suppresses
+release clicks after crossing. Only domain draggables publish drag sources.
+The runtime also retains original root event ordinals in a private spatial
+sidecar and exposes neutral captured-selection actions without changing public
+input or common response layouts. A matching ordered text claim exposes editing
+events with the same ordinals, so `TEXT-01` can merge without pointer reparsing.
+Empty canonical streams remain compatible.
+Its final-depth remedy resolves composite numeric scrub interaction once as a
+domain drag, preserves sequential cleanup provenance and causal cancellation
+metadata, and retains ReleaseAll as a global spatial fence. Unrelated behavior
+cannot erase an owner's earlier move or release, and wheel mutation stops at the
+same fence. Closed plans declare domain-drag source intent, select same-frame
+ordinary ownership from the first causal press, and validate threshold/release
+evidence in the source transform and clip before routing the first causal
+release. Canonical unplanned commits fail closed while empty-stream legacy drop
+behavior remains compatible. Planned active drags and release commits are
+source/target evaluation-order invariant, split button owners preserve
+pre-fence output without stale hover/cursor publication, and selection
+cancellation cannot replay on a second same-frame claim. Forty-six focused
+core adversarial tests and forty-four widget taxonomy tests pass; the complete
+six-command workspace gate passes on the final evidence candidate.
 
 ## Ownership And Overlap
 

@@ -1,4 +1,4 @@
-use super::{HitTarget, InteractionState, Response, ScrollResponse};
+use super::{HitTarget, InteractionState, Response, ScrollResponse, canonical_pointer_fenced};
 use crate::{
     InputWheelDelta, PointerRoute, Rect, Size, Transform, UiInput, UiInputEvent, UiMemory, Vec2,
     WidgetId,
@@ -66,14 +66,25 @@ fn scrollable_with_hit_target(
     memory: &mut UiMemory,
     disabled: bool,
 ) -> ScrollResponse {
+    let conflicted = memory.pointer_input_conflicted(input);
     let target_hit = hit_target.hit_test(rect, input);
-    let hovered = !disabled && target_hit && memory.pointer_route_allows(id);
+    let hovered = !conflicted
+        && !disabled
+        && !canonical_pointer_fenced(input)
+        && target_hit
+        && memory.pointer_route_allows(id);
     if hovered {
         memory.set_hovered(id);
     }
 
     let previous = clamp_scroll_offset(memory.scroll_offset(id), rect.size(), content_size);
-    let wheel_routed = !disabled && target_hit && memory.pointer_wheel_route_allows(id);
+    let wheel_routed = !disabled
+        && target_hit
+        && if input.events.is_empty() {
+            memory.pointer_wheel_route_allows(id)
+        } else {
+            memory.pointer_wheel_route_matches(id)
+        };
     let requested_delta = if wheel_routed {
         let delta = normalized_wheel_delta(input);
         Vec2::new(-delta.x, -delta.y)
@@ -123,19 +134,26 @@ fn normalized_wheel_delta(input: &UiInput) -> Vec2 {
         return sanitize_wheel_vector(input.pointer.wheel_delta);
     }
 
-    input
-        .events
-        .iter()
-        .filter_map(|event| match event {
-            UiInputEvent::Wheel { delta, .. } => Some(match *delta {
-                InputWheelDelta::Lines(delta) => {
-                    multiply_wheel_vectors(sanitize_wheel_vector(delta), DEFAULT_WHEEL_LINE_STEP)
-                }
-                InputWheelDelta::Pixels(delta) => sanitize_wheel_vector(delta),
-            }),
-            _ => None,
-        })
-        .fold(Vec2::ZERO, add_wheel_vectors)
+    let mut accumulated = Vec2::ZERO;
+    for event in &input.events {
+        match event {
+            UiInputEvent::Wheel { delta, .. } => {
+                let delta = match *delta {
+                    InputWheelDelta::Lines(delta) => multiply_wheel_vectors(
+                        sanitize_wheel_vector(delta),
+                        DEFAULT_WHEEL_LINE_STEP,
+                    ),
+                    InputWheelDelta::Pixels(delta) => sanitize_wheel_vector(delta),
+                };
+                accumulated = add_wheel_vectors(accumulated, delta);
+            }
+            UiInputEvent::PointerReleaseAll { .. } | UiInputEvent::WindowFocusChanged(false) => {
+                break;
+            }
+            _ => {}
+        }
+    }
+    accumulated
 }
 
 fn sanitize_wheel_vector(value: Vec2) -> Vec2 {
