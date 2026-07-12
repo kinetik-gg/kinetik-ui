@@ -1875,6 +1875,76 @@ a separately accepted packet closed them. The repository remains foundation /
 developer preview, not alpha-ready; no tag, publish, deployment, or release is
 authorized.
 
+### `REND-ADR-01`: GPU presenter contract
+
+Status: Complete / Accepted for the architecture decision. Issue #572 owns the
+documentation-only packet. [ADR 0001](../adr/0001-gpu-presenter-contract.md)
+freezes the supported alpha ownership, synchronization, lifetime, recovery,
+offscreen, and multi-window boundary; `REND-03` is next. This packet implements
+or pre-accepts neither `REND-03` nor `REND-04`.
+
+#### Changed files
+
+- `docs/adr/0001-gpu-presenter-contract.md`
+- `docs/specs/03-rendering-text-components.md`
+- `docs/specs/04-runtime-platform.md`
+- `docs/alpha-readiness/05-composition-foundations.md`
+- `docs/alpha-readiness/progress.md`
+
+#### Reasoning and contract decisions
+
+The first supported live path belongs in a concrete
+`kinetik-ui-vello-winit` integration crate. The presenter owns its retained
+window identity, Vello `RenderContext`, caller-owned `RenderSurface`, current
+device/queue and generation, Vello GPU renderer, surface recovery, submission,
+presentation, and backend-native registry. The application retains event-loop,
+input, shell, repaint, frame, and domain authority; `VelloRenderer` remains a
+scene translator; core and neutral render layers retain only stable IDs,
+metadata, CPU snapshots, and diagnostics.
+
+Native `TextureId` resolution precedes the existing CPU snapshot, followed by
+the visible placeholder. The supported source is a same-device full-base
+`Rgba8Unorm + COPY_SRC` texture with sRGB numeric RGB payload and straight
+alpha. Vello performs a GPU atlas copy with no CPU readback; this is explicitly
+not a zero-copy promise. Presenter/device/registration generations, dirty and
+replace order, panic-safe removal, same-queue submission, zero-size behavior,
+surface outcomes, device loss, suspend/resume, and device-slot changes are all
+defined. Recovery returns repaint guidance but never replays platform requests.
+
+#### Tests run and results
+
+- Three independent exact-task critics verified task SHA-256
+  `b2b92f92ffa400cbacf22c20431c9eaf112a2cd55d4fda8956221449f57fd168`
+  at P0/P1/P2=`0/0/0` after two consolidated correction rounds.
+- `git diff --check`, ADR/spec link targets, required-term searches, and the
+  exact documentation scope checks passed.
+- All six workspace gates passed with
+  `CARGO_TARGET_DIR=target/runway/rend-adr-01`: format check,
+  warning-denied all-target/all-feature Clippy, all-feature workspace tests,
+  all-feature workspace build, all-feature workspace example checks, and
+  warning-denied all-feature/no-deps documentation. `RUSTDOCFLAGS` was restored
+  to its prior unset state.
+- The protected two-file `output/` manifest remained exactly 72,206 and 543,312
+  bytes with SHA-256 values
+  `2fd51a836c46e200bc2a952609cbcbfe14319ed1450bece70fa64e04ec82e3a0`
+  and `28c3f6dbbb6a749730498f634c08e8f4df0bff58bdc2e12b563a1d0471ebcdcf`.
+
+#### Remaining risks and deferred findings
+
+The ADR is a decision checkpoint, not runtime proof. `REND-03` must extract the
+live presenter and prove lifecycle/recovery; `REND-04` must implement native
+registration, no-readback, color/alpha, and device-generation evidence. Vello
+atlas-copy bandwidth and duplicate GPU memory remain performance risks,
+foreign-device provenance remains a caller precondition with an explicit wgpu
+validation path, and final GPU color/alpha pixels remain unproved.
+
+Zero-copy, arbitrary texture views, foreign/shared-device import, explicit
+native synchronization, a reusable offscreen presenter, general multi-window
+coordination, HDR/wide-gamut/ICC conversion in the UI renderer, and additional
+presenter backends remain deferred. Stage 5 composition packets and Stages 6-7
+remain open. The repository remains foundation / developer preview, not
+alpha-ready; no tag, publish, deployment, or release is authorized.
+
 ## Packet Completion Template
 
 Every packet review must use these exact headings and include commands plus concrete results:
