@@ -19,13 +19,16 @@ use crate::{
     VelloPresentReport, VelloPresentStatus, VelloPresenterConfig, VelloPresenterError,
     VelloPresenterStatus, VelloRecoveryKind, VelloRecoveryOutcome, VelloRedrawGuidance,
     VelloResizeOutcome, VelloSuspendOutcome,
-    device::{DeviceAuthority, DeviceInbox},
+    device::{
+        CurrentDeviceEventOutcome, DeviceAuthority, DeviceInbox, classify_current_device_events,
+    },
     frame::{
         AcquiredFrame, DriveFailure, DrivenFrame, PresentOperations, drive_present,
         report_for_driven,
     },
     lifecycle::{
-        DEVICE_REBUILD_SEQUENCE, DropAction, Extent, LifecycleState, ResizePlan, ResumePlan,
+        DeviceRecoveryBuild, DeviceRecoveryTeardown, DropAction, Extent, LifecycleState,
+        ResizePlan, ResumePlan, drive_device_recovery_build, drive_device_recovery_teardown,
     },
 };
 
@@ -33,7 +36,95 @@ struct GpuState {
     renderer: Renderer,
     context: RenderContext,
     dev_id: usize,
-    inbox: DeviceInbox,
+}
+
+struct PresenterControl<W> {
+    authority: DeviceAuthority,
+    lifecycle: LifecycleState<W>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeviceEventEffect {
+    None,
+    DropGpuForRecovery,
+}
+
+impl<W: Copy + Eq> PresenterControl<W> {
+    fn new() -> Result<Self, VelloPresenterError> {
+        Ok(Self {
+            authority: DeviceAuthority::new()?,
+            lifecycle: LifecycleState::new(),
+        })
+    }
+
+    fn apply_device_events(
+        &mut self,
+        events: crate::device::CurrentDeviceEvents,
+    ) -> Result<DeviceEventEffect, VelloPresenterError> {
+        match classify_current_device_events(events) {
+            CurrentDeviceEventOutcome::Lost => {
+                if self.authority.invalidate()? {
+                    self.lifecycle.mark_device_lost();
+                    Ok(DeviceEventEffect::DropGpuForRecovery)
+                } else {
+                    Ok(DeviceEventEffect::None)
+                }
+            }
+            CurrentDeviceEventOutcome::Actionable(error) => Err(error),
+            CurrentDeviceEventOutcome::None => Ok(DeviceEventEffect::None),
+        }
+    }
+
+    fn usable_scope(&self) -> Option<PresenterDeviceScope> {
+        if self.lifecycle.attachment_status() == VelloAttachmentStatus::Detached
+            || self.lifecycle.recovery().is_some()
+        {
+            None
+        } else {
+            self.authority.scope()
+        }
+    }
+
+    fn with_validated_scope<R>(
+        &self,
+        scope: &PresenterDeviceScope,
+        use_scope: impl FnOnce(PresenterDeviceScope) -> Result<R, VelloPresenterError>,
+    ) -> Result<R, VelloPresenterError> {
+        self.authority.validate(scope)?;
+        if self.lifecycle.attachment_status() == VelloAttachmentStatus::Detached
+            || self.lifecycle.recovery().is_some()
+        {
+            return Err(VelloPresenterError::DeviceUnavailable);
+        }
+        use_scope(scope.clone())
+    }
+
+    fn select_surface_device(
+        &mut self,
+        current_device: usize,
+        selected_device: usize,
+    ) -> Result<(bool, PresenterDeviceScope), VelloPresenterError> {
+        if current_device == selected_device {
+            return Ok((
+                false,
+                self.authority
+                    .scope()
+                    .ok_or(VelloPresenterError::DeviceUnavailable)?,
+            ));
+        }
+        Ok((true, self.authority.replace()?))
+    }
+
+    fn complete_device_rebuild<T>(
+        &mut self,
+        extent: Extent,
+        candidate: Result<T, VelloPresenterError>,
+    ) -> Result<(T, PresenterDeviceScope), VelloPresenterError> {
+        let candidate = candidate?;
+        let scope = self.authority.activate();
+        self.lifecycle.mark_surface_ready(extent);
+        Ok((candidate, scope))
+    }
 }
 
 enum PresentAttempt {
@@ -44,13 +135,12 @@ enum PresentAttempt {
 /// Presenter for one live Vello surface attached to one Winit window.
 pub struct VelloWindowPresenter {
     config: VelloPresenterConfig,
-    authority: DeviceAuthority,
-    lifecycle: LifecycleState<WindowId>,
+    control: PresenterControl<WindowId>,
     surface: Option<RenderSurface<'static>>,
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
+    inbox: Option<DeviceInbox>,
     toolkit: VelloRenderer,
-    pending_error: Option<VelloPresenterError>,
 }
 
 impl VelloWindowPresenter {
@@ -63,13 +153,12 @@ impl VelloWindowPresenter {
     pub fn new(config: VelloPresenterConfig) -> Result<Self, VelloPresenterError> {
         Ok(Self {
             config,
-            authority: DeviceAuthority::new()?,
-            lifecycle: LifecycleState::new(),
+            control: PresenterControl::new()?,
             surface: None,
             window: None,
             gpu: None,
+            inbox: None,
             toolkit: VelloRenderer::new(),
-            pending_error: None,
         })
     }
 
@@ -88,13 +177,13 @@ impl VelloWindowPresenter {
     /// Returns the exact attached window ID, if any.
     #[must_use]
     pub fn window_id(&self) -> Option<WindowId> {
-        self.lifecycle.window()
+        self.control.lifecycle.window()
     }
 
     /// Returns whether the presenter currently owns this exact window.
     #[must_use]
     pub fn accepts_window(&self, window_id: WindowId) -> bool {
-        self.lifecycle.window() == Some(window_id)
+        self.control.lifecycle.window() == Some(window_id)
     }
 
     /// Returns a non-mutating status snapshot.
@@ -103,16 +192,10 @@ impl VelloWindowPresenter {
     /// must be current.
     #[must_use]
     pub fn status(&self) -> VelloPresenterStatus {
-        let scope = if self.lifecycle.attachment_status() == VelloAttachmentStatus::Detached
-            || self.lifecycle.recovery().is_some()
-        {
-            None
-        } else {
-            self.authority.scope()
-        };
+        let scope = self.control.usable_scope();
         VelloPresenterStatus::new(
-            self.lifecycle.attachment_status(),
-            self.lifecycle.recovery(),
+            self.control.lifecycle.attachment_status(),
+            self.control.lifecycle.recovery(),
             scope,
         )
     }
@@ -125,13 +208,7 @@ impl VelloWindowPresenter {
     /// exposing a scope.
     pub fn device_scope(&mut self) -> Result<Option<PresenterDeviceScope>, VelloPresenterError> {
         self.poll_device_events()?;
-        self.return_pending_error()?;
-        if self.lifecycle.attachment_status() == VelloAttachmentStatus::Detached
-            || self.lifecycle.recovery().is_some()
-        {
-            return Ok(None);
-        }
-        Ok(self.authority.scope())
+        Ok(self.control.usable_scope())
     }
 
     /// Borrows the exact current device and queue after validating a scope.
@@ -149,23 +226,18 @@ impl VelloWindowPresenter {
         use_device: impl FnOnce(PresenterDevice<'_>) -> R,
     ) -> Result<R, VelloPresenterError> {
         self.poll_device_events()?;
-        self.return_pending_error()?;
-        self.authority.validate(scope)?;
-        if self.lifecycle.attachment_status() == VelloAttachmentStatus::Detached
-            || self.lifecycle.recovery().is_some()
-        {
-            return Err(VelloPresenterError::DeviceUnavailable);
-        }
-        let gpu = self
-            .gpu
-            .as_ref()
-            .ok_or(VelloPresenterError::DeviceUnavailable)?;
-        let device = &gpu.context.devices[gpu.dev_id];
-        Ok(use_device(PresenterDevice::new(
-            scope.clone(),
-            &device.device,
-            &device.queue,
-        )))
+        self.control.with_validated_scope(scope, |validated| {
+            let gpu = self
+                .gpu
+                .as_ref()
+                .ok_or(VelloPresenterError::DeviceUnavailable)?;
+            let device = &gpu.context.devices[gpu.dev_id];
+            Ok(use_device(PresenterDevice::new(
+                validated,
+                &device.device,
+                &device.queue,
+            )))
+        })
     }
 
     /// Attaches a Winit window and initializes a non-zero surface as needed.
@@ -182,10 +254,9 @@ impl VelloWindowPresenter {
         window: Arc<Window>,
     ) -> Result<VelloAttachOutcome, VelloPresenterError> {
         self.poll_device_events()?;
-        self.return_pending_error()?;
         let window_id = window.id();
         let extent = Extent::from(window.inner_size());
-        match self.lifecycle.resume(window_id, extent)? {
+        match self.control.lifecycle.resume(window_id, extent)? {
             ResumePlan::AlreadyAttached => {
                 let _ = self.resize(PhysicalSize::new(extent.width, extent.height))?;
                 Ok(VelloAttachOutcome::AlreadyAttached)
@@ -210,7 +281,7 @@ impl VelloWindowPresenter {
     /// Drops the surface before releasing presenter window ownership.
     #[must_use]
     pub fn suspend(&mut self) -> VelloSuspendOutcome {
-        let plan = self.lifecycle.suspend();
+        let plan = self.control.lifecycle.suspend();
         if plan.actions.is_empty() {
             return VelloSuspendOutcome::AlreadyDetached;
         }
@@ -239,8 +310,7 @@ impl VelloWindowPresenter {
         size: PhysicalSize<u32>,
     ) -> Result<VelloResizeOutcome, VelloPresenterError> {
         self.poll_device_events()?;
-        self.return_pending_error()?;
-        match self.lifecycle.resize(Extent::from(size)) {
+        match self.control.lifecycle.resize(Extent::from(size)) {
             ResizePlan::Outcome(outcome) => Ok(outcome),
             ResizePlan::ZeroSized { drop_surface } => {
                 if drop_surface {
@@ -263,34 +333,31 @@ impl VelloWindowPresenter {
     /// failed attempt remains pending and never exposes old native handles.
     pub async fn recover(&mut self) -> Result<VelloRecoveryOutcome, VelloPresenterError> {
         self.poll_device_events()?;
-        self.return_pending_error()?;
-        let Some(kind) = self.lifecycle.recovery() else {
+        let Some(kind) = self.control.lifecycle.recovery() else {
             return Ok(VelloRecoveryOutcome::NotNeeded);
         };
         let Some(window) = self.window.clone() else {
             if kind == VelloRecoveryKind::RebuildDevice {
-                self.surface.take();
-                self.drop_gpu_state();
+                self.teardown_device_for_rebuild();
             }
             return Ok(VelloRecoveryOutcome::DeferredDetached(kind));
         };
-        let extent = self.lifecycle.desired();
+        let extent = self.control.lifecycle.desired();
         if extent.is_zero() {
             if kind == VelloRecoveryKind::RebuildDevice {
-                self.surface.take();
-                self.drop_gpu_state();
+                self.teardown_device_for_rebuild();
             }
             return Ok(VelloRecoveryOutcome::DeferredZeroSized(kind));
         }
 
         if kind == VelloRecoveryKind::RebuildDevice {
-            debug_assert_eq!(DEVICE_REBUILD_SEQUENCE.len(), 7);
-            self.surface.take();
-            self.drop_gpu_state();
-            let (gpu, surface, scope) = self.create_fresh_gpu_surface(window, extent, true).await?;
+            self.teardown_device_for_rebuild();
+            let (gpu, surface, inbox, scope) =
+                self.create_fresh_gpu_surface(window, extent, true).await?;
             self.gpu = Some(gpu);
             self.surface = Some(surface);
-            self.lifecycle.mark_surface_ready(extent);
+            self.inbox = Some(inbox);
+            self.control.lifecycle.mark_surface_ready(extent);
             return Ok(VelloRecoveryOutcome::DeviceRebuilt {
                 device_scope: scope,
             });
@@ -298,11 +365,12 @@ impl VelloWindowPresenter {
 
         self.surface.take();
         if self.gpu.is_none() {
-            let (gpu, surface, scope) =
+            let (gpu, surface, inbox, scope) =
                 self.create_fresh_gpu_surface(window, extent, false).await?;
             self.gpu = Some(gpu);
             self.surface = Some(surface);
-            self.lifecycle.mark_surface_ready(extent);
+            self.inbox = Some(inbox);
+            self.control.lifecycle.mark_surface_ready(extent);
             return Ok(VelloRecoveryOutcome::SurfaceReady {
                 device_changed: false,
                 device_scope: scope,
@@ -328,19 +396,21 @@ impl VelloWindowPresenter {
             let device = &gpu.context.devices[surface.dev_id].device;
             let renderer = Renderer::new(device, RendererOptions::default())
                 .map_err(VelloPresenterError::recovery)?;
-            let scope = self.authority.replace()?;
+            let (_, scope) = self
+                .control
+                .select_surface_device(gpu.dev_id, surface.dev_id)?;
             let inbox = DeviceInbox::install(device, scope.clone());
             gpu.renderer = renderer;
             gpu.dev_id = surface.dev_id;
-            gpu.inbox = inbox;
+            self.inbox = Some(inbox);
             scope
         } else {
-            self.authority
-                .scope()
-                .ok_or(VelloPresenterError::DeviceUnavailable)?
+            self.control
+                .select_surface_device(gpu.dev_id, surface.dev_id)?
+                .1
         };
         self.surface = Some(surface);
-        self.lifecycle.mark_surface_ready(extent);
+        self.control.lifecycle.mark_surface_ready(extent);
         Ok(VelloRecoveryOutcome::SurfaceReady {
             device_changed: changed,
             device_scope: scope,
@@ -362,6 +432,7 @@ impl VelloWindowPresenter {
         }
 
         let configured = self
+            .control
             .lifecycle
             .configured()
             .ok_or(VelloPresenterError::DeviceUnavailable)?;
@@ -370,13 +441,13 @@ impl VelloWindowPresenter {
                 match &driven {
                     DrivenFrame::Presented {
                         suboptimal: true, ..
-                    } => self.lifecycle.mark_reconfigure(),
+                    } => self.control.lifecycle.mark_reconfigure(),
                     DrivenFrame::AcquiredExtentOutdated | DrivenFrame::Outdated => {
-                        self.lifecycle.mark_surface_ready(configured);
+                        self.control.lifecycle.mark_surface_ready(configured);
                     }
                     DrivenFrame::Lost => {
                         self.surface.take();
-                        self.lifecycle.mark_surface_lost();
+                        self.control.lifecycle.mark_surface_lost();
                     }
                     _ => {}
                 }
@@ -392,8 +463,7 @@ impl VelloWindowPresenter {
 
     fn preflight_present(&mut self) -> Result<Option<VelloPresentReport>, VelloPresenterError> {
         self.poll_device_events()?;
-        self.return_pending_error()?;
-        if self.lifecycle.attachment_status() == VelloAttachmentStatus::Detached {
+        if self.control.lifecycle.attachment_status() == VelloAttachmentStatus::Detached {
             return Ok(Some(VelloPresentReport::new(
                 VelloPresentStatus::Detached,
                 VelloRedrawGuidance::ExternalEvent,
@@ -439,6 +509,7 @@ impl VelloWindowPresenter {
         configured: Extent,
     ) -> Result<PresentAttempt, VelloPresenterError> {
         let current_scope = self
+            .control
             .authority
             .scope()
             .ok_or(VelloPresenterError::DeviceUnavailable)?;
@@ -450,11 +521,14 @@ impl VelloWindowPresenter {
             .gpu
             .as_mut()
             .ok_or(VelloPresenterError::DeviceUnavailable)?;
+        let inbox = self
+            .inbox
+            .as_ref()
+            .ok_or(VelloPresenterError::DeviceUnavailable)?;
         let window = self
             .window
             .as_ref()
             .ok_or(VelloPresenterError::DeviceUnavailable)?;
-        let mut post_render_error = None;
         let driven = {
             let mut operations = RealPresentOperations {
                 surface,
@@ -463,7 +537,7 @@ impl VelloWindowPresenter {
                 window,
                 config: &self.config,
                 current_scope,
-                post_render_error: &mut post_render_error,
+                inbox,
             };
             drive_present(&mut operations, input, configured)
         };
@@ -473,9 +547,8 @@ impl VelloWindowPresenter {
                 self.transition_device_loss()?;
                 Ok(PresentAttempt::DeviceLost)
             }
-            Err(DriveFailure::Render(error)) => {
-                Err(post_render_error.unwrap_or_else(|| VelloPresenterError::render(error)))
-            }
+            Err(DriveFailure::Render(error)) => Err(VelloPresenterError::render(error)),
+            Err(DriveFailure::Actionable(error)) => Err(error),
         }
     }
 
@@ -484,48 +557,47 @@ impl VelloWindowPresenter {
         window: Arc<Window>,
         extent: Extent,
         rebuilding: bool,
-    ) -> Result<(GpuState, RenderSurface<'static>, PresenterDeviceScope), VelloPresenterError> {
-        let mut context = RenderContext::new();
-        let surface = context
-            .create_surface(
-                window,
-                extent.width,
-                extent.height,
-                self.config.present_mode(),
-            )
-            .await
-            .map_err(|error| {
-                if rebuilding {
-                    VelloPresenterError::recovery(error)
-                } else {
-                    VelloPresenterError::initialization(error)
-                }
-            })?;
-        let device = &context.devices[surface.dev_id].device;
-        let renderer = Renderer::new(device, RendererOptions::default()).map_err(|error| {
-            if rebuilding {
-                VelloPresenterError::recovery(error)
-            } else {
-                VelloPresenterError::initialization(error)
-            }
-        })?;
-        let scope = if rebuilding {
-            self.authority.activate()
-        } else if self.authority.scope().is_some() {
-            self.authority.replace()?
-        } else {
-            self.authority.activate()
+    ) -> Result<
+        (
+            GpuState,
+            RenderSurface<'static>,
+            DeviceInbox,
+            PresenterDeviceScope,
+        ),
+        VelloPresenterError,
+    > {
+        let mut build = RealDeviceRecoveryBuild {
+            window,
+            extent,
+            present_mode: self.config.present_mode(),
+            rebuilding,
         };
+        let candidate = drive_device_recovery_build(&mut build).await;
+        let (artifacts, scope) = if rebuilding {
+            self.control.complete_device_rebuild(extent, candidate)?
+        } else {
+            let artifacts = candidate?;
+            let scope = if self.control.authority.scope().is_some() {
+                self.control.authority.replace()?
+            } else {
+                self.control.authority.activate()
+            };
+            (artifacts, scope)
+        };
+        let context = artifacts.context;
+        let surface = artifacts.surface;
+        let renderer = artifacts.renderer;
+        let dev_id = artifacts.device_id;
+        let device = &context.devices[dev_id].device;
         let inbox = DeviceInbox::install(device, scope.clone());
-        let dev_id = surface.dev_id;
         Ok((
             GpuState {
                 renderer,
                 context,
                 dev_id,
-                inbox,
             },
             surface,
+            inbox,
             scope,
         ))
     }
@@ -558,61 +630,196 @@ impl VelloWindowPresenter {
         } else if force {
             gpu.context.configure_surface(surface);
         }
-        self.lifecycle.mark_surface_ready(extent);
+        self.control.lifecycle.mark_surface_ready(extent);
         Ok(())
     }
 
     fn poll_device_events(&mut self) -> Result<bool, VelloPresenterError> {
-        let Some(gpu) = self.gpu.as_ref() else {
+        let Some(current) = self.control.authority.scope() else {
             return Ok(false);
         };
-        let Some(current) = self.authority.scope() else {
+        let Some(inbox) = self.inbox.as_ref() else {
             return Ok(false);
         };
-        let events = gpu.inbox.drain_current(&current);
-        if events.lost {
-            self.transition_device_loss()?;
+        let events = inbox.drain_current(&current);
+        if self.control.apply_device_events(events)? == DeviceEventEffect::DropGpuForRecovery {
+            self.teardown_device_for_rebuild();
             return Ok(true);
-        }
-        if events.overflow > 0 {
-            self.pending_error = Some(VelloPresenterError::UncapturedErrorOverflow {
-                dropped: events.overflow,
-            });
-        } else if let Some(error) = events.error {
-            self.pending_error = Some(VelloPresenterError::UncapturedGpu(error));
         }
         Ok(false)
     }
 
     fn transition_device_loss(&mut self) -> Result<(), VelloPresenterError> {
-        if self.authority.invalidate()? {
-            self.surface.take();
-            self.drop_gpu_state();
-            self.pending_error = None;
-            self.lifecycle.mark_device_lost();
+        let events = crate::device::CurrentDeviceEvents {
+            lost: true,
+            ..crate::device::CurrentDeviceEvents::default()
+        };
+        if self.control.apply_device_events(events)? == DeviceEventEffect::DropGpuForRecovery {
+            self.teardown_device_for_rebuild();
         }
         Ok(())
     }
 
-    fn drop_gpu_state(&mut self) {
-        if let Some(GpuState {
+    fn teardown_device_for_rebuild(&mut self) {
+        let (renderer, context) = match self.gpu.take() {
+            Some(GpuState {
+                renderer,
+                context,
+                dev_id: _,
+            }) => (Some(renderer), Some(context)),
+            None => (None, None),
+        };
+        let mut teardown = RealDeviceRecoveryTeardown {
+            surface: self.surface.take(),
+            inbox: self.inbox.take(),
             renderer,
             context,
-            dev_id: _,
-            inbox,
-        }) = self.gpu.take()
-        {
-            drop(inbox);
-            drop(renderer);
-            drop(context);
-        }
+        };
+        drive_device_recovery_teardown(&mut teardown);
     }
 
-    fn return_pending_error(&mut self) -> Result<(), VelloPresenterError> {
-        match self.pending_error.take() {
-            Some(error) => Err(error),
-            None => Ok(()),
+    #[cfg(test)]
+    pub(crate) fn install_test_device(
+        &mut self,
+        extent: Extent,
+    ) -> Result<(PresenterDeviceScope, crate::device::DeviceEventSender), VelloPresenterError> {
+        let _ = self.control.lifecycle.resume(WindowId::dummy(), extent)?;
+        self.control.lifecycle.mark_surface_ready(extent);
+        let scope = self.control.authority.activate();
+        let (inbox, sender) = DeviceInbox::for_test(scope.clone());
+        self.inbox = Some(inbox);
+        Ok((scope, sender))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_test_surface_device(
+        &mut self,
+        current_device: usize,
+        selected_device: usize,
+    ) -> Result<(bool, PresenterDeviceScope), VelloPresenterError> {
+        self.control
+            .select_surface_device(current_device, selected_device)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_test_device_rebuild(
+        &mut self,
+        extent: Extent,
+        error: VelloPresenterError,
+    ) -> Result<(), VelloPresenterError> {
+        self.control
+            .complete_device_rebuild(extent, Err::<(), _>(error))
+            .map(|_| ())
+    }
+}
+
+struct RealDeviceRecoveryTeardown {
+    surface: Option<RenderSurface<'static>>,
+    inbox: Option<DeviceInbox>,
+    renderer: Option<Renderer>,
+    context: Option<RenderContext>,
+}
+
+impl DeviceRecoveryTeardown for RealDeviceRecoveryTeardown {
+    fn drop_surface(&mut self) {
+        drop(self.surface.take());
+    }
+
+    fn drop_renderer(&mut self) {
+        drop(self.inbox.take());
+        drop(self.renderer.take());
+    }
+
+    fn drop_context(&mut self) {
+        drop(self.context.take());
+    }
+}
+
+struct RealDeviceRecoveryBuild {
+    window: Arc<Window>,
+    extent: Extent,
+    present_mode: vello::wgpu::PresentMode,
+    rebuilding: bool,
+}
+
+impl RealDeviceRecoveryBuild {
+    fn map_error(&self, error: impl std::fmt::Display) -> VelloPresenterError {
+        if self.rebuilding {
+            VelloPresenterError::recovery(error)
+        } else {
+            VelloPresenterError::initialization(error)
         }
+    }
+}
+
+impl DeviceRecoveryBuild for RealDeviceRecoveryBuild {
+    type Context = RenderContext;
+    type RawSurface = vello::wgpu::Surface<'static>;
+    type Surface = RenderSurface<'static>;
+    type Renderer = Renderer;
+    type Error = VelloPresenterError;
+
+    fn create_context(&mut self) -> Self::Context {
+        RenderContext::new()
+    }
+
+    fn create_raw_surface(
+        &mut self,
+        context: &Self::Context,
+    ) -> Result<Self::RawSurface, Self::Error> {
+        context
+            .instance
+            .create_surface(Arc::clone(&self.window))
+            .map_err(|error| self.map_error(error))
+    }
+
+    async fn select_device_queue<'a>(
+        &'a mut self,
+        context: &'a mut Self::Context,
+        surface: &'a Self::RawSurface,
+    ) -> Result<usize, Self::Error> {
+        context
+            .device(Some(surface))
+            .await
+            .ok_or_else(|| self.map_error("no compatible GPU device or queue"))
+    }
+
+    fn create_renderer(
+        &mut self,
+        context: &Self::Context,
+        device_id: usize,
+    ) -> Result<Self::Renderer, Self::Error> {
+        Renderer::new(
+            &context.devices[device_id].device,
+            RendererOptions::default(),
+        )
+        .map_err(|error| self.map_error(error))
+    }
+
+    async fn create_configured_surface<'a>(
+        &'a mut self,
+        context: &'a mut Self::Context,
+        surface: Self::RawSurface,
+    ) -> Result<Self::Surface, Self::Error> {
+        context
+            .create_render_surface(
+                surface,
+                self.extent.width,
+                self.extent.height,
+                self.present_mode,
+            )
+            .await
+            .map_err(|error| self.map_error(error))
+    }
+
+    fn surface_device_id(&self, surface: &Self::Surface) -> usize {
+        surface.dev_id
+    }
+
+    fn device_mismatch_error(&self, selected: usize, configured: usize) -> Self::Error {
+        self.map_error(format_args!(
+            "fresh surface selected device slot {selected} but configured slot {configured}"
+        ))
     }
 }
 
@@ -623,7 +830,7 @@ struct RealPresentOperations<'a> {
     window: &'a Arc<Window>,
     config: &'a VelloPresenterConfig,
     current_scope: PresenterDeviceScope,
-    post_render_error: &'a mut Option<VelloPresenterError>,
+    inbox: &'a DeviceInbox,
 }
 
 impl PresentOperations for RealPresentOperations<'_> {
@@ -702,17 +909,8 @@ impl PresentOperations for RealPresentOperations<'_> {
         frame.present();
     }
 
-    fn current_device_lost_after_render_failure(&mut self) -> bool {
-        let events = self.gpu.inbox.drain_current(&self.current_scope);
-        if let Some(error) = events.error {
-            self.post_render_error
-                .get_or_insert(VelloPresenterError::UncapturedGpu(error));
-        }
-        if !events.lost && events.overflow > 0 {
-            *self.post_render_error = Some(VelloPresenterError::UncapturedErrorOverflow {
-                dropped: events.overflow,
-            });
-        }
-        events.lost
+    fn device_events_after_render_failure(&mut self) -> CurrentDeviceEventOutcome {
+        let events = self.inbox.drain_current(&self.current_scope);
+        classify_current_device_events(events)
     }
 }

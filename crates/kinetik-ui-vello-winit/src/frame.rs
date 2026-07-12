@@ -2,7 +2,7 @@ use kinetik_ui_render::{RenderFrameInput, RenderFrameOutput};
 
 use crate::{
     VelloPresentReport, VelloPresentStatus, VelloPresenterError, VelloRedrawGuidance,
-    lifecycle::Extent,
+    device::CurrentDeviceEventOutcome, lifecycle::Extent,
 };
 
 pub(crate) enum AcquiredFrame<F> {
@@ -28,7 +28,7 @@ pub(crate) trait PresentOperations {
     fn blit_submit(&mut self, frame: &Self::Frame);
     fn pre_present_notify(&mut self);
     fn present(&mut self, frame: Self::Frame);
-    fn current_device_lost_after_render_failure(&mut self) -> bool;
+    fn device_events_after_render_failure(&mut self) -> CurrentDeviceEventOutcome;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +50,7 @@ pub(crate) enum DrivenFrame {
 pub(crate) enum DriveFailure<E> {
     Render(E),
     DeviceLostAfterRender,
+    Actionable(VelloPresenterError),
 }
 
 pub(crate) fn drive_present<O: PresentOperations>(
@@ -82,10 +83,12 @@ pub(crate) fn drive_present<O: PresentOperations>(
     let output = operations.encode_scene(input);
     if let Err(error) = operations.render_vello() {
         operations.drop_frame(frame);
-        return if operations.current_device_lost_after_render_failure() {
-            Err(DriveFailure::DeviceLostAfterRender)
-        } else {
-            Err(DriveFailure::Render(error))
+        return match operations.device_events_after_render_failure() {
+            CurrentDeviceEventOutcome::Lost => Err(DriveFailure::DeviceLostAfterRender),
+            CurrentDeviceEventOutcome::Actionable(actionable) => {
+                Err(DriveFailure::Actionable(actionable))
+            }
+            CurrentDeviceEventOutcome::None => Err(DriveFailure::Render(error)),
         };
     }
     operations.blit_submit(&frame);

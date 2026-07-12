@@ -1,4 +1,5 @@
 use kinetik_ui_core::PhysicalSize as CorePhysicalSize;
+use std::future::Future;
 use winit::dpi::PhysicalSize;
 
 use crate::{VelloAttachmentStatus, VelloPresenterError, VelloRecoveryKind, VelloResizeOutcome};
@@ -51,26 +52,113 @@ pub(crate) enum DropAction {
     Window,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DeviceRecoveryAction {
     DropSurface,
     DropRenderer,
     DropContext,
     CreateContext,
-    CreateSurface,
+    CreateRawSurface,
+    SelectDeviceQueue,
     CreateRenderer,
-    ConfigureSurface,
+    CreateConfiguredSurface,
 }
 
-pub(crate) const DEVICE_REBUILD_SEQUENCE: [DeviceRecoveryAction; 7] = [
+#[cfg(test)]
+pub(crate) const DEVICE_REBUILD_SEQUENCE: [DeviceRecoveryAction; 8] = [
     DeviceRecoveryAction::DropSurface,
     DeviceRecoveryAction::DropRenderer,
     DeviceRecoveryAction::DropContext,
     DeviceRecoveryAction::CreateContext,
-    DeviceRecoveryAction::CreateSurface,
+    DeviceRecoveryAction::CreateRawSurface,
+    DeviceRecoveryAction::SelectDeviceQueue,
     DeviceRecoveryAction::CreateRenderer,
-    DeviceRecoveryAction::ConfigureSurface,
+    DeviceRecoveryAction::CreateConfiguredSurface,
 ];
+
+pub(crate) trait DeviceRecoveryTeardown {
+    fn drop_surface(&mut self);
+    fn drop_renderer(&mut self);
+    fn drop_context(&mut self);
+}
+
+pub(crate) fn drive_device_recovery_teardown(operations: &mut impl DeviceRecoveryTeardown) {
+    operations.drop_surface();
+    operations.drop_renderer();
+    operations.drop_context();
+}
+
+pub(crate) trait DeviceRecoveryBuild {
+    type Context;
+    type RawSurface;
+    type Surface;
+    type Renderer;
+    type Error;
+
+    fn create_context(&mut self) -> Self::Context;
+
+    fn create_raw_surface(
+        &mut self,
+        context: &Self::Context,
+    ) -> Result<Self::RawSurface, Self::Error>;
+
+    fn select_device_queue<'a>(
+        &'a mut self,
+        context: &'a mut Self::Context,
+        surface: &'a Self::RawSurface,
+    ) -> impl Future<Output = Result<usize, Self::Error>> + 'a;
+
+    fn create_renderer(
+        &mut self,
+        context: &Self::Context,
+        device_id: usize,
+    ) -> Result<Self::Renderer, Self::Error>;
+
+    fn create_configured_surface<'a>(
+        &'a mut self,
+        context: &'a mut Self::Context,
+        surface: Self::RawSurface,
+    ) -> impl Future<Output = Result<Self::Surface, Self::Error>> + 'a;
+
+    fn surface_device_id(&self, surface: &Self::Surface) -> usize;
+
+    fn device_mismatch_error(&self, selected: usize, configured: usize) -> Self::Error;
+}
+
+pub(crate) struct DeviceRecoveryArtifacts<C, S, R> {
+    pub(crate) context: C,
+    pub(crate) surface: S,
+    pub(crate) renderer: R,
+    pub(crate) device_id: usize,
+}
+
+pub(crate) async fn drive_device_recovery_build<B>(
+    operations: &mut B,
+) -> Result<DeviceRecoveryArtifacts<B::Context, B::Surface, B::Renderer>, B::Error>
+where
+    B: DeviceRecoveryBuild,
+{
+    let mut context = operations.create_context();
+    let raw_surface = operations.create_raw_surface(&context)?;
+    let selected_device = operations
+        .select_device_queue(&mut context, &raw_surface)
+        .await?;
+    let renderer = operations.create_renderer(&context, selected_device)?;
+    let surface = operations
+        .create_configured_surface(&mut context, raw_surface)
+        .await?;
+    let configured_device = operations.surface_device_id(&surface);
+    if configured_device != selected_device {
+        return Err(operations.device_mismatch_error(selected_device, configured_device));
+    }
+    Ok(DeviceRecoveryArtifacts {
+        context,
+        surface,
+        renderer,
+        device_id: selected_device,
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SuspendPlan {

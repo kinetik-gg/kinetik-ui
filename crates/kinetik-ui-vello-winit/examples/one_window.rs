@@ -1,6 +1,6 @@
 //! Minimal application-owned Winit loop using the public Vello presenter.
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use kinetik_ui_core::{PhysicalSize as CorePhysicalSize, ScaleFactor, Size, ViewportInfo};
 use kinetik_ui_render::{RenderFrameInput, RenderResources};
@@ -10,7 +10,7 @@ use kinetik_ui_vello_winit::{
 };
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
@@ -85,11 +85,15 @@ impl OneWindowApp {
             return;
         }
         match report.redraw() {
-            VelloRedrawGuidance::NextFrame => window.request_redraw(),
-            VelloRedrawGuidance::Later(delay) => {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + delay));
+            VelloRedrawGuidance::NextFrame => {
+                window.request_redraw();
             }
-            _ => event_loop.set_control_flow(ControlFlow::Wait),
+            VelloRedrawGuidance::Later(delay) => {
+                event_loop.set_control_flow(ControlFlow::wait_duration(delay));
+            }
+            _ => {
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
         }
     }
 }
@@ -103,6 +107,15 @@ fn logical_size(raw: winit::dpi::PhysicalSize<u32>, scale: ScaleFactor) -> Size 
 }
 
 impl ApplicationHandler for OneWindowApp {
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+        if matches!(cause, StartCause::ResumeTimeReached { .. }) {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = if let Some(window) = self.window.clone() {
             window

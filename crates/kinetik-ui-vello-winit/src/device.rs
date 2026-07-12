@@ -1,6 +1,6 @@
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},
 };
 
@@ -130,6 +130,7 @@ impl DeviceAuthority {
 
 #[derive(Debug, Clone)]
 pub(crate) enum DeviceEvent {
+    #[cfg(test)]
     Lost {
         scope: PresenterDeviceScope,
         reason: wgpu::DeviceLostReason,
@@ -145,9 +146,18 @@ pub(crate) enum DeviceEvent {
 pub(crate) struct DeviceEventSender {
     sender: SyncSender<DeviceEvent>,
     overflow: Arc<AtomicU64>,
+    loss_pending: Arc<AtomicBool>,
 }
 
 impl DeviceEventSender {
+    /// Records current-generation device loss outside the bounded error queue.
+    ///
+    /// A device-loss callback is normally one-shot, so it must remain visible
+    /// even when uncaptured errors have saturated their bounded inbox.
+    pub(crate) fn signal_loss(&self) {
+        self.loss_pending.store(true, Ordering::Release);
+    }
+
     pub(crate) fn send(&self, event: DeviceEvent) {
         match self.sender.try_send(event) {
             Ok(()) | Err(TrySendError::Disconnected(_)) => {}
@@ -163,8 +173,10 @@ impl DeviceEventSender {
 }
 
 pub(crate) struct DeviceInbox {
+    scope: PresenterDeviceScope,
     receiver: Receiver<DeviceEvent>,
     overflow: Arc<AtomicU64>,
+    loss_pending: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Default)]
@@ -174,29 +186,54 @@ pub(crate) struct CurrentDeviceEvents {
     pub(crate) overflow: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CurrentDeviceEventOutcome {
+    None,
+    Lost,
+    Actionable(VelloPresenterError),
+}
+
+pub(crate) fn classify_current_device_events(
+    events: CurrentDeviceEvents,
+) -> CurrentDeviceEventOutcome {
+    if events.lost {
+        CurrentDeviceEventOutcome::Lost
+    } else if events.overflow > 0 {
+        CurrentDeviceEventOutcome::Actionable(VelloPresenterError::UncapturedErrorOverflow {
+            dropped: events.overflow,
+        })
+    } else if let Some(error) = events.error {
+        CurrentDeviceEventOutcome::Actionable(VelloPresenterError::UncapturedGpu(error))
+    } else {
+        CurrentDeviceEventOutcome::None
+    }
+}
+
 impl DeviceInbox {
-    fn channel() -> (Self, DeviceEventSender) {
+    fn channel(scope: PresenterDeviceScope) -> (Self, DeviceEventSender) {
         let (sender, receiver) = mpsc::sync_channel(DEVICE_EVENT_CAPACITY);
         let overflow = Arc::new(AtomicU64::new(0));
+        let loss_pending = Arc::new(AtomicBool::new(false));
         (
             Self {
+                scope,
                 receiver,
                 overflow: Arc::clone(&overflow),
+                loss_pending: Arc::clone(&loss_pending),
             },
-            DeviceEventSender { sender, overflow },
+            DeviceEventSender {
+                sender,
+                overflow,
+                loss_pending,
+            },
         )
     }
 
     pub(crate) fn install(device: &Device, scope: PresenterDeviceScope) -> Self {
-        let (inbox, sender) = Self::channel();
+        let (inbox, sender) = Self::channel(scope.clone());
         let lost_sender = sender.clone();
-        let lost_scope = scope.clone();
-        device.set_device_lost_callback(move |reason, message| {
-            lost_sender.send(DeviceEvent::Lost {
-                scope: lost_scope.clone(),
-                reason,
-                message,
-            });
+        device.set_device_lost_callback(move |_reason, _message| {
+            lost_sender.signal_loss();
         });
         device.on_uncaptured_error(Arc::new(move |error| {
             let kind = match &error {
@@ -213,8 +250,8 @@ impl DeviceInbox {
     }
 
     #[cfg(test)]
-    pub(crate) fn for_test() -> (Self, DeviceEventSender) {
-        Self::channel()
+    pub(crate) fn for_test(scope: PresenterDeviceScope) -> (Self, DeviceEventSender) {
+        Self::channel(scope)
     }
 
     pub(crate) fn drain(&self) -> (Vec<DeviceEvent>, u64) {
@@ -228,12 +265,15 @@ impl DeviceInbox {
 
     pub(crate) fn drain_current(&self, current: &PresenterDeviceScope) -> CurrentDeviceEvents {
         let (events, overflow) = self.drain();
+        let loss_pending = self.loss_pending.swap(false, Ordering::AcqRel);
         let mut current_events = CurrentDeviceEvents {
+            lost: loss_pending && self.scope == *current,
             overflow,
             ..CurrentDeviceEvents::default()
         };
         for event in events {
             match event {
+                #[cfg(test)]
                 DeviceEvent::Lost {
                     scope,
                     reason,
@@ -245,7 +285,9 @@ impl DeviceInbox {
                 DeviceEvent::Error { scope, error } if scope == *current => {
                     current_events.error.get_or_insert(error);
                 }
-                DeviceEvent::Lost { .. } | DeviceEvent::Error { .. } => {}
+                #[cfg(test)]
+                DeviceEvent::Lost { .. } => {}
+                DeviceEvent::Error { .. } => {}
             }
         }
         current_events

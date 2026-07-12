@@ -1,4 +1,8 @@
-use std::{cell::Cell, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 
 use kinetik_ui_core::{Color, PhysicalSize as CorePhysicalSize, ScaleFactor, Size, ViewportInfo};
 use kinetik_ui_render::{RenderDiagnostic, RenderFrameInput, RenderFrameOutput, RenderResources};
@@ -8,16 +12,123 @@ use crate::{
     InvalidColorChannel, PresenterGpuError, PresenterGpuErrorKind, VelloPresentStatus,
     VelloPresenterConfig, VelloPresenterError, VelloRecoveryKind, VelloRedrawGuidance,
     VelloResizeOutcome, VelloWindowPresenter,
-    device::{DeviceAuthority, DeviceEvent, DeviceInbox},
+    device::{
+        CurrentDeviceEventOutcome, DeviceAuthority, DeviceEvent, DeviceInbox,
+        classify_current_device_events,
+    },
     frame::{
         AcquiredFrame, DriveFailure, DrivenFrame, FrameOperation, PresentOperations, drive_present,
         report_for_driven,
     },
     lifecycle::{
-        DEVICE_REBUILD_SEQUENCE, DeviceRecoveryAction, DropAction, Extent, LifecycleState,
-        ResizePlan, ResumePlan,
+        DEVICE_REBUILD_SEQUENCE, DeviceRecoveryAction, DeviceRecoveryBuild, DeviceRecoveryTeardown,
+        DropAction, Extent, LifecycleState, ResizePlan, ResumePlan, drive_device_recovery_build,
+        drive_device_recovery_teardown,
     },
 };
+
+struct RecordingTeardown {
+    operations: Rc<RefCell<Vec<DeviceRecoveryAction>>>,
+}
+
+impl DeviceRecoveryTeardown for RecordingTeardown {
+    fn drop_surface(&mut self) {
+        self.operations
+            .borrow_mut()
+            .push(DeviceRecoveryAction::DropSurface);
+    }
+
+    fn drop_renderer(&mut self) {
+        self.operations
+            .borrow_mut()
+            .push(DeviceRecoveryAction::DropRenderer);
+    }
+
+    fn drop_context(&mut self) {
+        self.operations
+            .borrow_mut()
+            .push(DeviceRecoveryAction::DropContext);
+    }
+}
+
+struct RecordingBuild {
+    operations: Rc<RefCell<Vec<DeviceRecoveryAction>>>,
+    fail_device_selection: bool,
+    configured_device: usize,
+}
+
+impl DeviceRecoveryBuild for RecordingBuild {
+    type Context = ();
+    type RawSurface = ();
+    type Surface = ();
+    type Renderer = ();
+    type Error = VelloPresenterError;
+
+    fn create_context(&mut self) -> Self::Context {
+        self.operations
+            .borrow_mut()
+            .push(DeviceRecoveryAction::CreateContext);
+    }
+
+    fn create_raw_surface(
+        &mut self,
+        _context: &Self::Context,
+    ) -> Result<Self::RawSurface, Self::Error> {
+        self.operations
+            .borrow_mut()
+            .push(DeviceRecoveryAction::CreateRawSurface);
+        Ok(())
+    }
+
+    async fn select_device_queue<'a>(
+        &'a mut self,
+        _context: &'a mut Self::Context,
+        _surface: &'a Self::RawSurface,
+    ) -> Result<usize, Self::Error> {
+        self.operations
+            .borrow_mut()
+            .push(DeviceRecoveryAction::SelectDeviceQueue);
+        if self.fail_device_selection {
+            Err(VelloPresenterError::Recovery {
+                message: "injected device-selection failure".into(),
+            })
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn create_renderer(
+        &mut self,
+        _context: &Self::Context,
+        _device_id: usize,
+    ) -> Result<Self::Renderer, Self::Error> {
+        self.operations
+            .borrow_mut()
+            .push(DeviceRecoveryAction::CreateRenderer);
+        Ok(())
+    }
+
+    async fn create_configured_surface<'a>(
+        &'a mut self,
+        _context: &'a mut Self::Context,
+        _surface: Self::RawSurface,
+    ) -> Result<Self::Surface, Self::Error> {
+        self.operations
+            .borrow_mut()
+            .push(DeviceRecoveryAction::CreateConfiguredSurface);
+        Ok(())
+    }
+
+    fn surface_device_id(&self, _surface: &Self::Surface) -> usize {
+        self.configured_device
+    }
+
+    fn device_mismatch_error(&self, selected: usize, configured: usize) -> Self::Error {
+        VelloPresenterError::Recovery {
+            message: format!("device mismatch {selected}/{configured}"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum FakeAcquire {
@@ -34,7 +145,7 @@ struct FakeOperations {
     acquire: FakeAcquire,
     operations: Vec<FrameOperation>,
     render_fails: bool,
-    current_loss_after_failure: bool,
+    post_render_outcome: CurrentDeviceEventOutcome,
     output: RenderFrameOutput,
 }
 
@@ -44,7 +155,7 @@ impl FakeOperations {
             acquire,
             operations: Vec::new(),
             render_fails: false,
-            current_loss_after_failure: false,
+            post_render_outcome: CurrentDeviceEventOutcome::None,
             output: RenderFrameOutput {
                 primitive_count: 0,
                 diagnostics: Vec::new(),
@@ -109,9 +220,12 @@ impl PresentOperations for FakeOperations {
         self.operations.push(FrameOperation::Present);
     }
 
-    fn current_device_lost_after_render_failure(&mut self) -> bool {
+    fn device_events_after_render_failure(&mut self) -> CurrentDeviceEventOutcome {
         self.operations.push(FrameOperation::PollAfterRenderFailure);
-        self.current_loss_after_failure
+        std::mem::replace(
+            &mut self.post_render_outcome,
+            CurrentDeviceEventOutcome::None,
+        )
     }
 }
 
@@ -367,7 +481,11 @@ fn current_loss_after_render_failure_wins_recovery_transition() {
     let resources = RenderResources::new();
     let mut fake = FakeOperations::new(FakeAcquire::Success(extent));
     fake.render_fails = true;
-    fake.current_loss_after_failure = true;
+    let mut authority = DeviceAuthority::for_test(81, 2, false);
+    let scope = authority.activate();
+    let (inbox, sender) = DeviceInbox::for_test(scope.clone());
+    sender.signal_loss();
+    fake.post_render_outcome = classify_current_device_events(inbox.drain_current(&scope));
 
     assert_eq!(
         drive_present(&mut fake, input(&resources, extent), extent),
@@ -377,6 +495,67 @@ fn current_loss_after_render_failure_wins_recovery_transition() {
         fake.operations.last(),
         Some(&FrameOperation::PollAfterRenderFailure)
     );
+}
+
+#[test]
+fn render_failure_preserves_stale_loss_and_reports_current_errors_or_overflow() {
+    let extent = Extent {
+        width: 320,
+        height: 200,
+    };
+    let resources = RenderResources::new();
+    let mut current_authority = DeviceAuthority::for_test(91, 2, false);
+    let mut stale_authority = DeviceAuthority::for_test(91, 1, false);
+    let current = current_authority.activate();
+    let stale = stale_authority.activate();
+
+    let (stale_inbox, stale_sender) = DeviceInbox::for_test(current.clone());
+    stale_sender.send(DeviceEvent::Lost {
+        scope: stale,
+        reason: DeviceLostReason::Unknown,
+        message: "stale teardown".into(),
+    });
+    let mut stale_fake = FakeOperations::new(FakeAcquire::Success(extent));
+    stale_fake.render_fails = true;
+    stale_fake.post_render_outcome =
+        classify_current_device_events(stale_inbox.drain_current(&current));
+    assert_eq!(
+        drive_present(&mut stale_fake, input(&resources, extent), extent),
+        Err(DriveFailure::Render("injected Vello failure"))
+    );
+
+    let exact_error = PresenterGpuError::new(PresenterGpuErrorKind::Internal, "exact callback");
+    let mut error_fake = FakeOperations::new(FakeAcquire::Success(extent));
+    error_fake.render_fails = true;
+    error_fake.post_render_outcome = CurrentDeviceEventOutcome::Actionable(
+        VelloPresenterError::UncapturedGpu(exact_error.clone()),
+    );
+    assert_eq!(
+        drive_present(&mut error_fake, input(&resources, extent), extent),
+        Err(DriveFailure::Actionable(
+            VelloPresenterError::UncapturedGpu(exact_error)
+        ))
+    );
+
+    let mut overflow_fake = FakeOperations::new(FakeAcquire::Success(extent));
+    overflow_fake.render_fails = true;
+    overflow_fake.post_render_outcome =
+        CurrentDeviceEventOutcome::Actionable(VelloPresenterError::UncapturedErrorOverflow {
+            dropped: 7,
+        });
+    assert_eq!(
+        drive_present(&mut overflow_fake, input(&resources, extent), extent),
+        Err(DriveFailure::Actionable(
+            VelloPresenterError::UncapturedErrorOverflow { dropped: 7 }
+        ))
+    );
+
+    for fake in [&stale_fake, &error_fake, &overflow_fake] {
+        assert!(!fake.operations.iter().any(|operation| matches!(
+            operation,
+            FrameOperation::BlitSubmit | FrameOperation::PrePresentNotify | FrameOperation::Present
+        )));
+    }
 }
 
 #[test]
@@ -470,17 +649,38 @@ fn lifecycle_rejects_wrong_window_and_distinguishes_reconfigure_recreate_rebuild
 
 #[test]
 fn whole_device_rebuild_order_drops_every_old_owner_before_creation_and_configure() {
+    let operations = Rc::new(RefCell::new(Vec::new()));
+    let mut teardown = RecordingTeardown {
+        operations: Rc::clone(&operations),
+    };
+    drive_device_recovery_teardown(&mut teardown);
+    let mut build = RecordingBuild {
+        operations: Rc::clone(&operations),
+        fail_device_selection: false,
+        configured_device: 0,
+    };
+    pollster::block_on(drive_device_recovery_build(&mut build)).unwrap();
+
+    assert_eq!(operations.borrow().as_slice(), DEVICE_REBUILD_SEQUENCE);
+}
+
+#[test]
+fn fresh_device_builder_rejects_a_configured_surface_from_another_device_slot() {
+    let operations = Rc::new(RefCell::new(Vec::new()));
+    let mut build = RecordingBuild {
+        operations,
+        fail_device_selection: false,
+        configured_device: 1,
+    };
+
+    let Err(error) = pollster::block_on(drive_device_recovery_build(&mut build)) else {
+        panic!("device-slot mismatch must fail");
+    };
     assert_eq!(
-        DEVICE_REBUILD_SEQUENCE,
-        [
-            DeviceRecoveryAction::DropSurface,
-            DeviceRecoveryAction::DropRenderer,
-            DeviceRecoveryAction::DropContext,
-            DeviceRecoveryAction::CreateContext,
-            DeviceRecoveryAction::CreateSurface,
-            DeviceRecoveryAction::CreateRenderer,
-            DeviceRecoveryAction::ConfigureSurface,
-        ]
+        error,
+        VelloPresenterError::Recovery {
+            message: "device mismatch 0/1".into(),
+        }
     );
 }
 
@@ -511,6 +711,97 @@ fn scope_validation_rejects_foreign_and_stale_before_closure_invocation() {
 }
 
 #[test]
+fn actual_accessors_apply_loss_and_reject_foreign_or_stale_before_borrowing() {
+    let extent = Extent {
+        width: 800,
+        height: 600,
+    };
+    let mut first = VelloWindowPresenter::new(VelloPresenterConfig::new()).unwrap();
+    let mut second = VelloWindowPresenter::new(VelloPresenterConfig::new()).unwrap();
+    let (first_scope, first_sender) = first.install_test_device(extent).unwrap();
+    let (foreign_same_generation, _) = second.install_test_device(extent).unwrap();
+    let called = Cell::new(false);
+
+    assert_eq!(
+        first.with_device(&foreign_same_generation, |_| {
+            called.set(true);
+        }),
+        Err(VelloPresenterError::ForeignPresenterScope)
+    );
+    assert!(!called.get());
+
+    first_sender.signal_loss();
+    assert_eq!(first.device_scope().unwrap(), None);
+    assert_eq!(
+        first.with_device(&first_scope, |_| {
+            called.set(true);
+        }),
+        Err(VelloPresenterError::StaleDeviceScope)
+    );
+    assert!(!called.get());
+    assert_eq!(
+        first.status().recovery(),
+        Some(VelloRecoveryKind::RebuildDevice)
+    );
+}
+
+#[test]
+fn actual_accessor_ignores_stale_loss_and_surfaces_error_and_overflow_before_gpu_lookup() {
+    let extent = Extent {
+        width: 640,
+        height: 480,
+    };
+
+    let mut stale_presenter = VelloWindowPresenter::new(VelloPresenterConfig::new()).unwrap();
+    let (old_scope, stale_sender) = stale_presenter.install_test_device(extent).unwrap();
+    let (changed, current_scope) = stale_presenter.select_test_surface_device(0, 1).unwrap();
+    assert!(changed);
+    stale_sender.signal_loss();
+    assert_eq!(
+        stale_presenter.device_scope().unwrap(),
+        Some(current_scope.clone())
+    );
+    let called = Cell::new(false);
+    assert_eq!(
+        stale_presenter.with_device(&old_scope, |_| called.set(true)),
+        Err(VelloPresenterError::StaleDeviceScope)
+    );
+    assert!(!called.get());
+
+    let mut error_presenter = VelloWindowPresenter::new(VelloPresenterConfig::new()).unwrap();
+    let (error_scope, error_sender) = error_presenter.install_test_device(extent).unwrap();
+    error_sender.send(DeviceEvent::Error {
+        scope: error_scope.clone(),
+        error: PresenterGpuError::new(PresenterGpuErrorKind::Validation, "exact accessor error"),
+    });
+    assert_eq!(
+        error_presenter.with_device(&error_scope, |_| called.set(true)),
+        Err(VelloPresenterError::UncapturedGpu(PresenterGpuError::new(
+            PresenterGpuErrorKind::Validation,
+            "exact accessor error"
+        )))
+    );
+    assert!(!called.get());
+
+    let mut overflow_presenter = VelloWindowPresenter::new(VelloPresenterConfig::new()).unwrap();
+    let (overflow_scope, overflow_sender) = overflow_presenter.install_test_device(extent).unwrap();
+    for index in 0..33 {
+        overflow_sender.send(DeviceEvent::Error {
+            scope: overflow_scope.clone(),
+            error: PresenterGpuError::new(
+                PresenterGpuErrorKind::Validation,
+                format!("overflow {index}"),
+            ),
+        });
+    }
+    assert_eq!(
+        overflow_presenter.with_device(&overflow_scope, |_| called.set(true)),
+        Err(VelloPresenterError::UncapturedErrorOverflow { dropped: 1 })
+    );
+    assert!(!called.get());
+}
+
+#[test]
 fn same_device_preserves_scope_and_replacement_advances_checked_generation() {
     let mut authority = DeviceAuthority::for_test(7, 3, false);
     let first = authority.activate();
@@ -531,12 +822,34 @@ fn same_device_preserves_scope_and_replacement_advances_checked_generation() {
 }
 
 #[test]
+fn presenter_surface_selection_preserves_or_advances_the_live_scope() {
+    let extent = Extent {
+        width: 800,
+        height: 600,
+    };
+    let mut presenter = VelloWindowPresenter::new(VelloPresenterConfig::new()).unwrap();
+    let (initial, _) = presenter.install_test_device(extent).unwrap();
+
+    let (changed, same) = presenter.select_test_surface_device(4, 4).unwrap();
+    assert!(!changed);
+    assert_eq!(same, initial);
+
+    let (changed, replacement) = presenter.select_test_surface_device(4, 5).unwrap();
+    assert!(changed);
+    assert_ne!(replacement, initial);
+    assert_eq!(
+        presenter.with_device(&initial, |_| ()),
+        Err(VelloPresenterError::StaleDeviceScope)
+    );
+}
+
+#[test]
 fn callback_inbox_preserves_current_error_and_ignores_stale_events() {
     let mut current_authority = DeviceAuthority::for_test(1, 4, false);
     let mut stale_authority = DeviceAuthority::for_test(1, 3, false);
     let current = current_authority.activate();
     let stale = stale_authority.activate();
-    let (inbox, sender) = DeviceInbox::for_test();
+    let (inbox, sender) = DeviceInbox::for_test(current.clone());
     sender.send(DeviceEvent::Error {
         scope: stale,
         error: PresenterGpuError::new(PresenterGpuErrorKind::Internal, "stale"),
@@ -572,7 +885,7 @@ fn current_loss_applies_once_and_failed_rebuild_keeps_desired_resize_pending() {
     };
     let mut authority = DeviceAuthority::for_test(5, 2, false);
     let scope = authority.activate();
-    let (inbox, sender) = DeviceInbox::for_test();
+    let (inbox, sender) = DeviceInbox::for_test(scope.clone());
     sender.send(DeviceEvent::Lost {
         scope,
         reason: DeviceLostReason::Unknown,
@@ -605,10 +918,64 @@ fn current_loss_applies_once_and_failed_rebuild_keeps_desired_resize_pending() {
 }
 
 #[test]
+fn failed_presenter_rebuild_stays_pending_and_retains_the_desired_resize() {
+    let initial = Extent {
+        width: 800,
+        height: 600,
+    };
+    let desired = Extent {
+        width: 1024,
+        height: 768,
+    };
+    let mut presenter = VelloWindowPresenter::new(VelloPresenterConfig::new()).unwrap();
+    let (_, sender) = presenter.install_test_device(initial).unwrap();
+
+    assert_eq!(
+        presenter.resize(winit::dpi::PhysicalSize::new(desired.width, desired.height)),
+        Err(VelloPresenterError::DeviceUnavailable)
+    );
+    sender.signal_loss();
+    assert_eq!(presenter.device_scope().unwrap(), None);
+    let injected = VelloPresenterError::Recovery {
+        message: "injected rebuild failure".into(),
+    };
+    assert_eq!(
+        presenter.fail_test_device_rebuild(desired, injected.clone()),
+        Err(injected)
+    );
+    assert_eq!(
+        presenter.status().recovery(),
+        Some(VelloRecoveryKind::RebuildDevice)
+    );
+    assert_eq!(
+        presenter.resize(winit::dpi::PhysicalSize::new(desired.width, desired.height)),
+        Ok(VelloResizeOutcome::RecoveryRequired(
+            VelloRecoveryKind::RebuildDevice
+        ))
+    );
+
+    let operations = Rc::new(RefCell::new(Vec::new()));
+    let mut build = RecordingBuild {
+        operations: Rc::clone(&operations),
+        fail_device_selection: true,
+        configured_device: 0,
+    };
+    assert!(pollster::block_on(drive_device_recovery_build(&mut build)).is_err());
+    assert_eq!(
+        operations.borrow().as_slice(),
+        [
+            DeviceRecoveryAction::CreateContext,
+            DeviceRecoveryAction::CreateRawSurface,
+            DeviceRecoveryAction::SelectDeviceQueue,
+        ]
+    );
+}
+
+#[test]
 fn callback_inbox_is_bounded_and_reports_overflow() {
     let mut authority = DeviceAuthority::for_test(1, 1, false);
     let scope = authority.activate();
-    let (inbox, sender) = DeviceInbox::for_test();
+    let (inbox, sender) = DeviceInbox::for_test(scope.clone());
     for index in 0..33 {
         sender.send(DeviceEvent::Error {
             scope: scope.clone(),
@@ -623,6 +990,29 @@ fn callback_inbox_is_bounded_and_reports_overflow() {
 
     assert_eq!(events.error.unwrap().message(), "error 0");
     assert_eq!(events.overflow, 1);
+}
+
+#[test]
+fn current_device_loss_remains_visible_when_error_inbox_is_saturated() {
+    let mut authority = DeviceAuthority::for_test(1, 1, false);
+    let scope = authority.activate();
+    let (inbox, sender) = DeviceInbox::for_test(scope.clone());
+    for index in 0..32 {
+        sender.send(DeviceEvent::Error {
+            scope: scope.clone(),
+            error: PresenterGpuError::new(
+                PresenterGpuErrorKind::Validation,
+                format!("error {index}"),
+            ),
+        });
+    }
+
+    sender.signal_loss();
+    let events = inbox.drain_current(&scope);
+
+    assert!(events.lost);
+    assert_eq!(events.error.unwrap().message(), "error 0");
+    assert_eq!(events.overflow, 0);
 }
 
 #[test]

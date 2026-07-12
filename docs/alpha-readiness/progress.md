@@ -1996,8 +1996,9 @@ call. The success order is acquire, validate, encode, Vello submission, blit
 submission, pre-present notification, and present. Surface statuses produce
 typed redraw guidance. Device loss invalidates checked scopes immediately and
 rebuilds the whole context/device/renderer/surface path; native borrowing is a
-closure gated by opaque presenter identity and generation. Callback handlers
-only enqueue bounded, generation-tagged events.
+closure gated by opaque presenter identity and generation. Device loss uses a
+non-droppable generation-bound signal while uncaptured errors retain their
+bounded, overflow-reporting queue; callbacks never rebuild on callback threads.
 
 #### Tests run and results
 
@@ -2006,7 +2007,7 @@ only enqueue bounded, generation-tagged events.
   at P0/P1/P2=`0/0/0` after five consolidated correction rounds. The executable
   archive verifier was frozen at 11,379 bytes / SHA-256
   `202f0e653d633308822c003ab22b9d30becd6f646d3946f8280fa06dc38e6fbc`.
-- Presenter deterministic tests passed 18/18 and direct public API tests passed
+- Presenter deterministic tests passed 25/25 and direct public API tests passed
   4/4. The runnable example compiled. Facade public API tests passed 12/12 with
   all features and 11/11 without defaults; isolated `platform-winit`,
   `render-vello`, their pair, and composite `vello-winit` checks passed.
@@ -2018,6 +2019,11 @@ only enqueue bounded, generation-tagged events.
   all-feature build, all-feature examples, and warning-denied no-deps docs.
   `RUSTDOCFLAGS` was restored to its prior unset state. Candidate critics and
   remote CI remain required before merge.
+- The first candidate review found P0/P1/P2=`0/1/3`. Its consolidated remedy
+  made loss non-droppable under callback saturation, connected accessor,
+  post-render, same/changed-slot, failed-rebuild, and exact whole-device-order
+  evidence to production-used control/drivers, and completed the example's
+  one-shot timeout redraw. Fresh candidate critics remain required.
 - The frozen user-owned audit Markdown/PDF baseline remained outside the
   tracked change set and is rechecked by the final packet gate.
 
