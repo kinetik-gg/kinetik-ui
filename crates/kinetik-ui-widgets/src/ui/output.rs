@@ -139,10 +139,11 @@ impl Ui<'_> {
         let Primitive::Text(text) = primitive else {
             return;
         };
-        if text.layout.is_some() {
+        if let Some(layout) = text.layout {
+            let _ = text_layouts.touch_layout(layout);
             return;
         }
 
-        text.layout = Some(text_layouts.layout_id(text_layout_key(text)));
+        text.layout = text_layouts.try_layout_id(text_layout_key(text));
     }
 }

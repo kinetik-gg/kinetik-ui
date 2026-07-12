@@ -357,6 +357,9 @@ fn legacy_and_duplicate_contracts_remain_importable_for_stage_one() {
     let contract_paths = [
         std::any::type_name::<text::TextLayoutCache>(),
         std::any::type_name::<text::TextLayoutStore>(),
+        std::any::type_name::<text::TextLayoutChange>(),
+        std::any::type_name::<text::TextLayoutChangeCursor>(),
+        std::any::type_name::<text::TextLayoutChanges<'static>>(),
         std::any::type_name::<widgets::viewport::Guide>(),
         std::any::type_name::<widgets::viewport::Crosshair>(),
         std::any::type_name::<widgets::viewport::ViewportComposition>(),
@@ -377,4 +380,37 @@ fn legacy_and_duplicate_contracts_remain_importable_for_stage_one() {
     let legacy_panel = widgets::dock::PanelId::from_raw(7);
     let panel_instance: widgets::dock::PanelInstanceId = legacy_panel.into();
     assert_eq!(panel_instance.raw(), 7);
+}
+
+#[test]
+fn retained_text_layout_lifecycle_surface_is_additive() {
+    use kinetik_ui::text;
+
+    let request = text::TextLayoutKey::new(
+        "layout",
+        text::TextStyle::new("Inter", 12.0, 16.0),
+        80.0,
+        false,
+    );
+    let mut store = text::TextLayoutStore::new();
+    let cursor: text::TextLayoutChangeCursor = store.change_cursor();
+    let transient = store.shape_transient(&request);
+    assert!(transient.line_count >= 1);
+    let id = store
+        .try_layout_id(request)
+        .expect("small layout is retained");
+    assert!(store.touch_layout(id));
+    assert!(store.retained_payload_bytes() > 0);
+    store.advance_generation();
+    assert_eq!(store.generation(), 1);
+    let changes: text::TextLayoutChanges<'_> = store.changes_since(cursor);
+    let dirty: Vec<text::TextLayoutChange> = changes.iter().collect();
+    assert_eq!(dirty.len(), 1);
+    assert_eq!(dirty[0].id(), id);
+    assert!(store.stored_layout(id).is_some());
+
+    let mut cache = text::TextLayoutCache::new();
+    cache.advance_generation();
+    assert_eq!(cache.generation(), 1);
+    assert_eq!(cache.retained_payload_bytes(), 0);
 }

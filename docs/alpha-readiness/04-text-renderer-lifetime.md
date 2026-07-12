@@ -6,7 +6,7 @@
 
 | Field | Decision |
 | --- | --- |
-| Status | Current / Authorized; checkpoint 4A and `TEXT-02` are Complete / Accepted; `TEXT-03A` is the locally verified candidate |
+| Status | Current / Authorized; checkpoint 4A, `TEXT-02`, and `TEXT-03A` are Complete / Accepted; `TEXT-03B` is the current locally verified candidate |
 | Scope | Async liveness, desktop/Unicode text, bounded caches, and renderer correctness |
 | Impact / confidence | Critical / Medium-high overall |
 | Campaign prerequisite | Stage 3 gate; campaign authorization recorded |
@@ -54,8 +54,9 @@ coalesces local undo while preserving public direct-edit atomicity. `TEXT-03B`
 owns retained layout generations, eviction, and byte budgets, including
 rejected preview churn. `TEXT-03C` owns incremental renderer-resource export
 and resource byte lifetimes. Audit §§8.4, 10.2, and 11.5 and roadmap `TEXT-03`
-close only after all three pass. Issue #562 tracks the current locally verified
-`TEXT-03A` candidate.
+close only after all three pass. `TEXT-03A` closed through Issue #562 and PR
+#563 at squash merge `21be11c`. Issue #564 tracks the current locally verified
+`TEXT-03B` candidate.
 
 `TEXT-01-PRE` is a root-owned shared-foundation prerequisite discovered by the
 `TEXT-01` task gate. It adds event-time modifier state to the already accepted
@@ -200,8 +201,8 @@ remains `REND-02`.
 
 The `TEXT-01` semantic prerequisites of `TEXT-02`, `TEXT-03`, and dependent
 editor packets are satisfied, and accepted `REND-01` unblocks the renderer side
-of 4B. `TEXT-02` is Complete / Accepted and `TEXT-03A` is the current locally
-verified candidate. `TEXT-03B/C` remain serialized behind it, and `REND-02`
+of 4B. `TEXT-02` and `TEXT-03A` are Complete / Accepted and `TEXT-03B` is the
+current locally verified candidate. `TEXT-03C` remains serialized behind it, and `REND-02`
 remains behind both accepted `TEXT-02` and `REND-01`;
 inspector/outliner still wait for their Stage 5 composition and collection
 prerequisites. Checkpoint 4A is complete, while Stage 4 remains Current at 4B.
@@ -218,7 +219,7 @@ Halt if Unicode work requires an unplanned shaping-engine replacement.
 
 ## Acceptance Gate And Verification Expectations
 
-The 4A checkpoint and `TEXT-02` are Complete / Accepted with deterministic desktop and Unicode editing, async incarnation cleanup, balanced transform recovery, and documented/tested color/tint behavior. `TEXT-03A` continues 4B; continue without intermediate approval only while packet gates pass and no stop condition triggers.
+The 4A checkpoint, `TEXT-02`, and `TEXT-03A` are Complete / Accepted with deterministic desktop and Unicode editing, bounded/coalesced local undo, async incarnation cleanup, balanced transform recovery, and documented/tested color/tint behavior. `TEXT-03B` continues 4B; continue without intermediate approval only while packet gates pass and no stop condition triggers.
 
 The Stage 4 gate requires Unicode/grapheme/bidi fixtures; paint/hit/caret/selection agreement at scales 1.25, 1.5, and 1.75; asserted long-session text/undo/cache budgets; and proof that read-only differs from disabled. Packet tasks define exact deterministic checks. Passing the gate advances to the already Authorized / Queued Stage 5; a failed checkpoint halts the campaign.
 

@@ -99,6 +99,7 @@ impl<'a> Ui<'a> {
         theme: &'a Theme,
         text_layouts: &'a mut TextLayoutStore,
     ) -> Self {
+        text_layouts.advance_generation();
         Self {
             runtime,
             theme,
@@ -120,6 +121,7 @@ impl<'a> Ui<'a> {
     /// Enables shaped text layout caching for this frame.
     #[must_use]
     pub fn with_text_layouts(mut self, text_layouts: &'a mut TextLayoutStore) -> Self {
+        text_layouts.advance_generation();
         self.text_layouts = Some(text_layouts);
         self
     }

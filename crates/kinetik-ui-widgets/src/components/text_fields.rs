@@ -758,7 +758,7 @@ fn canonical_text_field_runtime(
         disabled: access.is_disabled(),
         selected: false,
     });
-    let entry_geometry = TextFieldGeometry::build(
+    let entry_geometry = TextFieldGeometry::build_transient(
         rect,
         state,
         &entry_recipe,
@@ -1094,15 +1094,8 @@ fn resolve_text_navigation(
     let Some(store) = text_layouts else {
         return TextNavigationResolution::Unavailable;
     };
-    let id = store.layout_id(TextLayoutKey::new(
-        state.text.clone(),
-        style.clone(),
-        width,
-        wrap,
-    ));
-    let Some(layout) = store.layout(id) else {
-        return TextNavigationResolution::Invalid;
-    };
+    let key = TextLayoutKey::new(state.text.clone(), style.clone(), width, wrap);
+    let layout = store.shape_transient(&key);
     layout.navigation(&state.text).map_or(
         TextNavigationResolution::Invalid,
         TextNavigationResolution::Ready,

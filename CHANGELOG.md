@@ -114,6 +114,16 @@ published, or accepted as an alpha release.
   eviction preserves nearest traversal targets; states over the byte limit form
   explicit one-way history barriers rather than allowing discontinuous undo
   jumps. No public text-editing API changed.
+- Bounded retained shaped text layouts and the compatibility measurement cache
+  to 32 MiB of checked owned key/layout payload with deterministic eviction
+  after 120 idle frame generations. Added fallible retained admission,
+  transient shaping, explicit held-ID touches, payload/generation metrics, and
+  an incarnation-aware fixed 256 KiB dirty-ID journal for later incremental
+  renderer reconciliation. Canonical field entry and event navigation now shape
+  transiently so only final geometry is retained and rejected scrub previews do
+  not churn the cache. Existing infallible admission and caller-owned layout
+  handles remain compatible; strict saturation degrades canonical new text to
+  layoutless fallback.
 - Defined renderer-bound `Color` as straight sRGB plus straight alpha and made
   Vello translation diagnose and sanitize every invalid color occurrence before
   command snapshots. Peniko gradients now explicitly select sRGB with

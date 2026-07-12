@@ -67,7 +67,7 @@ pub(super) fn text_field_layout<'a>(
 ) -> Option<&'a ShapedTextLayout> {
     let store = text_layouts?;
     let width = (rect.width - recipe.padding_x * 2.0).max(0.0);
-    let id = store.layout_id(TextLayoutKey::new(
+    let id = store.try_layout_id(TextLayoutKey::new(
         text,
         TextStyle::new(
             recipe.font.family,
@@ -76,7 +76,7 @@ pub(super) fn text_field_layout<'a>(
         ),
         width,
         wrap,
-    ));
+    ))?;
     store.layout(id)
 }
 
