@@ -31,7 +31,7 @@ pub enum TextNavigationError {
     InconsistentClusterDirection,
     /// Distinct cluster ranges overlap logically on one visual line.
     OverlappingClusters,
-    /// A source grapheme is not covered by exactly one shaped cluster.
+    /// A source grapheme is not covered by exactly one validated navigation cell.
     UncoveredGrapheme,
 }
 
@@ -60,10 +60,12 @@ pub struct ShapedCaretStop {
 #[derive(Debug, Clone, PartialEq)]
 struct NavigationLine {
     visual_index: usize,
+    source_line_index: usize,
     text_start: usize,
     text_end: usize,
     top_y: f32,
     height: f32,
+    rtl: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -73,6 +75,14 @@ struct GraphemeCell {
     end: usize,
     left: f32,
     right: f32,
+    rtl: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct WrapGap {
+    visual_line: usize,
+    start: usize,
+    x: f32,
     rtl: bool,
 }
 
@@ -140,6 +150,7 @@ pub struct ShapedTextNavigation {
     nodes: Vec<CaretNode>,
     stops: Vec<ShapedCaretStop>,
     word_targets: BTreeSet<usize>,
+    rtl_gap_starts: BTreeSet<usize>,
 }
 
 impl ShapedTextLayout {
@@ -163,10 +174,23 @@ impl ShapedTextNavigation {
         let lines = navigation_lines(layout);
         let clusters = validated_clusters(layout, source)?;
         validate_cluster_overlap(&clusters)?;
-        let cells = cluster_cells(source, &clusters)?;
+        let mut cells = cluster_cells(source, &clusters)?;
+        let wrap_gaps = materialize_wrap_gaps(source, &lines, &mut cells);
         validate_cell_unions(&cells)?;
         validate_coverage(source, &lines, &cells)?;
-        let nodes = coordinate_nodes(source.len(), &lines, &cells);
+        let nodes = coordinate_nodes(source.len(), &lines, &cells, &wrap_gaps);
+        let rtl_gap_starts = wrap_gaps
+            .iter()
+            .filter(|gap| gap.rtl)
+            .filter_map(|gap| {
+                nodes.iter().position(|node| {
+                    node.visual_line == gap.visual_line
+                        && node.offset == gap.start
+                        && node.x.to_bits() == gap.x.to_bits()
+                        && node.has_after
+                })
+            })
+            .collect();
         let stops = nodes
             .iter()
             .map(|node| ShapedCaretStop {
@@ -184,6 +208,7 @@ impl ShapedTextNavigation {
             nodes,
             stops,
             word_targets,
+            rtl_gap_starts,
         })
     }
 
@@ -384,6 +409,9 @@ impl ShapedTextNavigation {
         if node.offset == self.source.len() && !self.source.is_empty() {
             return TextCaret::new(node.offset, TextAffinity::Before);
         }
+        if matches!(direction, VisualDirection::Right) && self.rtl_gap_starts.contains(&index) {
+            return TextCaret::new(node.offset, TextAffinity::After);
+        }
 
         let affinity = match direction {
             VisualDirection::Left if node.has_after => TextAffinity::After,
@@ -494,10 +522,12 @@ fn navigation_lines(layout: &ShapedTextLayout) -> Vec<NavigationLine> {
         .iter()
         .map(|line| NavigationLine {
             visual_index: line.visual_index,
+            source_line_index: line.source_line_index,
             text_start: line.text_start,
             text_end: line.text_end,
             top_y: line.top_y,
             height: line.height,
+            rtl: line.rtl,
         })
         .collect::<Vec<_>>();
     lines.sort_by_key(|line| line.visual_index);
@@ -696,6 +726,81 @@ fn validate_cell_unions(cells: &[GraphemeCell]) -> Result<(), TextNavigationErro
     Ok(())
 }
 
+fn materialize_wrap_gaps(
+    source: &str,
+    lines: &[NavigationLine],
+    cells: &mut Vec<GraphemeCell>,
+) -> Vec<WrapGap> {
+    let mut gaps = Vec::new();
+    for pair in lines.windows(2) {
+        let previous = &pair[0];
+        let next = &pair[1];
+        if previous.source_line_index != next.source_line_index
+            || previous.rtl != next.rtl
+            || previous.text_end >= next.text_start
+            || !cells
+                .iter()
+                .any(|cell| cell.visual_line == next.visual_index && cell.start == next.text_start)
+        {
+            continue;
+        }
+
+        let graphemes = source[previous.text_end..next.text_start]
+            .grapheme_indices(true)
+            .collect::<Vec<_>>();
+        if graphemes.is_empty()
+            || graphemes.iter().any(|(_, grapheme)| {
+                !grapheme
+                    .chars()
+                    .all(|character| matches!(character, ' ' | '\t'))
+            })
+            || graphemes.iter().any(|(relative_start, grapheme)| {
+                let start = previous.text_end + relative_start;
+                coverage_count(cells, start, start + grapheme.len()) != 0
+            })
+        {
+            continue;
+        }
+
+        let trailing_x = if previous.rtl {
+            cells
+                .iter()
+                .filter(|cell| cell.visual_line == previous.visual_index)
+                .map(|cell| cell.left)
+                .min_by(f32::total_cmp)
+        } else {
+            cells
+                .iter()
+                .filter(|cell| cell.visual_line == previous.visual_index)
+                .map(|cell| cell.right)
+                .max_by(f32::total_cmp)
+        };
+        let Some(x) = trailing_x.filter(|x| x.is_finite()) else {
+            continue;
+        };
+
+        let gap = WrapGap {
+            visual_line: previous.visual_index,
+            start: previous.text_end,
+            x,
+            rtl: previous.rtl,
+        };
+        for (relative_start, grapheme) in graphemes {
+            let start = gap.start + relative_start;
+            cells.push(GraphemeCell {
+                visual_line: gap.visual_line,
+                start,
+                end: start + grapheme.len(),
+                left: x,
+                right: x,
+                rtl: gap.rtl,
+            });
+        }
+        gaps.push(gap);
+    }
+    gaps
+}
+
 fn coverage_count(cells: &[GraphemeCell], start: usize, end: usize) -> usize {
     cells
         .iter()
@@ -707,6 +812,7 @@ fn coordinate_nodes(
     source_len: usize,
     lines: &[NavigationLine],
     cells: &[GraphemeCell],
+    wrap_gaps: &[WrapGap],
 ) -> Vec<CaretNode> {
     let mut edges = Vec::with_capacity(cells.len() * 2 + lines.len() * 2);
     for cell in cells {
@@ -742,10 +848,10 @@ fn coordinate_nodes(
             affinity: TextAffinity::Before,
         });
     }
-    group_edges(&mut edges, source_len)
+    group_edges(&mut edges, source_len, wrap_gaps)
 }
 
-fn group_edges(edges: &mut [Edge], source_len: usize) -> Vec<CaretNode> {
+fn group_edges(edges: &mut [Edge], source_len: usize, wrap_gaps: &[WrapGap]) -> Vec<CaretNode> {
     edges.sort_by(|left, right| {
         left.visual_line
             .cmp(&right.visual_line)
@@ -781,13 +887,25 @@ fn group_edges(edges: &mut [Edge], source_len: usize) -> Vec<CaretNode> {
         left.visual_line
             .cmp(&right.visual_line)
             .then_with(|| left.x.total_cmp(&right.x))
-            .then_with(|| left.offset.cmp(&right.offset))
+            .then_with(|| {
+                if rtl_wrap_anchor(wrap_gaps, left.visual_line, left.x) {
+                    right.offset.cmp(&left.offset)
+                } else {
+                    left.offset.cmp(&right.offset)
+                }
+            })
             .then_with(|| {
                 affinity_order(left.canonical_caret(source_len).affinity)
                     .cmp(&affinity_order(right.canonical_caret(source_len).affinity))
             })
     });
     nodes
+}
+
+fn rtl_wrap_anchor(wrap_gaps: &[WrapGap], visual_line: usize, x: f32) -> bool {
+    wrap_gaps
+        .iter()
+        .any(|gap| gap.rtl && gap.visual_line == visual_line && gap.x.to_bits() == x.to_bits())
 }
 
 fn word_targets(source: &str) -> BTreeSet<usize> {
@@ -865,7 +983,7 @@ mod tests {
             },
         ];
 
-        let nodes = group_edges(&mut edges, 2);
+        let nodes = group_edges(&mut edges, 2, &[]);
 
         assert_eq!(nodes.len(), 2);
         assert!(nodes[0].x.abs() <= f32::EPSILON);

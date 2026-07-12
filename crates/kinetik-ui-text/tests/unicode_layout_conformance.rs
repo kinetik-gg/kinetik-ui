@@ -1,10 +1,10 @@
 //! Public conformance for source-bound shaped Unicode navigation.
 
-use kinetik_ui_core::TextRange;
+use kinetik_ui_core::{Size, TextRange};
 use kinetik_ui_text::{
-    CosmicTextEngine, SHAPED_TEXT_GEOMETRY_EPSILON, ShapedGlyph, ShapedTextLayout,
-    ShapedTextNavigation, TextAffinity, TextCaret, TextComposition, TextEditState, TextLayoutKey,
-    TextNavigationError, TextNavigationOutcome, TextSelection, TextStyle,
+    CosmicTextEngine, SHAPED_TEXT_GEOMETRY_EPSILON, ShapedGlyph, ShapedGlyphRun, ShapedTextLayout,
+    ShapedTextLine, ShapedTextNavigation, TextAffinity, TextCaret, TextComposition, TextEditState,
+    TextLayoutKey, TextNavigationError, TextNavigationOutcome, TextSelection, TextStyle,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -29,6 +29,117 @@ fn assert_near(actual: f32, expected: f32) {
         (actual - expected).abs() <= SHAPED_TEXT_GEOMETRY_EPSILON,
         "expected {expected}, got {actual}"
     );
+}
+
+#[derive(Clone, Copy)]
+struct LineSpec {
+    source_line: usize,
+    start: usize,
+    end: usize,
+    rtl: bool,
+}
+
+#[derive(Clone, Copy)]
+struct CellSpec {
+    line: usize,
+    start: usize,
+    end: usize,
+    left: f32,
+    right: f32,
+    rtl: bool,
+}
+
+const fn line(source_line: usize, start: usize, end: usize, rtl: bool) -> LineSpec {
+    LineSpec {
+        source_line,
+        start,
+        end,
+        rtl,
+    }
+}
+
+const fn cell(line: usize, start: usize, end: usize, left: f32, right: f32, rtl: bool) -> CellSpec {
+    CellSpec {
+        line,
+        start,
+        end,
+        left,
+        right,
+        rtl,
+    }
+}
+
+fn visual_top(visual_line: usize) -> f32 {
+    f32::from(u16::try_from(visual_line).expect("synthetic visual-line index fits u16")) * 24.0
+}
+
+fn synthetic_layout(lines: &[LineSpec], cells: &[CellSpec]) -> ShapedTextLayout {
+    let template = shape("a", 400.0, false);
+    let font = template.runs[0].font.clone();
+    let glyph = template.runs[0].glyphs[0];
+    let shaped_lines = lines
+        .iter()
+        .enumerate()
+        .map(|(visual_index, spec)| {
+            let top_y = visual_top(visual_index);
+            let width = cells
+                .iter()
+                .filter(|cell| cell.line == visual_index)
+                .map(|cell| cell.right)
+                .max_by(f32::total_cmp)
+                .unwrap_or(0.0);
+            ShapedTextLine {
+                visual_index,
+                source_line_index: spec.source_line,
+                text_start: spec.start,
+                text_end: spec.end,
+                top_y,
+                baseline_y: top_y + 18.0,
+                height: 24.0,
+                width,
+                rtl: spec.rtl,
+            }
+        })
+        .collect::<Vec<_>>();
+    let runs = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(visual_line, spec)| {
+            let glyphs = cells
+                .iter()
+                .filter(|cell| cell.line == visual_line)
+                .map(|cell| ShapedGlyph {
+                    id: glyph.id,
+                    x: cell.left,
+                    y: visual_top(visual_line) + 18.0,
+                    start: cell.start,
+                    end: cell.end,
+                    width: cell.right - cell.left,
+                    rtl: cell.rtl,
+                })
+                .collect::<Vec<_>>();
+            (!glyphs.is_empty()).then(|| ShapedGlyphRun {
+                font: font.clone(),
+                font_size: 18.0,
+                line_index: spec.source_line,
+                visual_line,
+                line_y: visual_top(visual_line) + 18.0,
+                glyphs,
+            })
+        })
+        .collect::<Vec<_>>();
+    let width = shaped_lines
+        .iter()
+        .map(|line| line.width)
+        .max_by(f32::total_cmp)
+        .unwrap_or(0.0);
+
+    ShapedTextLayout {
+        size: Size::new(width, visual_top(lines.len())),
+        line_count: lines.len(),
+        lines: shaped_lines,
+        runs,
+    }
 }
 
 fn one_cluster_layout(source: &str, width: f32) -> ShapedTextLayout {
@@ -658,6 +769,453 @@ fn stale_navigation_rejection_is_transactional_for_every_state_method() {
             );
             assert_eq!(actual, expected);
         }
+    }
+}
+
+#[test]
+fn real_cosmic_wrap_omissions_become_exact_zero_width_navigation_cells() {
+    let source = "alpha אבג beta gamma delta";
+    let mut engine = CosmicTextEngine::new();
+    let layout = engine.shape_text(&TextLayoutKey::new(
+        source,
+        TextStyle::new("Inter", 12.0, 17.0),
+        66.0,
+        true,
+    ));
+    assert_eq!(
+        layout
+            .lines
+            .iter()
+            .map(|line| {
+                (
+                    line.text_start,
+                    line.text_end,
+                    line.source_line_index,
+                    line.rtl,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 12, 0, false),
+            (13, 17, 0, false),
+            (18, 23, 0, false),
+            (24, 29, 0, false),
+        ]
+    );
+    for gap in [12..13, 17..18, 23..24] {
+        assert_eq!(&source[gap], " ");
+    }
+    let first_max_right = layout
+        .runs
+        .iter()
+        .filter(|run| run.visual_line == 0)
+        .flat_map(|run| &run.glyphs)
+        .map(|glyph| glyph.x + glyph.width)
+        .max_by(f32::total_cmp)
+        .expect("first line has glyph geometry");
+    assert_near(first_max_right, 57.826_17);
+
+    let navigation = layout.navigation(source).expect("wrapped navigation");
+    for boundary in source
+        .grapheme_indices(true)
+        .map(|(offset, _)| offset)
+        .chain(std::iter::once(source.len()))
+    {
+        assert!(
+            navigation
+                .caret_stops()
+                .iter()
+                .any(|stop| stop.caret.offset == boundary),
+            "missing source boundary {boundary}"
+        );
+    }
+}
+
+#[test]
+fn ltr_one_space_wrap_has_exact_affinity_geometry_and_selection() {
+    let one = synthetic_layout(
+        &[line(0, 0, 1, false), line(0, 2, 3, false)],
+        &[
+            cell(0, 0, 1, 0.0, 10.0, false),
+            cell(1, 2, 3, 0.0, 10.0, false),
+        ],
+    )
+    .navigation("a b")
+    .expect("one omitted space");
+    let one_start = caret(1, TextAffinity::After);
+    let one_end_before = caret(2, TextAffinity::Before);
+    let one_end_after = caret(2, TextAffinity::After);
+    assert_eq!(one.visual_right(one_start), one_end_before);
+    assert_eq!(one.visual_right(one_end_before), one_end_after);
+    assert_eq!(one.visual_left(one_end_after), one_end_before);
+    assert_eq!(one.visual_left(one_end_before), one_start);
+    let prior = one.caret_rect(one_end_before);
+    let next = one.caret_rect(one_end_after);
+    assert_near(prior.x, 10.0);
+    assert_near(prior.y, 0.0);
+    assert_near(next.x, 0.0);
+    assert_near(next.y, 24.0);
+    assert_eq!(one.hit_test_caret(10.0, 12.0), one_start);
+    assert_eq!(one.hit_test_caret(0.0, 36.0), one_end_after);
+    assert!(one.selection_rects(1..2).is_empty());
+    assert_near(
+        one.selection_rects(0..3)
+            .iter()
+            .map(|rect| rect.width)
+            .sum(),
+        20.0,
+    );
+}
+
+#[test]
+fn ltr_multiple_wrap_delimiters_have_exact_affinity_hits_and_words() {
+    let multiple = synthetic_layout(
+        &[line(0, 0, 1, false), line(0, 4, 5, false)],
+        &[
+            cell(0, 0, 1, 0.0, 10.0, false),
+            cell(1, 4, 5, 0.0, 10.0, false),
+        ],
+    )
+    .navigation("a  \tb")
+    .expect("multiple omitted delimiters");
+    let mut current = caret(1, TextAffinity::After);
+    let mut forward = vec![current];
+    for _ in 0..4 {
+        current = multiple.visual_right(current);
+        forward.push(current);
+    }
+    assert_eq!(
+        forward,
+        vec![
+            caret(1, TextAffinity::After),
+            caret(2, TextAffinity::Before),
+            caret(3, TextAffinity::Before),
+            caret(4, TextAffinity::Before),
+            caret(4, TextAffinity::After),
+        ]
+    );
+    let mut current = caret(4, TextAffinity::After);
+    let mut reverse = vec![current];
+    for _ in 0..4 {
+        current = multiple.visual_left(current);
+        reverse.push(current);
+    }
+    assert_eq!(
+        reverse,
+        vec![
+            caret(4, TextAffinity::After),
+            caret(4, TextAffinity::Before),
+            caret(3, TextAffinity::After),
+            caret(2, TextAffinity::After),
+            caret(1, TextAffinity::After),
+        ]
+    );
+    for offset in 1..=4 {
+        let affinity = if offset == 1 {
+            TextAffinity::After
+        } else {
+            TextAffinity::Before
+        };
+        assert_near(multiple.caret_rect(caret(offset, affinity)).x, 10.0);
+    }
+    assert_eq!(
+        multiple.hit_test_caret(10.0, 12.0),
+        caret(1, TextAffinity::After)
+    );
+    assert_eq!(
+        multiple.hit_test_caret(0.0, 36.0),
+        caret(4, TextAffinity::After)
+    );
+    assert_eq!(
+        multiple.visual_word_right(caret(1, TextAffinity::After)),
+        caret(4, TextAffinity::Before)
+    );
+    assert_eq!(
+        multiple.visual_word_left(caret(4, TextAffinity::After)),
+        caret(0, TextAffinity::After)
+    );
+}
+
+#[test]
+fn consecutive_ltr_wrap_gaps_keep_both_seams_reversible() {
+    let consecutive = synthetic_layout(
+        &[
+            line(0, 0, 1, false),
+            line(0, 2, 3, false),
+            line(0, 4, 5, false),
+        ],
+        &[
+            cell(0, 0, 1, 0.0, 10.0, false),
+            cell(1, 2, 3, 0.0, 10.0, false),
+            cell(2, 4, 5, 0.0, 10.0, false),
+        ],
+    )
+    .navigation("a b c")
+    .expect("two omitted spaces");
+    for (start, end) in [(1, 2), (3, 4)] {
+        let start = caret(start, TextAffinity::After);
+        let before = caret(end, TextAffinity::Before);
+        let after = caret(end, TextAffinity::After);
+        assert_eq!(consecutive.visual_right(start), before);
+        assert_eq!(consecutive.visual_right(before), after);
+        assert_eq!(consecutive.visual_left(after), before);
+        assert_eq!(consecutive.visual_left(before), start);
+    }
+}
+
+#[test]
+fn embedded_and_opposite_bidi_runs_keep_line_major_wrap_truth() {
+    let embedded = synthetic_layout(
+        &[line(0, 0, 5, false), line(0, 6, 7, false)],
+        &[
+            cell(0, 0, 1, 0.0, 10.0, false),
+            cell(0, 1, 3, 20.0, 30.0, true),
+            cell(0, 3, 5, 10.0, 20.0, true),
+            cell(1, 6, 7, 0.0, 10.0, false),
+        ],
+    )
+    .navigation("aאב b")
+    .expect("ltr paragraph with rtl tail");
+    let start = caret(5, TextAffinity::After);
+    let end_before = caret(6, TextAffinity::Before);
+    let end_after = caret(6, TextAffinity::After);
+    assert_near(embedded.caret_rect(start).x, 30.0);
+    assert_near(embedded.caret_rect(end_before).x, 30.0);
+    assert_near(embedded.caret_rect(end_before).y, 0.0);
+    assert_near(embedded.caret_rect(end_after).x, 0.0);
+    assert_near(embedded.caret_rect(end_after).y, 24.0);
+    assert_eq!(embedded.visual_right(start), end_before);
+    assert_eq!(embedded.visual_right(end_before), end_after);
+    assert_eq!(embedded.visual_left(end_after), end_before);
+    assert_eq!(embedded.visual_left(end_before), start);
+    assert_eq!(
+        embedded.hit_test_caret(30.0, 12.0),
+        caret(1, TextAffinity::After)
+    );
+
+    let opposite = synthetic_layout(
+        &[line(0, 0, 1, false), line(0, 2, 6, false)],
+        &[
+            cell(0, 0, 1, 0.0, 10.0, false),
+            cell(1, 2, 4, 10.0, 20.0, true),
+            cell(1, 4, 6, 0.0, 10.0, true),
+        ],
+    )
+    .navigation("a אב")
+    .expect("opposite-direction next-line run remains valid");
+    let prior_end = caret(2, TextAffinity::Before);
+    let physical_next = caret(6, TextAffinity::Before);
+    assert_eq!(opposite.visual_right(prior_end), physical_next);
+    assert_eq!(opposite.visual_left(physical_next), prior_end);
+    let logical_next = opposite.caret_rect(caret(2, TextAffinity::After));
+    assert_near(logical_next.x, 20.0);
+    assert_near(logical_next.y, 24.0);
+}
+
+#[test]
+fn rtl_one_space_wrap_is_local_reversible_and_preserves_external_ranks() {
+    let source = "אב ב";
+    let navigation = synthetic_layout(
+        &[line(0, 0, 4, true), line(0, 5, 7, true)],
+        &[
+            cell(0, 0, 2, 20.0, 30.0, true),
+            cell(0, 2, 4, 10.0, 20.0, true),
+            cell(1, 5, 7, 20.0, 30.0, true),
+        ],
+    )
+    .navigation(source)
+    .expect("rtl omitted space");
+    let collapsed = navigation
+        .caret_stops()
+        .iter()
+        .filter(|stop| stop.visual_line == 0 && stop.x.to_bits() == 10.0_f32.to_bits())
+        .map(|stop| stop.caret)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        collapsed,
+        vec![
+            caret(5, TextAffinity::Before),
+            caret(4, TextAffinity::After)
+        ]
+    );
+    let gap_start = caret(4, TextAffinity::After);
+    let gap_end = caret(5, TextAffinity::Before);
+    assert_eq!(navigation.visual_left(gap_start), gap_end);
+    assert_eq!(navigation.visual_right(gap_end), gap_start);
+    assert_eq!(navigation.visual_left(gap_end), gap_end);
+    assert_eq!(
+        navigation.visual_right(caret(0, TextAffinity::After)),
+        caret(7, TextAffinity::Before)
+    );
+    assert_eq!(
+        navigation.visual_left(caret(7, TextAffinity::Before)),
+        caret(0, TextAffinity::After)
+    );
+    let source_alias = navigation.caret_rect(caret(5, TextAffinity::After));
+    assert_near(source_alias.x, 30.0);
+    assert_near(source_alias.y, 24.0);
+    assert_eq!(navigation.hit_test_caret(10.0, 12.0), gap_start);
+    assert!(navigation.selection_rects(4..5).is_empty());
+
+    let mut collapse_left = TextEditState::new(source);
+    collapse_left.set_selection_with_affinity(TextSelection::new(4, 5), TextAffinity::After);
+    assert_eq!(
+        collapse_left.move_visual_left(&navigation),
+        TextNavigationOutcome::Moved
+    );
+    assert_eq!(collapse_left.caret_position(), gap_start);
+    let mut collapse_right = TextEditState::new(source);
+    collapse_right.set_selection_with_affinity(TextSelection::new(4, 5), TextAffinity::After);
+    assert_eq!(
+        collapse_right.move_visual_right(&navigation),
+        TextNavigationOutcome::Moved
+    );
+    assert_eq!(
+        collapse_right.caret_position(),
+        caret(5, TextAffinity::After)
+    );
+}
+
+#[test]
+fn rtl_multiple_wrap_delimiters_have_exact_local_words_and_affinities() {
+    let multiple_source = "א  \tב";
+    let multiple = synthetic_layout(
+        &[line(0, 0, 2, true), line(0, 5, 7, true)],
+        &[
+            cell(0, 0, 2, 10.0, 20.0, true),
+            cell(1, 5, 7, 10.0, 20.0, true),
+        ],
+    )
+    .navigation(multiple_source)
+    .expect("rtl multiple omitted delimiters");
+    let mut current = caret(2, TextAffinity::After);
+    let mut forward = vec![current];
+    for _ in 0..3 {
+        current = multiple.visual_left(current);
+        forward.push(current);
+    }
+    assert_eq!(
+        forward,
+        vec![
+            caret(2, TextAffinity::After),
+            caret(3, TextAffinity::After),
+            caret(4, TextAffinity::After),
+            caret(5, TextAffinity::Before),
+        ]
+    );
+    let mut current = caret(5, TextAffinity::Before);
+    let mut reverse = vec![current];
+    for _ in 0..3 {
+        current = multiple.visual_right(current);
+        reverse.push(current);
+    }
+    assert_eq!(
+        reverse,
+        vec![
+            caret(5, TextAffinity::Before),
+            caret(4, TextAffinity::Before),
+            caret(3, TextAffinity::Before),
+            caret(2, TextAffinity::After),
+        ]
+    );
+    assert_eq!(
+        multiple.hit_test_caret(10.0, 12.0),
+        caret(2, TextAffinity::After)
+    );
+    assert_eq!(
+        multiple.visual_word_left(caret(2, TextAffinity::After)),
+        caret(5, TextAffinity::Before)
+    );
+    assert_eq!(
+        multiple.visual_word_right(caret(5, TextAffinity::Before)),
+        caret(0, TextAffinity::After)
+    );
+    assert_eq!(
+        multiple.visual_word_right(caret(5, TextAffinity::After)),
+        caret(5, TextAffinity::After)
+    );
+}
+
+#[test]
+fn wrap_gap_exception_rejects_every_ineligible_provenance_class() {
+    assert!(shape("a\nb", 400.0, false).navigation("a\nb").is_ok());
+
+    let cases = [
+        (
+            "a b",
+            vec![line(0, 0, 1, false), line(1, 2, 3, false)],
+            vec![
+                cell(0, 0, 1, 0.0, 10.0, false),
+                cell(1, 2, 3, 0.0, 10.0, false),
+            ],
+        ),
+        (
+            "a b",
+            vec![line(0, 0, 1, false), line(0, 2, 3, true)],
+            vec![
+                cell(0, 0, 1, 0.0, 10.0, false),
+                cell(1, 2, 3, 0.0, 10.0, false),
+            ],
+        ),
+        (
+            "a\u{00a0}b",
+            vec![line(0, 0, 1, false), line(0, 3, 4, false)],
+            vec![
+                cell(0, 0, 1, 0.0, 10.0, false),
+                cell(1, 3, 4, 0.0, 10.0, false),
+            ],
+        ),
+        (
+            "a\u{2003}b",
+            vec![line(0, 0, 1, false), line(0, 4, 5, false)],
+            vec![
+                cell(0, 0, 1, 0.0, 10.0, false),
+                cell(1, 4, 5, 0.0, 10.0, false),
+            ],
+        ),
+        (
+            "a x b",
+            vec![line(0, 0, 1, false), line(0, 4, 5, false)],
+            vec![
+                cell(0, 0, 1, 0.0, 10.0, false),
+                cell(1, 4, 5, 0.0, 10.0, false),
+            ],
+        ),
+        (
+            "a b",
+            vec![line(0, 0, 3, false)],
+            vec![
+                cell(0, 0, 1, 0.0, 10.0, false),
+                cell(0, 2, 3, 10.0, 20.0, false),
+            ],
+        ),
+        (
+            " a",
+            vec![line(0, 1, 2, false)],
+            vec![cell(0, 1, 2, 0.0, 10.0, false)],
+        ),
+        (
+            "a ",
+            vec![line(0, 0, 1, false)],
+            vec![cell(0, 0, 1, 0.0, 10.0, false)],
+        ),
+        (
+            "a ",
+            vec![line(0, 0, 1, false), line(0, 2, 2, false)],
+            vec![cell(0, 0, 1, 0.0, 10.0, false)],
+        ),
+        (
+            "a b",
+            vec![line(0, 0, 1, false), line(0, 2, 3, false)],
+            vec![cell(1, 2, 3, 0.0, 10.0, false)],
+        ),
+    ];
+    for (source, lines, cells) in cases {
+        assert_eq!(
+            synthetic_layout(&lines, &cells).navigation(source),
+            Err(TextNavigationError::UncoveredGrapheme),
+            "unexpected result for {source:?}"
+        );
     }
 }
 
