@@ -2,7 +2,7 @@
 
 [Back to the alpha-readiness index](../alpha-readiness.md)
 
-Stages 0-3 are Complete. Stage 4A and `TEXT-02` are Complete / Accepted; Stage 4B is Current / Authorized with `TEXT-03A` the locally verified candidate. Stages 5-7 are Authorized / Queued for continuous sequential execution without intermediate approval. Every remaining packet still has to pass its deterministic gates, and any Runway stop condition halts the active packet or stage.
+Stages 0-3 are Complete. Stage 4A, `TEXT-02`, and `TEXT-03A` are Complete / Accepted; Stage 4B is Current / Authorized with `TEXT-03B` the current locally verified candidate. Stages 5-7 are Authorized / Queued for continuous sequential execution without intermediate approval. Every remaining packet still has to pass its deterministic gates, and any Runway stop condition halts the active packet or stage.
 
 Campaign workflow policy: `create-if-available` issues, `create-if-gates-pass` pull requests, and `squash-after-gates` merges. Tagging, package publishing, and an alpha release remain outside this authorization.
 
@@ -1361,6 +1361,95 @@ without a breaking encapsulation change; method-driven canonical fields carry
 the alpha guarantee. Layout generations/bytes, rejected-preview churn, and
 incremental renderer-resource export remain `TEXT-03B/C`; fractional projection
 remains `REND-02`.
+
+### `TEXT-03B`: retained layout generations and payload budgets
+
+Status: Locally verified implementation candidate for Issue #564. The exact task gate passed
+three independent read-only reviews at P0/P1/P2=`0/0/0`; focused text, widget,
+facade, and renderer compatibility checks pass. Exact-candidate critics, PR,
+three-OS CI, PR-context CI, and squash merge remain required. This is partial
+`TEXT-03` evidence for audit §§8.4, 10.2, 11.5, and the bounded-cache portion of
+§11.7; it does not close `TEXT-03`, Stage 4, or the duplicate-cache API finding
+without `TEXT-03C`, `REND-02`, and final Stage 7 API curation.
+
+#### Changed files
+
+- `CHANGELOG.md`
+- `crates/kinetik-ui-text/src/{cache,lib,store,tests}.rs`
+- `crates/kinetik-ui-text/tests/layout_budget_conformance.rs`
+- `crates/kinetik-ui-widgets/src/components/{text_fields,text_geometry,text_support}.rs`
+- `crates/kinetik-ui-widgets/src/ui/{frame,output}.rs`
+- `crates/kinetik-ui-widgets/tests/text_layout_lifetime_conformance.rs`
+- `crates/kinetik-ui/tests/public_api_surface.rs`
+- `docs/specs/03-rendering-text-components.md`
+- `docs/alpha-readiness/{04-text-renderer-lifetime,progress}.md`
+
+#### Reasoning and contract decisions
+
+`TextLayoutStore` now strictly retains at most 32 MiB of checked owned key and
+shaped-layout payload. The metric counts each owned struct and String/Vec
+capacity once while deliberately excluding map buckets, allocator/Arc headers,
+shared fonts, external Arcs, and shaping-engine internals. Current-generation
+entries are pinned; older pressure evicts by generation, touch ordinal, then ID.
+Untouched layouts survive 120 completed idle generations and expire entering
+generation 121. Admission rejection is transactional and canonical callers use
+the additive fallible path. The existing infallible method remains compatible
+with a store-local zero sentinel, while arbitrary preassigned layout IDs remain
+caller-owned.
+
+IDs remain stable while resident. Evicted IDs are retired within one change
+epoch to prevent ABA, and shared key ownership gives both key and ID indices
+without duplicating payload. A lazy fixed journal retains at most 256 KiB of
+dirty ID records and uses process-unique store incarnation, epoch, and revision
+to reject foreign/stale cursors. Ordinary rollover requires a full snapshot;
+checked epoch exhaustion preserves residents, drops tombstones, and enters
+permanent resync-only mode. `stored_layout` resolves final presence in expected
+O(1), and full iteration is ID ordered. Actual renderer add/remove/full-reset
+integration remains `TEXT-03C`.
+
+Frame attachment advances exactly once and assumes generation G resources are
+reconciled before G+1 begins. Entry pointer geometry and every event-navigation
+shape are transient; final field geometry alone retains. Rejected numeric scrub
+previews therefore produce no extra additions, touches, bytes, IDs, or journal
+records compared with an otherwise identical control. The compatibility
+`TextLayoutCache` receives the same byte/age/pinning policy while preserving
+its method signatures and visible Clone/PartialEq/Debug behavior.
+
+#### Tests run and results
+
+- Text unit verification passed 102/102, including 27 new private store/cache
+  tests for exact UTF-8 bytes, G+120/G+121, current pins, deterministic LRU
+  tie-breaks, collision probing through `u64::MAX`, checked generation/touch/
+  revision counters, exact production journal capacity, source exhaustion and
+  terminal mode, same-store/foreign/future cursors, observational export,
+  external Arc lifetime, and cache compatibility.
+- Public layout-budget conformance passed 6/6: 100,000 stable hits, 1,000
+  Unicode/wrapped dynamic generations, literal over-budget rejection,
+  source-bound cursors/final presence, transient shaping, and compatibility
+  cache plateau.
+- Widget layout-lifetime conformance passed 5/5, including exactly-once frame
+  attachment, arbitrary external-ID preservation (including raw zero),
+  accepted final-only retention, same-frame 32 MiB saturation with resolvable
+  accepted IDs and layoutless rejections, and 1,000 unique rejected preview/
+  control frames followed by actual deterministic pressure. Retained
+  text-field conformance passed 125/125.
+- Facade public API conformance passed 10/10; renderer resource snapshots
+  remained compatible at 12/12; warning-denied Clippy passed for the touched
+  text, widget, facade, render, and Vello dependency surface.
+- All six workspace gates passed in `target/runway/text03b`: formatting,
+  warning-denied Clippy, all-feature workspace tests, all-feature build,
+  all-feature examples, and warning-denied docs. `RUSTDOCFLAGS` was restored.
+
+#### Remaining risks and deferred findings
+
+Transient shaping can temporarily allocate and consume CPU outside the retained
+metric. Allocator metadata, shared font data, engine internals, and external Arc
+owners are excluded by contract. Current-generation saturation intentionally
+degrades new canonical generic text to layoutless fallback. Direct callers own
+raw handle validity across clear/eviction. Renderer reconciliation and external
+Arc byte lifetime remain `TEXT-03C`; Vello cache lifetime and fractional
+projection remain later packets. The public approximate cache remains a
+duplicate contract until final `API-01` curation in Stage 7.
 
 ### `REND-01B`: sRGB, alpha, and tint contract
 

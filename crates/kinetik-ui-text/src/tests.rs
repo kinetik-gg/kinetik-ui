@@ -347,10 +347,8 @@ fn text_layout_store_exports_cached_layout_entries() {
         entries[0].layout.glyph_count(),
         store.layout(id).unwrap().glyph_count()
     );
-    assert!(std::sync::Arc::ptr_eq(
-        &entries[0].layout,
-        store.layouts.get(&id).expect("cached layout")
-    ));
+    let stored = store.stored_layout(id).expect("cached layout");
+    assert!(std::sync::Arc::ptr_eq(&entries[0].layout, &stored.layout));
 }
 
 #[test]

@@ -139,6 +139,45 @@ impl TextFieldGeometry {
         retained_offset: Vec2,
         text_layouts: Option<&mut TextLayoutStore>,
     ) -> Self {
+        Self::build_with_retention(
+            rect,
+            state,
+            recipe,
+            kind,
+            retained_offset,
+            text_layouts,
+            TextGeometryRetention::Retained,
+        )
+    }
+
+    pub(crate) fn build_transient(
+        rect: Rect,
+        state: &TextEditState,
+        recipe: &TextFieldRecipe,
+        kind: TextFieldKind,
+        retained_offset: Vec2,
+        text_layouts: Option<&mut TextLayoutStore>,
+    ) -> Self {
+        Self::build_with_retention(
+            rect,
+            state,
+            recipe,
+            kind,
+            retained_offset,
+            text_layouts,
+            TextGeometryRetention::Transient,
+        )
+    }
+
+    fn build_with_retention(
+        rect: Rect,
+        state: &TextEditState,
+        recipe: &TextFieldRecipe,
+        kind: TextFieldKind,
+        retained_offset: Vec2,
+        text_layouts: Option<&mut TextLayoutStore>,
+        retention: TextGeometryRetention,
+    ) -> Self {
         let display = DisplayTextMap::from_state(state);
         let model_selection = state.selection.clamp_to_text(&state.text);
         let content_rect = Rect::new(
@@ -157,7 +196,17 @@ impl TextFieldGeometry {
             size,
         ) = text_layouts.map_or_else(
             || fallback_geometry(&display, model_selection, content_rect, recipe, kind),
-            |store| shaped_geometry(&display, model_selection, content_rect, recipe, kind, store),
+            |store| {
+                shaped_geometry(
+                    &display,
+                    model_selection,
+                    content_rect,
+                    recipe,
+                    kind,
+                    store,
+                    retention,
+                )
+            },
         );
         let content_size = Size::new(
             size.width.max(caret_content_rect.max_x()),
@@ -312,6 +361,12 @@ impl TextFieldGeometry {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextGeometryRetention {
+    Transient,
+    Retained,
+}
+
 type GeometryParts = (
     Option<TextLayoutId>,
     Option<ShapedTextNavigation>,
@@ -329,8 +384,9 @@ fn shaped_geometry(
     recipe: &TextFieldRecipe,
     kind: TextFieldKind,
     store: &mut TextLayoutStore,
+    retention: TextGeometryRetention,
 ) -> GeometryParts {
-    let id = store.layout_id(TextLayoutKey::new(
+    let key = TextLayoutKey::new(
         display.text.clone(),
         TextStyle::new(
             recipe.font.family,
@@ -339,9 +395,38 @@ fn shaped_geometry(
         ),
         content_rect.width,
         kind.wraps(),
-    ));
-    let layout = store.layout(id).expect("newly registered text layout");
-    geometry_from_layout_or_fallback(display, selection, content_rect, recipe, kind, id, layout)
+    );
+    match retention {
+        TextGeometryRetention::Transient => {
+            let layout = store.shape_transient(&key);
+            geometry_from_layout_or_fallback(
+                display,
+                selection,
+                content_rect,
+                recipe,
+                kind,
+                None,
+                &layout,
+            )
+        }
+        TextGeometryRetention::Retained => {
+            let Some(id) = store.try_layout_id(key) else {
+                return fallback_geometry(display, selection, content_rect, recipe, kind);
+            };
+            let Some(layout) = store.layout(id) else {
+                return fallback_geometry(display, selection, content_rect, recipe, kind);
+            };
+            geometry_from_layout_or_fallback(
+                display,
+                selection,
+                content_rect,
+                recipe,
+                kind,
+                Some(id),
+                layout,
+            )
+        }
+    }
 }
 
 fn geometry_from_layout_or_fallback(
@@ -350,7 +435,7 @@ fn geometry_from_layout_or_fallback(
     content_rect: Rect,
     recipe: &TextFieldRecipe,
     kind: TextFieldKind,
-    id: TextLayoutId,
+    id: Option<TextLayoutId>,
     layout: &ShapedTextLayout,
 ) -> GeometryParts {
     authoritative_geometry(display, selection, recipe, id, layout)
@@ -361,7 +446,7 @@ fn authoritative_geometry(
     display: &DisplayTextMap,
     selection: TextSelection,
     recipe: &TextFieldRecipe,
-    id: TextLayoutId,
+    id: Option<TextLayoutId>,
     layout: &ShapedTextLayout,
 ) -> Option<GeometryParts> {
     let navigation = layout.navigation(&display.text).ok()?;
@@ -385,7 +470,7 @@ fn authoritative_geometry(
         .caret_rect(display.display_caret)
         .translate(baseline);
     Some((
-        Some(id),
+        id,
         Some(navigation),
         Vec::new(),
         selection_rects,
@@ -643,7 +728,7 @@ mod tests {
             content_rect,
             &recipe,
             TextFieldKind::SingleLine,
-            TextLayoutId::from_raw(77),
+            Some(TextLayoutId::from_raw(77)),
             &malformed,
         );
         assert!(parts.0.is_none(), "invalid layout ID must not be painted");
