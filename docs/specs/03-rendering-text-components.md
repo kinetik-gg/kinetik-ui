@@ -207,6 +207,52 @@ shaped navigation and active-preedit suppressed arrows retain their stronger
 whole-state transactional behavior. Composition remains transient; undo/redo
 restores text, selection direction, and caret affinity, then clears composition.
 
+Retained shaped text is a bounded frame-generation cache. `TextLayoutStore`
+counts the owned key and shaped-layout structs plus their String and Vec backing
+capacities once, using checked arithmetic, and retains at most 32 MiB by that
+metric. Hash-table buckets, allocator and Arc headers, shared font data,
+external Arc owners, and shaping-engine internals are outside the metric and are
+reported separately where relevant. Entries touched in the current generation
+are pinned so every accepted ID emitted by that frame remains resolvable until
+resource reconciliation. Older entries are evicted deterministically by last
+generation, touch order, then ID. An untouched entry survives 120 completed
+idle generations and is removed when generation 121 begins.
+
+Strict admission uses `try_layout_id`; a candidate that is individually too
+large or cannot fit around current-generation pins is rejected without changing
+retained entries or change history. The source-compatible `layout_id` method
+returns store-local ID zero on rejection, which the store never assigns or
+resolves. Core and render APIs do not reserve zero globally, and `Ui` preserves
+preassigned caller-owned handles. Canonical store-managed widget paths use the
+fallible API and remain layoutless on rejected generic admission. IDs are stable
+while resident. Eviction and clear invalidate raw store handles; direct callers
+own stale-handle correctness across those boundaries.
+
+Frame attachment advances the generation exactly once. The alpha contract has
+one in-flight frame per store: reconcile generation G's resources before
+attaching the store to G+1. Entry/pointer geometry and per-event navigation use
+`shape_transient`, so accepted replay retains only final display geometry and
+rejected numeric scrub previews retain no speculative keys or touches.
+Observation and export do not refresh lifetime; held IDs must be touched
+explicitly.
+
+The store exposes an incarnation-bound dirty-ID cursor for incremental resource
+consumers. Its lazily allocated fixed journal retains at most 256 KiB of records
+in mutation order; consumers query final presence through O(1)
+`stored_layout`. Journal rollover establishes a full-sync epoch and prevents ID
+reuse within the live epoch. Checked epoch exhaustion enters permanent
+resync-only mode, preserves resident layouts, retains no tombstones, and makes
+every cursor request a full snapshot. Renderer reconciliation and external Arc
+byte lifetime are specified by the following resource-lifetime packet rather
+than by the store.
+
+The public approximate `TextLayoutCache` remains a compatibility surface. It
+uses the same 32 MiB and 120-generation policy with deterministic eviction, but
+has no resource journal. `get` is observational; mutable `get_or_measure`
+refreshes a hit and always returns a measurement even when retention is
+rejected. Final duplicate-cache removal or deprecation is an API-curation
+decision, not part of retained-store correctness.
+
 Production text fields consume one canonical ordered input stream through the
 current text-input owner. Key edit and shortcut commands run before hardware
 text carried by that key; clipboard copy/cut/paste requests and targeted paste
