@@ -773,9 +773,12 @@ Texture handling:
 - UI repaint should not force texture re-upload.
 - Video frames should upload only when frame content changes.
 - 3D/render previews should render to GPU targets and pass handles to UI.
-- Native Vello registrations resolve before compatible CPU snapshots; a
-  missing or invalid native registration falls back to a CPU snapshot and then
-  to a visible placeholder with a typed diagnostic.
+- Native Vello registrations resolve before compatible CPU snapshots. An
+  absent registration, stale presenter/device scope, or metadata-invalid entry
+  falls back to a CPU snapshot and then a visible placeholder with a typed
+  diagnostic. A foreign-device texture follows the explicit scoped wgpu
+  validation-failure path because portable ownership pre-validation is not
+  available.
 - Native registrations are scoped to one presenter/device/registration
   generation and retain no authority after removal or device recovery.
 

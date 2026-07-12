@@ -18,7 +18,7 @@
 | --- | --- | --- | --- | --- | --- |
 | Presenter | `REND-ADR-01` | [Decide device/queue/surface/external-texture ownership, sync, lifetime, recovery, offscreen, and multi-window boundary](../adr/0001-gpu-presenter-contract.md) | Accepted Stage 4 policy context | Critical / Medium | Root-only ADR; Complete / Accepted |
 | Presenter | `REND-03` | Extract reusable Winit/Vello window, resize, recovery, submit, and present behavior from showcase-private code | `REND-ADR-01`, `IN-02` | Critical / Medium | Root integration |
-| Presenter | `REND-04` | Register/update/remove domain-owned GPU texture views without mandatory CPU snapshots | `REND-03` | Critical / Medium | Root integration |
+| Presenter | `REND-04` | Register/update/remove domain-owned native GPU textures without mandatory CPU snapshots | `REND-03` | Critical / Medium | Root integration |
 | Composition | `LAYOUT-UI-01` | Measured row/column/grid/padding/stack/scroll allocation through public `Ui` APIs | `RT-01` | Critical / Medium-high | Root-owned shared seam |
 | Composition | `OVL-UI-01` | Public painted menus, dropdowns, context/popover/tooltip/palette/modal behavior | `RT-02`, `RT-03`, `LAYOUT-UI-01` | High / Medium | Root arbitration; leaf work after seam freeze |
 | Composition | `CHROME-UI-01` | Public toolbar, tab strip, status bar, and overflow behavior | Layout, overlay/input/action contracts | High / Medium-high | Isolated leaf after seams freeze |

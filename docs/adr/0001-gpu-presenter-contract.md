@@ -63,10 +63,12 @@ input normalization, shell request execution, and repaint scheduling.
 
 ### Presenter and device ownership
 
-Alpha uses one `VelloWindowPresenter` per native window. The presenter retains
-the authoritative `Arc<Window>` used to create its surface and exposes that
-window's identity. Event-loop code may retain a clone, but events for another
-`WindowId` do not enter the presenter.
+The alpha implementation supports exactly one live `VelloWindowPresenter`
+bound to one native window. The presenter retains the authoritative
+`Arc<Window>` used to create its surface and exposes that window's identity.
+Event-loop code may retain a clone, but events for another `WindowId` do not
+enter the presenter. This per-window ownership shape does not promise multiple
+presenter instances during alpha.
 
 A coordinator inside the presenter survives device rebuilds and mints an opaque
 device scope containing both presenter identity and a monotonically increasing
@@ -190,7 +192,7 @@ and never drives the Winit loop or re-executes platform requests.
 | Surface lost | Recreate/configure from the retained window, compare device slot | Return retry guidance; roll device generation if the slot changed |
 | Validation failure | Return actionable integration failure | No blind immediate retry |
 | Vello/render failure | Return a typed render failure | Caller decides whether to exit or rebuild |
-| Device lost | Rebuild device/queue/Vello renderer/surface targets, advance generation, invalidate registry | Domain renderer recreates and re-registers before retry |
+| Device lost | Drop the old `RenderSurface`; rebuild the device/queue/Vello renderer; recreate/configure the surface from the retained window on the replacement context/device; rebuild target and blitter; advance generation; invalidate registry | Domain renderer recreates and re-registers before retry |
 | Suspend/detach | Drop surface before presenter's window clone | Wait for resume/attach |
 
 Surface retry guidance merges into repaint scheduling but never replays the
@@ -200,7 +202,7 @@ recreated on the new device and re-registered.
 
 ## Supported Alpha Contract
 
-- One presenter and one live surface per native window.
+- Exactly one live presenter bound to one native window and surface.
 - One current presenter device/queue and renderer per device generation.
 - GPU-copy interoperability for same-device, full-base-subresource,
   `Rgba8Unorm + COPY_SRC`, straight-sRGB/straight-alpha textures.
@@ -219,9 +221,9 @@ recreated on the new device and re-registered.
   HDR, wide gamut, and ICC handling inside the UI renderer.
 - A reusable offscreen presenter abstraction. The existing lower-level Vello
   offscreen path is not a surface and receives no acquire/notify/present calls.
-- General multi-window coordination, shared-device multi-surface policy,
-  multiple adapters, and seamless migration between them. Independent
-  one-window presenter instances do not imply that broader guarantee.
+- Multiple independent presenter instances, general multi-window coordination,
+  shared-device multi-surface policy, multiple adapters, and seamless migration
+  between them.
 - Additional presenter backends or a backend-neutral presenter trait.
 - Production-grade transparent recovery that hides device loss from domain
   renderers.
@@ -253,7 +255,10 @@ Alternatives rejected for alpha:
 live renderer. It must prove the pure lifecycle/result matrix, zero/non-zero
 resize, redundant suspend/resume, window identity, changed device-slot
 reattach, operation order, failed-acquire short circuit, configuration
-propagation, diagnostics preservation, and a documented one-window live path.
+propagation, diagnostics preservation, and a documented runnable one-window
+live example. Its deterministic target tests must also prove that the separate
+offscreen path performs no surface acquire, pre-present notification, or
+presentation.
 
 `REND-04` implements the native registry and Vello resolver without changing
 the neutral public structs. It must prove register, replace, dirty/revision,
