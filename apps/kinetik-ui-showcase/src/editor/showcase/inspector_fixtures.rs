@@ -1,7 +1,14 @@
 impl EditorShowcase {
     pub(super) fn inspector(&mut self, ui: &mut Ui<'_>, body: Rect) {
         let rows = inspector_rows(&self.mass.text);
-        let (grid, layout) = inspector_grid_geometry(body);
+        let grid = body.inset(8.0);
+        let layout = PropertyGridLayout::new(
+            24.0,
+            26.0,
+            inspector_label_width(grid.width),
+            6.0,
+            12.0,
+        );
         let roughness_before = self.roughness;
         let output = ui
             .property_grid(

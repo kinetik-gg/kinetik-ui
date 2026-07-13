@@ -267,24 +267,9 @@ impl EditorShowcase {
         ui: &mut Ui<'_>,
         workflow: &EditorWorkflowScenes<'_>,
     ) {
-        let output = ui.dock_controller(
-            &workflow.dock,
-            &mut self.dock,
-            &mut self.dock_controller,
-            dock::DockControllerConfig::new(FrameId::from_raw(self.next_drop_frame))
-                .with_policy(editor_dock_interaction_policy()),
-        );
-        if output.changed {
-            self.next_drop_frame = self.next_drop_frame.saturating_add(1);
-            "Dock layout updated".clone_into(&mut self.status);
-        }
-        if let Some(close) = output.close_requests.first() {
-            self.status = format!("Close requested for panel {}", close.panel.raw());
-        }
-        if !output.splitter_context_requests.is_empty() {
-            "Dock splitter actions requested".clone_into(&mut self.status);
-        }
-
+        // Evaluate panel content before the Dock's full-frame activation target so every
+        // ordinary child control can claim its own pointer gesture. Prepared advanced
+        // scenes still use the shared explicit pointer plan installed before painting.
         let _ = ui.dock_scene(&workflow.dock, |ui, panel| match panel.panel {
             PANEL_SCENE => self.scene_graph(ui, workflow.outliner.as_ref()),
             PANEL_ASSETS => self.assets_browser(
@@ -303,5 +288,23 @@ impl EditorShowcase {
             PANEL_NODE_GRAPH => Self::node_graph_panel(ui, panel.rect),
             _ => {}
         });
+
+        let output = ui.dock_controller(
+            &workflow.dock,
+            &mut self.dock,
+            &mut self.dock_controller,
+            dock::DockControllerConfig::new(FrameId::from_raw(self.next_drop_frame))
+                .with_policy(editor_dock_interaction_policy()),
+        );
+        if output.changed {
+            self.next_drop_frame = self.next_drop_frame.saturating_add(1);
+            "Dock layout updated".clone_into(&mut self.status);
+        }
+        if let Some(close) = output.close_requests.first() {
+            self.status = format!("Close requested for panel {}", close.panel.raw());
+        }
+        if !output.splitter_context_requests.is_empty() {
+            "Dock splitter actions requested".clone_into(&mut self.status);
+        }
     }
 }

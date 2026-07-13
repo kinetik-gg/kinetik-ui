@@ -375,18 +375,6 @@ fn inspector_label_width(grid_width: f32) -> f32 {
     (grid_width * 0.42).clamp(52.0, 96.0)
 }
 
-fn inspector_grid_geometry(body: Rect) -> (Rect, PropertyGridLayout) {
-    let grid = body.inset(8.0);
-    let layout = PropertyGridLayout::new(
-        24.0,
-        26.0,
-        inspector_label_width(grid.width),
-        6.0,
-        12.0,
-    );
-    (grid, layout)
-}
-
 #[cfg(test)]
 fn frame_tab_rects(frame: &Frame, frame_rect: Rect, tab_height: f32) -> Vec<(FrameTab, Rect)> {
     let mut tab_x = frame_rect.x + 1.0;

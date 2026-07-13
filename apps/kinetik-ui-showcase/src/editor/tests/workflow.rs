@@ -15,7 +15,7 @@ use kinetik_ui::widgets::{Ui, viewport};
 
 #[derive(Debug, Clone, Copy)]
 struct WorkflowPoints {
-    player: Point,
+    rename_object: Point,
     asset_search: Point,
     terrain_asset: Point,
     viewport_move: Point,
@@ -85,12 +85,12 @@ fn workflow_points(editor: &EditorShowcase) -> WorkflowPoints {
         &outliner_model,
         &asset_model,
     );
-    let player = scenes
+    let rename_object = scenes
         .outliner
         .as_ref()
-        .and_then(|scene| scene.rows().iter().find(|row| row.row.id == item_id(7)))
+        .and_then(|scene| scene.rows().iter().find(|row| row.row.id == item_id(4)))
         .map(|row| row.label_rect.center())
-        .expect("Player row is visible in the prepared public outliner");
+        .expect("MainCamera row is visible in the prepared public outliner");
     let terrain_asset = scenes
         .assets
         .as_ref()
@@ -104,9 +104,9 @@ fn workflow_points(editor: &EditorShowcase) -> WorkflowPoints {
         .map(|item| item.rect.center())
         .expect("filtered terrain asset is visible in the prepared public browser");
     let asset_search = scenes
-        .asset_search_target
-        .map(|(_, rect)| rect.center())
-        .expect("public asset search field is prepared above the Dock frame");
+        .asset_search_bounds
+        .map(Rect::center)
+        .expect("public asset search field is visible in the Assets panel");
     let viewport_move = scenes
         .viewport_tools
         .as_ref()
@@ -120,7 +120,7 @@ fn workflow_points(editor: &EditorShowcase) -> WorkflowPoints {
         .expect("selected object exposes a public viewport move handle");
 
     WorkflowPoints {
-        player,
+        rename_object,
         asset_search,
         terrain_asset,
         viewport_move,
@@ -196,19 +196,22 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
     let _ = render_frame(
         &mut editor,
         &mut memory,
-        primary_input(points.player, true, true, false, 1),
+        primary_input(points.rename_object, true, true, false, 1),
     );
     let _ = render_frame(
         &mut editor,
         &mut memory,
-        primary_input(points.player, false, false, true, 1),
+        primary_input(points.rename_object, false, false, true, 1),
     );
+    assert_eq!(editor.outliner_state.selection.active, Some(item_id(4)));
+    assert_eq!(editor.selected_node, item_id(4));
+    assert_eq!(editor.status, "Selected MainCamera");
     let _ = render_frame(
         &mut editor,
         &mut memory,
         key_input(Key::Function(2), Modifiers::default()),
     );
-    assert_eq!(editor.outliner_state.rename_target(), Some(item_id(7)));
+    assert_eq!(editor.outliner_state.rename_target(), Some(item_id(4)));
     let _ = render_frame(
         &mut editor,
         &mut memory,
@@ -223,7 +226,8 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
         &mut memory,
         key_input(Key::Enter, Modifiers::default()),
     );
-    assert_eq!(editor.object_names[6], "Hero");
+    assert_eq!(editor.object_names[3], "Hero");
+    assert_eq!(editor.outliner_state.selection.active, Some(item_id(4)));
     assert_eq!(editor.outliner_state.rename_target(), None);
     assert_eq!(editor.status, "Renamed object to Hero");
     let renamed = render_frame(&mut editor, &mut memory, UiInput::default());
@@ -248,7 +252,7 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
         &mut memory,
         primary_input(roughness_point, true, true, false, 1),
     );
-    let _ = render_frame(
+    let property_output = render_frame(
         &mut editor,
         &mut memory,
         primary_input(roughness_point, false, false, true, 1),
@@ -259,6 +263,31 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
         editor.roughness
     );
     assert!(editor.status.starts_with("Roughness edited to "));
+
+    let snap_row = semantic_node(&property_output, &SemanticRole::Row, "Snap");
+    let snap_toggle = property_output
+        .semantics
+        .nodes()
+        .iter()
+        .find(|node| {
+            node.role == SemanticRole::Toggle
+                && snap_row.bounds.contains_point(node.bounds.center())
+        })
+        .expect("Snap row contains the shared toggle");
+    let snap_point = snap_toggle.bounds.center();
+    let snap_id = snap_toggle.id;
+    let _ = render_frame(
+        &mut editor,
+        &mut memory,
+        primary_input(snap_point, true, true, false, 1),
+    );
+    assert_eq!(memory.pressed(), Some(snap_id));
+    let _ = render_frame(
+        &mut editor,
+        &mut memory,
+        primary_input(snap_point, false, false, true, 1),
+    );
+    assert!(!editor.snap_enabled);
 
     let asset_drag_target = Point::new(points.terrain_asset.x + 18.0, points.terrain_asset.y + 8.0);
     let _ = render_frame(
@@ -279,7 +308,6 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
         ),
     );
     assert_eq!(editor.dragged_asset, Some(workflow_asset_id(1)));
-    assert_eq!(editor.assigned_asset, Some(workflow_asset_id(1)));
     let _ = render_frame(
         &mut editor,
         &mut memory,
@@ -320,11 +348,11 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
     assert!(editor.apply_action(ACTION_SAVE));
     let saved = editor.saved_project.as_ref().expect("saved workflow state");
     assert_eq!(saved.revision, 1);
-    assert_eq!(saved.object_names[6], "Hero");
+    assert_eq!(saved.object_names[3], "Hero");
+    assert_eq!(saved.selected_object, Some(item_id(4)));
     assert_eq!(saved.roughness, editor.roughness);
     assert_eq!(saved.asset_query, "terrain_forest");
     assert_eq!(saved.dragged_asset, Some(workflow_asset_id(1)));
-    assert_eq!(saved.assigned_asset, Some(workflow_asset_id(1)));
     assert_eq!(
         saved.viewport_selection_rect,
         editor.viewport_selection_rect
@@ -359,7 +387,6 @@ fn save_action_captures_the_resulting_project_state_in_memory() {
     editor.roughness = 0.81;
     editor.asset_filter.text = "terrain".to_owned();
     editor.dragged_asset = Some(workflow_asset_id(1));
-    editor.assigned_asset = Some(workflow_asset_id(1));
     editor.viewport_selection_rect.x += 24.0;
 
     assert!(editor.apply_action(ACTION_SAVE));
@@ -370,7 +397,6 @@ fn save_action_captures_the_resulting_project_state_in_memory() {
     assert_eq!(saved.roughness, 0.81);
     assert_eq!(saved.asset_query, "terrain");
     assert_eq!(saved.dragged_asset, Some(workflow_asset_id(1)));
-    assert_eq!(saved.assigned_asset, Some(workflow_asset_id(1)));
     assert_eq!(saved.viewport_selection_rect.x, 744.0);
     assert!(
         saved
