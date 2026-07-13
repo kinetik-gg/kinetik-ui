@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use kinetik_ui_core::{
-    Brush, Color, FrameOutput, MouseButton, Point, Primitive, Rect, SemanticRole, Theme, UiInput,
-    UiInputEvent, UiMemory, WidgetId, default_dark_theme,
+    Brush, Color, FrameOutput, MouseButton, Point, PointerInput, Primitive, Rect, SemanticRole,
+    Theme, UiInput, UiInputEvent, UiMemory, Vec2, WidgetId, default_dark_theme,
 };
 use kinetik_ui_widgets::{
     ItemId, Ui,
@@ -18,7 +18,7 @@ use kinetik_ui_widgets::{
 
 const BOUNDS: Rect = Rect::new(10.0, 20.0, 360.0, 140.0);
 
-type CellOutput = (PropertyGridAccess, WidgetId, Rect);
+type CellOutput = (PropertyGridAccess, WidgetId, Rect, bool, bool);
 
 fn run_grid(
     rows: &[PropertyGridRow],
@@ -37,7 +37,13 @@ fn run_grid(
                 cell.value_rect,
                 format!("value-{}", cell.row.id.raw()),
             );
-            (cell.access, response.id, cell.value_rect)
+            (
+                cell.access,
+                response.id,
+                cell.value_rect,
+                response.state.pressed,
+                response.clicked,
+            )
         })
         .expect("valid property rows");
     (output, ui.finish_output())
@@ -52,6 +58,17 @@ fn pointer_button(point: Point, down: bool) -> UiInput {
         position: Some(point),
     });
     input
+}
+
+fn wheel_input(bounds: Rect, delta_y: f32) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(bounds.center()),
+            wheel_delta: Vec2::new(0.0, delta_y),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
 }
 
 #[test]
@@ -130,6 +147,7 @@ fn live_state_drives_paint_semantics_access_and_theme() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn stable_value_scopes_survive_reorder_and_offscreen_rows_are_inert() {
     let a = PropertyGridRow::property(ItemId::from_raw(10), "A", 0);
     let b = PropertyGridRow::property(ItemId::from_raw(20), "B", 0);
@@ -167,19 +185,35 @@ fn stable_value_scopes_survive_reorder_and_offscreen_rows_are_inert() {
     let rows = (0..5)
         .map(|index| {
             PropertyGridRow::property(ItemId::from_raw(100 + index), format!("Row {index}"), 0)
+                .with_resettable(index == 0, false)
         })
         .collect::<Vec<_>>();
+    let viewport = Rect::new(0.0, 0.0, 300.0, 24.0);
     let mut memory = UiMemory::new();
-    let (output, frame) = run_grid(
+    let (initial, _) = run_grid(
         &rows,
-        Rect::new(0.0, 0.0, 300.0, 24.0),
+        viewport,
         PropertyGridConfig::default(),
         &UiInput::default(),
         &mut memory,
         &default_dark_theme(),
     );
-    assert_eq!(output.visible_rows.len(), 1);
-    assert_eq!(output.values.len(), 1);
+    assert_eq!(initial.values[0].row, ItemId::from_raw(100));
+
+    let (scrolled, frame) = run_grid(
+        &rows,
+        viewport,
+        PropertyGridConfig::default(),
+        &wheel_input(viewport, -1_000.0),
+        &mut memory,
+        &default_dark_theme(),
+    );
+    assert_eq!(
+        scrolled.scroll.offset.y.to_bits(),
+        scrolled.scroll.max_offset.y.to_bits()
+    );
+    assert_eq!(scrolled.values.len(), 1);
+    assert_eq!(scrolled.values[0].row, ItemId::from_raw(104));
     assert!(matches!(
         frame.primitives.first(),
         Some(Primitive::ClipBegin { .. })
@@ -188,6 +222,47 @@ fn stable_value_scopes_survive_reorder_and_offscreen_rows_are_inert() {
         frame.primitives.last(),
         Some(Primitive::ClipEnd { .. })
     ));
+
+    let (retained, _) = run_grid(
+        &rows,
+        viewport,
+        PropertyGridConfig::default(),
+        &UiInput::default(),
+        &mut memory,
+        &default_dark_theme(),
+    );
+    assert_eq!(retained.scroll.offset, scrolled.scroll.offset);
+    assert_eq!(retained.values[0].row, ItemId::from_raw(104));
+
+    let mut memory = UiMemory::new();
+    let _ = run_grid(
+        &rows,
+        viewport,
+        PropertyGridConfig::default(),
+        &wheel_input(viewport, -12.0),
+        &mut memory,
+        &default_dark_theme(),
+    );
+    let outside = Point::new(250.0, viewport.y - 4.0);
+    let (pressed, _) = run_grid(
+        &rows,
+        viewport,
+        PropertyGridConfig::default(),
+        &pointer_button(outside, true),
+        &mut memory,
+        &default_dark_theme(),
+    );
+    let (released, _) = run_grid(
+        &rows,
+        viewport,
+        PropertyGridConfig::default(),
+        &pointer_button(outside, false),
+        &mut memory,
+        &default_dark_theme(),
+    );
+    assert!(pressed.values.iter().all(|value| !value.value.3));
+    assert!(released.values.iter().all(|value| !value.value.4));
+    assert!(released.intents.is_empty());
 }
 
 #[test]
