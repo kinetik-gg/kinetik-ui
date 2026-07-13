@@ -2,17 +2,14 @@
 
 This document freezes an inventory, not the final alpha API. The current
 `kinetik-ui` facade and default prelude are **provisional Experimental** during
-the alpha-readiness campaign. Prelude inclusion is a convenience decision and
+pre-alpha development. Prelude inclusion is a convenience decision and
 never implies Stable conformance. Candidate-for-alpha-stable is a separate
 product decision from conformance status.
 
-Integrated Stage 5 is **Complete / Accepted** through `REND-04`,
-`LAYOUT-UI-01`, `OVL-UI-01`, `CHROME-UI-01`, `COLL-UI-01`, and
-`COLL-UI-02`. Stage 6 is **Current / Authorized** with `DOCK-UI-01`
-**next**; Stage 7 remains **Authorized / Queued**.
-
-No tag, package publication, deployment, release, or alpha-readiness claim is
-made by these acceptances.
+The public editor workflow now exercises the facade, presenter, Dock, viewport,
+inspector, outliner, asset browser, and system-feedback surfaces. Final facade
+and prelude curation remains open; no tag, package publication, deployment,
+release, or alpha-readiness claim follows from the current implementation.
 
 The application-facing native texture API is qualified-only; none of its symbols are exported by `kinetik_ui::prelude`.
 
@@ -37,9 +34,9 @@ Accessibility, Platform, and Live Workflow as applicable. Metadata-only or
 fixture-only evidence proves none of those axes. Planned APIs never enter the
 default prelude.
 
-Final facade and prelude curation is gated on `SHOW-02`, the coherent editor
-workflow built only from public APIs. Stage 1 keeps existing compatibility
-paths without deprecation and makes no export additions, removals, or moves.
+Final facade and prelude curation is gated on the coherent editor workflow and
+the remaining release evidence. Existing compatibility paths remain
+undeprecated until that review makes an explicit migration decision.
 
 ## Exact Facade Root
 
@@ -61,7 +58,7 @@ The classification and promotion decisions apply to the whole named group;
 individual members may require narrower or additional evidence at final
 curation.
 
-| Group | Current classification | Canonical path for new code | `SHOW-02` candidacy | Promotion prerequisite |
+| Group | Current classification | Canonical path for new code | Public workflow use | Promotion prerequisite |
 | --- | --- | --- | --- | --- |
 | Facade state | Provisional Experimental | `kinetik_ui::UiState` or `kinetik_ui::prelude::UiState` | Yes: retained application state | Public frame lifecycle, shaped-text resource registration, and presenter workflow proof |
 | Core | Provisional Experimental | `kinetik_ui::core`; current common subset is also in `kinetik_ui::prelude` | Yes: runtime, input, actions, semantics, theme, and primitives | Accepted behavioral evidence for every required axis, including action/input and semantic-output proof |
@@ -69,8 +66,8 @@ curation.
 | Render | Provisional Experimental | `kinetik_ui::render`; current common subset is also in `kinetik_ui::prelude` | Yes: backend-independent frame and resource contract | Presenter, resource-lifetime, diagnostic, and external-texture workflow proof |
 | Winit | Provisional Experimental, feature-gated | `kinetik_ui::platform_winit` | Yes: supported window and platform loop | Winit input, IME/clipboard/cursor/platform-request, accessibility boundary, and redraw-loop proof; no new prelude exports before presenter proof |
 | Vello | Provisional Experimental, feature-gated | `kinetik_ui::render_vello` | Yes: supported 2D backend and presenter | Surface acquisition/recovery, resize/scale, presentation, diagnostics, and Vello-backed workflow proof; no new prelude exports before presenter proof |
-| Vello/Winit presenter | Provisional Experimental, feature-gated, qualified only | `kinetik_ui::vello_winit` | Yes: supported one-window live presenter | REND-04 is Complete / Accepted with real-GPU and packaged-example evidence; access remains qualified only, and no presenter item enters the prelude |
-| Widgets | Provisional Experimental | Common composition path: `kinetik_ui::widgets`; advanced APIs use the qualified modules listed below | Yes: controls and viewport surface; exact final subset deferred | `LAYOUT-UI-01` accepts measured containers; `OVL-UI-01`, `CHROME-UI-01`, and `COLL-UI-01/02` accept qualified painted overlay, chrome, and collection seams; no prelude promotion, and public live-workflow evidence remains required |
+| Vello/Winit presenter | Provisional Experimental, feature-gated, qualified only | `kinetik_ui::vello_winit` | Yes: supported one-window live presenter | Real-GPU and packaged-example evidence exists; access remains qualified only, and no presenter item enters the prelude |
+| Widgets | Provisional Experimental | Common composition path: `kinetik_ui::widgets`; advanced APIs use the qualified modules listed below | Yes: controls and viewport surface; exact final subset deferred | Measured containers and qualified painted overlay, chrome, and collection seams are implemented; no prelude promotion, and public live-workflow evidence remains required |
 
 ### Facade state inventory
 
@@ -208,7 +205,7 @@ use kinetik_ui::widgets::{
 ```
 
 Existing root compatibility items under `kinetik_ui::widgets`, such as
-`kinetik_ui::widgets::Dock`, remain source-compatible in Stage 1 but are
+`kinetik_ui::widgets::Dock`, remain source-compatible but are
 noncanonical for new documentation and examples. Their canonical advanced
 form is `kinetik_ui::widgets::dock::Dock`, and the same module-qualified rule
 applies to every module above. `node_graph` and `timeline` remain Experimental
@@ -219,42 +216,39 @@ Platform and renderer implementations stay qualified under
 `kinetik_ui::platform_winit`, `kinetik_ui::render_vello`, and
 `kinetik_ui::vello_winit`. Existing platform/Vello prelude compatibility
 exports remain intact, while the presenter stays qualified-only until the
-Stage 7 API decision.
+final API review.
 
-Later stages may add new qualified APIs when a subsystem needs them. Any
+Future changes may add new qualified APIs when a subsystem needs them. Any
 prelude expansion requires an explicit policy decision plus accepted evidence;
-final narrowing waits for `SHOW-02`.
+final narrowing waits for the complete public-workflow and release evidence.
 
-`OVL-UI-01` accepts the qualified `kinetik_ui::widgets::overlays` scene,
+The qualified `kinetik_ui::widgets::overlays` API provides scene,
 navigation, paint, input, action-intent, and semantic contract. It does not add
 overlay symbols to the default prelude. Menu-bar trigger/overflow painting was
-delivered by accepted `CHROME-UI-01`, and the public editor workflow remains
-`SHOW-02`.
+delivered by the public editor chrome and is exercised by the Showcase.
 
-`CHROME-UI-01` accepts the qualified `kinetik_ui::widgets::chrome` overflow and
+The qualified `kinetik_ui::widgets::chrome` API provides overflow and
 scene contracts plus their public `Ui` paint/input/semantic integration. It
 does not add chrome symbols to the default prelude.
 
-`COLL-UI-01` and `COLL-UI-02` accept the qualified
-`kinetik_ui::widgets::collections` navigation, virtual-list, virtual-tree, and
-virtual-table contracts plus their public `Ui` paint/input/semantic
-integration. They do not add collection symbols to the default prelude. Final
-promotion still requires the facade-only `SHOW-02` workflow and Stage 7
-`API-01` review.
+The qualified `kinetik_ui::widgets::collections` API provides navigation,
+virtual-list, virtual-tree, and virtual-table contracts plus public `Ui`
+paint/input/semantic integration. These symbols remain outside the default
+prelude pending final API review.
 
 ## Final-Review Ledger
 
-The following contracts remain compatible and Experimental during Stage 1.
+The following contracts remain compatible and Experimental.
 This ledger prevents their presence from being mistaken for endorsement and
-records the evidence needed for the Stage 7 API decision.
+records the evidence needed for the final API decision.
 
-| Contract under review | Stage 1 canonical guidance | Evidence required before final action |
+| Contract under review | Current canonical guidance | Evidence required before final action |
 | --- | --- | --- |
-| `text::TextLayoutCache` versus shaped `text::TextLayoutStore` | Use `TextLayoutStore` for retained shaped layouts and renderer resources. `TextLayoutCache` remains a module-qualified approximate measurement compatibility API. | `TEXT-01` through `TEXT-03`, renderer resource lifetime, and `SHOW-02` determine deprecation/removal and migration wording. |
+| `text::TextLayoutCache` versus shaped `text::TextLayoutStore` | Use `TextLayoutStore` for retained shaped layouts and renderer resources. `TextLayoutCache` remains a module-qualified approximate measurement compatibility API. | Desktop text behavior, renderer resource lifetime, and public workflow evidence determine deprecation/removal and migration wording. |
 | Legacy viewport `Guide`, `Crosshair`, and `ViewportComposition` helpers versus surface/descriptor paths | Keep legacy helpers compatible but noncanonical. New work starts with `widgets::viewport::ViewportSurface` and the relevant `ViewportGuideDescriptor`, `ViewportOverlayDescriptor`, or `ViewportToolSurfaceDescriptor`. | Viewport composition, external texture, pointer transform, painter, and public workflow proof determine the final retained set. |
 | Legacy `Theme` scalar fields versus token groups | New work uses `Theme::radii`, `Theme::controls`, and `Theme::typography`; `radius`, `border_width`, and `text_size` remain compatible. | Complete theme-token migration and representative component paint proof precede deprecation or removal. |
-| Dock `PanelId` versus `PanelInstanceId` | New instance-oriented APIs use `widgets::dock::PanelInstanceId`; the convertible legacy `PanelId` remains compatible. | Dock interaction, persistence round-trip, and `SHOW-02` establish whether a migration can be enforced. |
-| `ActionContext`, `ActionPriority`, and `ActionRoutingContext` | Keep all three compatible and provisional; do not claim that their current overlap is final. | Action-routing, input precedence, modal/text reservation, and `SHOW-02` behavioral proof must establish one non-contradictory public model. |
+| Dock `PanelId` versus `PanelInstanceId` | New instance-oriented APIs use `widgets::dock::PanelInstanceId`; the convertible legacy `PanelId` remains compatible. | Dock interaction, persistence round-trip, and public workflow evidence establish whether a migration can be enforced. |
+| `ActionContext`, `ActionPriority`, and `ActionRoutingContext` | Keep all three compatible and provisional; do not claim that their current overlap is final. | Action-routing, input precedence, modal/text reservation, and public workflow evidence must establish one non-contradictory public model. |
 
 No item in this ledger is deprecated by this policy. Migration notes, if any,
-belong to final `API-01` after `SHOW-02`, not to the Stage 1 inventory checkpoint.
+belong to the final API review, not to this inventory.

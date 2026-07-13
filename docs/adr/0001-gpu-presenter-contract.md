@@ -2,21 +2,10 @@
 
 ## Status
 
-Accepted for the alpha implementation contract on 2026-07-12.
+Accepted on 2026-07-12 and implemented by the reusable presenter, Showcase
+adoption, native-texture path, public example, and package-consumer evidence.
 
-This decision closes `REND-ADR-01`; the reusable presenter and Showcase
-adoption close integrated `REND-03`, and the accepted implementation plus GPU,
-example, and archive evidence close integrated `REND-04`.
-
-Integrated Stage 5 is **Complete / Accepted** through `REND-04`,
-`LAYOUT-UI-01`, `OVL-UI-01`, `CHROME-UI-01`, `COLL-UI-01`, and
-`COLL-UI-02`. Stage 6 is **Current / Authorized** with `DOCK-UI-01`
-**next**; Stage 7 remains **Authorized / Queued**.
-
-No tag, package publication, deployment, release, or alpha-readiness claim is
-made by these acceptances.
-
-REND-04 freezes the native texture registry, presenter token/revision seam,
+The accepted contract freezes the native texture registry, presenter token/revision seam,
 native-first Vello resolution, device-generation invalidation, and same-device
 producer/recovery workflow. Unsupported cases remain explicit below.
 
@@ -165,7 +154,7 @@ full two-dimensional base-mip/base-layer texture with one sample and one mip.
 RGB texel values carry the toolkit's sRGB-encoded numeric payload and alpha is
 straight. `Rgba8Unorm` is the transport format; it does not authorize a
 different color interpretation. Domain renderers perform HDR, wide-gamut, or
-ICC conversion into that contract before registration. A `REND-04` live GPU
+ICC conversion into that contract before registration. A live GPU
 golden must verify the compositor's color and alpha result.
 
 ### Synchronization and presentation order
@@ -264,28 +253,28 @@ Alternatives rejected for alpha:
 
 ## Follow-on Verification
 
-`REND-03` is Complete / Accepted through the concrete presenter and public
-Showcase adoption. Its evidence covers the pure lifecycle/result matrix,
+The concrete presenter and public Showcase adoption cover the pure
+lifecycle/result matrix,
 zero/non-zero resize, redundant suspend/resume, window identity, changed
 device-slot reattach, operation order, failed-acquire short circuit,
 configuration propagation, diagnostics preservation, the runnable one-window
 example, and the independent offscreen path's lack of surface acquire,
 pre-present notification, or presentation.
 
-`REND-04A` is Complete / Accepted. It implemented the native registry and Vello
-resolver without changing the neutral public structs, with deterministic evidence
+The native registry and Vello resolver preserve the neutral public structs,
+with deterministic evidence
 for register, replace, dirty/revision, extent-change re-registration, remove, ID
 reuse, stale/cross-renderer/scope rejection, device-generation invalidation,
 native/CPU/placeholder precedence, valid-native diagnostic suppression, primitive
 order/clipping/overlays, and production no-readback guards.
 
-`REND-04B` is Complete / Accepted. Real-DX12 evidence proves straight-sRGB/alpha
+Real-DX12 evidence proves straight-sRGB/alpha
 composition, producer-handle lifetime, update/replace/remove, typed two-device
 validation, production loss teardown, and replacement-device re-registration.
 The public one-window example performs GPU-only producer updates with no CPU
 snapshot or readback, and its normalized package archive compiles all targets
 and features as an extracted consumer with ephemeral unpublished-dependency
-patches. Integrated `REND-04` is therefore Complete / Accepted.
+patches.
 
 Any implementation that contradicts this ownership, lifetime, color,
 synchronization, or recovery contract requires an explicit ADR amendment before

@@ -8,25 +8,18 @@ follow the repository release policy.
 `0.1.0-alpha.1` is the planned first prerelease. It has not been dated, tagged,
 published, or accepted as an alpha release.
 
-Integrated Stage 5 composition foundations are **Complete / Accepted** through
-`COLL-UI-01` and `COLL-UI-02`. Stage 6 is **Current / Authorized** with
-`DOCK-UI-01` **next**; Stage 7 remains **Authorized / Queued**.
-
-No tag, package publication, deployment, release, or alpha-readiness claim is
-made by this stage acceptance.
-
 ### Changed
 
 - Added stable-ID collection cursor navigation and public fixed-height virtual
   list/tree scenes with bounded large-data materialization, scrolling,
   keyboard focus/reveal, selection, expansion, theme primitives, and ordered
-  semantics. Integrated `COLL-UI-01` is accepted; variable-height rows,
+  semantics. Variable-height rows,
   custom row bodies, drag/drop, and inline rename remain later component work.
 - Added a public fixed-height virtual table scene with headers and cells,
   two-axis retained scrolling, application-owned sort intents, stable row/cell
   selection, two-dimensional keyboard focus/reveal, constrained column resize
-  requests, theme primitives, and ordered table semantics. Integrated
-  `COLL-UI-02` is accepted; horizontal column virtualization, editing,
+  requests, theme primitives, and ordered table semantics. Horizontal column
+  virtualization, editing,
   multi-selection, grouped headers, and column reordering remain outside the
   MVP. `Ui::virtual_table` now takes caller-owned retained
   `VirtualTableSelection`, a provisional breaking alpha API change.
@@ -34,20 +27,19 @@ made by this stage acceptance.
   chrome scene over menu bar, toolbar, tab strip, and status bar models. The
   scene contributes clipped pointer targets, emits themed backend-independent
   primitives and ordered semantics, and returns typed menu, action, tab, and
-  overflow intents. Integrated `CHROME-UI-01` is accepted; toolbar icon polish
-  remains `VIS-01`, and broader Showcase adoption remains `SHOW-02`.
+  overflow intents. Toolbar icon polish and broader visual regression coverage
+  remain incomplete.
 - Added pure menu/dropdown keyboard, typeahead, reconciliation, and submenu
   intents plus one public painted overlay scene for menus, context menus,
   dropdowns, command palettes, modals, popovers, tooltips, and drag previews.
   The scene contributes to the caller's frame-wide pointer plan, emits themed
   backend-independent primitives and ordered semantics, and returns lifecycle
-  and application-owned action intents. Integrated `OVL-UI-01` is accepted;
-  menu-bar trigger/overflow painting was delivered by accepted
-  `CHROME-UI-01`, and broader Showcase adoption remains `SHOW-02`.
+  and application-owned action intents. Menu-bar trigger and overflow painting
+  are integrated with the public editor chrome.
 - Added deterministic measured grid allocation and public keyed `Ui` row,
   column, grid, padding, stack, and scrolling containers, then dogfooded that
   seam through the facade example and Showcase layout preview without changing
-  their established geometry. Integrated `LAYOUT-UI-01` is accepted; broader
+  their established geometry. Broader
   retained/CSS-like layout remains outside the MVP.
 - Added the qualified native-texture registration and Vello resolver foundation,
   including checked registration/revision identity, native-first texture command
@@ -60,9 +52,9 @@ made by this stage acceptance.
   policy, zero-size handling, generation-scoped device borrowing, typed surface
   and device recovery, deterministic lifecycle evidence, and a runnable public
   example. The Showcase now adopts the public presenter while retaining
-  application-owned input, shell, frame, and repaint work. Integrated `REND-04`
-  now accepts the qualified native-texture path; this does not publish or accept
-  an alpha release.
+  application-owned input, shell, frame, and repaint work. The qualified
+  native-texture path remains Experimental; this does not publish or accept an
+  alpha release.
 - Prepared package metadata and dependency constraints for the planned
   prerelease archives.
 - Made Winit platform batches owned and consuming, with ordered shell services,
