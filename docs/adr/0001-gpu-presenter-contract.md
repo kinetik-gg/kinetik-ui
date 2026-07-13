@@ -5,17 +5,16 @@
 Accepted for the alpha implementation contract on 2026-07-12.
 
 This decision closes `REND-ADR-01`; the reusable presenter and Showcase
-adoption now close integrated `REND-03`. External-texture implementation remains
-`REND-04`.
+adoption close integrated `REND-03`, and the accepted implementation plus GPU,
+example, and archive evidence close integrated `REND-04`.
 
-REND-04A: **Complete / Accepted**; REND-04B: **next**; integrated REND-04 remains **Current / Authorized**.
+REND-04: **Complete / Accepted**; `LAYOUT-UI-01` is **next**.
 
-No tag, package publication, deployment, release, or alpha-readiness claim is made by REND-04A.
+No tag, package publication, deployment, release, or alpha-readiness claim is made by REND-04 acceptance.
 
-REND-04A freezes the native texture registry, presenter token/revision seam,
-native-first Vello resolution, and device-generation invalidation. REND-04B is
-the next serial evidence packet for real-GPU color/alpha, producer example,
-package archive, and integrated acceptance.
+REND-04 freezes the native texture registry, presenter token/revision seam,
+native-first Vello resolution, device-generation invalidation, and same-device
+producer/recovery workflow. Unsupported cases remain explicit below.
 
 ## Context
 
@@ -276,10 +275,13 @@ reuse, stale/cross-renderer/scope rejection, device-generation invalidation,
 native/CPU/placeholder precedence, valid-native diagnostic suppression, primitive
 order/clipping/overlays, and production no-readback guards.
 
-`REND-04B` is next. It must provide real-GPU evidence for straight-sRGB/alpha
-composition, producer-handle lifetime, update/replace/remove and recovery, the
-two-device validation path, the runnable producer example, and packaged archive
-consumption before integrated `REND-04` can be accepted.
+`REND-04B` is Complete / Accepted. Real-DX12 evidence proves straight-sRGB/alpha
+composition, producer-handle lifetime, update/replace/remove, typed two-device
+validation, production loss teardown, and replacement-device re-registration.
+The public one-window example performs GPU-only producer updates with no CPU
+snapshot or readback, and its normalized package archive compiles all targets
+and features as an extracted consumer with ephemeral unpublished-dependency
+patches. Integrated `REND-04` is therefore Complete / Accepted.
 
 Any implementation that contradicts this ownership, lifetime, color,
 synchronization, or recovery contract requires an explicit ADR amendment before

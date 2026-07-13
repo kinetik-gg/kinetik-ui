@@ -4,9 +4,9 @@
 
 ## Execution Contract
 
-Campaign status: REND-04A is **Complete / Accepted**; REND-04B is **next**.
+Campaign status: REND-04 is **Complete / Accepted**; `LAYOUT-UI-01` is **next**.
 
-Integrated REND-04 remains **Current / Authorized**.
+Integrated REND-04 is **Complete / Accepted**.
 
 Stage 5 remains **Current / Authorized**; Stages 6-7 remain **Authorized / Queued**.
 
@@ -14,7 +14,7 @@ Kinetik UI remains a foundation/developer-preview; this packet does not tag, pub
 
 | Field | Decision |
 | --- | --- |
-| Status | Complete / Accepted; Stages 2-4 subsequently passed and Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, and `REND-04A` accepted and `REND-04B` next |
+| Status | Complete / Accepted; Stages 2-4 subsequently passed and Stage 5 is Current / Authorized with presenter/external-texture work accepted and `LAYOUT-UI-01` next |
 | Scope | Capability truth, provisional public boundary, showcase truth, and packageability scaffolding |
 | Impact / confidence | High / High overall; `API-01` is Medium-high confidence |
 | Campaign prerequisite | Stage 0 documentation gate, complete; campaign authorization recorded |

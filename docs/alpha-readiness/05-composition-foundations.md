@@ -4,9 +4,9 @@
 
 ## Execution Contract
 
-Campaign status: REND-04A is **Complete / Accepted**; REND-04B is **next**.
+Campaign status: REND-04 is **Complete / Accepted**; `LAYOUT-UI-01` is **next**.
 
-Integrated REND-04 remains **Current / Authorized**.
+Integrated REND-04 is **Complete / Accepted**.
 
 Stage 5 remains **Current / Authorized**; Stages 6-7 remain **Authorized / Queued**.
 
@@ -14,11 +14,11 @@ Kinetik UI remains a foundation/developer-preview; this packet does not tag, pub
 
 | Field | Decision |
 | --- | --- |
-| Status | Current / Authorized; REND-04A is **Complete / Accepted**; REND-04B is **next**. |
+| Status | Current / Authorized; REND-04 is **Complete / Accepted**; `LAYOUT-UI-01` is **next**. |
 | Scope | Presenter ownership/external textures and measured public composition foundations |
 | Impact / confidence | Critical / Medium overall |
 | Campaign prerequisite | Stage 4 gate, Complete / Accepted; campaign authorization recorded |
-| Token checkpoint | Very large; native-texture foundation is accepted through `REND-04A`, so execute `REND-04B` next before checkpointing the measured-`Ui` seam |
+| Token checkpoint | Very large; native-texture interoperability is accepted, so execute `LAYOUT-UI-01` next and freeze the measured-`Ui` seam |
 
 ## Packets
 
@@ -26,7 +26,7 @@ Kinetik UI remains a foundation/developer-preview; this packet does not tag, pub
 | --- | --- | --- | --- | --- | --- |
 | Presenter | `REND-ADR-01` | [Decide device/queue/surface/external-texture ownership, sync, lifetime, recovery, offscreen, and multi-window boundary](../adr/0001-gpu-presenter-contract.md) | Accepted Stage 4 policy context | Critical / Medium | Root-only ADR; Complete / Accepted |
 | Presenter | `REND-03` | Extract reusable Winit/Vello window, resize, recovery, submit, and present behavior from showcase-private code | `REND-ADR-01`, `IN-02` | Critical / Medium | Root integration; Complete / Accepted |
-| Presenter | `REND-04` | Register/update/remove domain-owned native GPU textures without mandatory CPU snapshots | `REND-03` | Critical / Medium | Root integration |
+| Presenter | `REND-04` | Register/update/remove domain-owned native GPU textures without mandatory CPU snapshots | `REND-03` | Critical / Medium | Root integration; Complete / Accepted |
 | Composition | `LAYOUT-UI-01` | Measured row/column/grid/padding/stack/scroll allocation through public `Ui` APIs | `RT-01` | Critical / Medium-high | Root-owned shared seam |
 | Composition | `OVL-UI-01` | Public painted menus, dropdowns, context/popover/tooltip/palette/modal behavior | `RT-02`, `RT-03`, `LAYOUT-UI-01` | High / Medium | Root arbitration; leaf work after seam freeze |
 | Composition | `CHROME-UI-01` | Public toolbar, tab strip, status bar, and overflow behavior | Layout, overlay/input/action contracts | High / Medium-high | Isolated leaf after seams freeze |
@@ -42,8 +42,9 @@ Presenter work owns Z3/Z5: no `REND-03` overlap with `IN-02` or live showcase ch
 [ADR 0001](../adr/0001-gpu-presenter-contract.md) accepts `REND-ADR-01` and
 freezes the supported presenter/device/external-texture boundary. `REND-03` is
 Complete / Accepted through reusable presenter and Showcase adoption evidence;
-`REND-04B` is next for native GPU golden/example/archive proof. Then record and verify
-that measured `Ui` APIs prove common composition without manual rectangles. After each checkpoint
+`REND-04` is Complete / Accepted through native GPU golden, recovery, producer
+example, and extracted archive proof. Next, record and verify that measured `Ui`
+APIs prove common composition without manual rectangles. After each checkpoint
 passes, the campaign continues without intermediate approval; an ambiguity or
 failed gate is a stop condition. The stage gate then requires a supported
 presenter outside the showcase; proven domain GPU texture interoperability or

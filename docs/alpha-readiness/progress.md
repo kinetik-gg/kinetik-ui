@@ -2,21 +2,21 @@
 
 [Back to the alpha-readiness index](../alpha-readiness.md)
 
-Campaign status: REND-04A is **Complete / Accepted**; REND-04B is **next**.
+Campaign status: REND-04 is **Complete / Accepted**; `LAYOUT-UI-01` is **next**.
 
-Integrated REND-04 remains **Current / Authorized**.
+Integrated REND-04 is **Complete / Accepted**.
 
 Stage 5 remains **Current / Authorized**; Stages 6-7 remain **Authorized / Queued**.
 
 Kinetik UI remains a foundation/developer-preview; this packet does not tag, publish, deploy, release, or claim alpha readiness.
 
-Stages 0-4 are Complete; Stage 4 is Complete / Accepted through `REND-02` squash merge `1239dd994619de3765d8cee05c5f8ddd34c2c6de`. Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, and `REND-04A` Complete / Accepted; `REND-04B` is next. Stages 6-7 remain Authorized / Queued for continuous sequential execution without intermediate approval. Every remaining packet still has to pass its deterministic gates, and any Runway stop condition halts the active packet or stage.
+Stages 0-4 are Complete; Stage 4 is Complete / Accepted through `REND-02` squash merge `1239dd994619de3765d8cee05c5f8ddd34c2c6de`. Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, and `REND-04` Complete / Accepted; `LAYOUT-UI-01` is next. Stages 6-7 remain Authorized / Queued for continuous sequential execution without intermediate approval. Every remaining packet still has to pass its deterministic gates, and any Runway stop condition halts the active packet or stage.
 
 Campaign workflow policy: `create-if-available` issues, `create-if-gates-pass` pull requests, and `squash-after-gates` merges. Tagging, package publishing, and an alpha release remain outside this authorization.
 
 ## Stage 0: Plan And Baseline
 
-Status: Complete. This closed the documentation task only; Stages 1-4 subsequently completed and Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, and `REND-04A` Complete / Accepted; `REND-04B` is next under the recorded campaign authorization.
+Status: Complete. This closed the documentation task only; Stages 1-4 subsequently completed and Stage 5 is Current / Authorized with presenter/external-texture work Complete / Accepted; `LAYOUT-UI-01` is next under the recorded campaign authorization.
 
 ### Changed files
 
@@ -2122,6 +2122,73 @@ recovery remain deferred. The pre-existing root-lock `swash 0.2.8` warning
 remains a Stage 7 release risk.
 
 Stage 5 remains **Current / Authorized**; Stages 6-7 remain **Authorized / Queued**. This packet does not declare alpha readiness, create a tag, publish packages, deploy, or release.
+
+### Integrated `REND-04`: native texture presentation and evidence closure
+
+Status: **Complete / Accepted**. Issues #578, #580, #582, #584, and #586
+closed through squash-merged PRs #579, #581, #583, #585, and #587.
+`LAYOUT-UI-01` is next.
+
+#### Changed files
+
+- `kinetik-ui-render`, `kinetik-ui-vello`, and `kinetik-ui-vello-winit`
+  native texture contracts, registration paths, lifecycle handling, and
+  deterministic plus real-GPU evidence.
+- The public `one_window` example now includes a same-device native texture
+  producer with revision updates and device-scope re-registration.
+- Root/readiness documentation, the GPU presenter ADR, public API policy, and
+  changelog now record the integrated contract and accepted evidence.
+
+#### Reasoning and contract decisions
+
+Native textures remain qualified, provisional integration APIs. Registration
+requires a presenter-issued device scope, keeps straight-sRGB and
+straight-alpha semantics explicit, rejects stale/foreign generations, and
+resolves native content without a CPU readback path. The public example keeps
+producer work application-owned: it renders and submits on the presenter
+queue, advances the registered revision, and recreates the resource after a
+device-scope change.
+
+The accepted contract is deliberately narrower than a general external-image
+interop system. It proves same-device Vello presentation and deterministic
+foreign-device recovery while retaining the ADR's explicit deferrals for
+zero-copy and cross-device synchronization.
+
+#### Tests run and results
+
+- PR #579 squash merge `1793dd7ada69dbf61ee011e481a60392d9ae0819`
+  passed its packet gates and main CI run `29244075526`.
+- PR #581 squash merge `831e68b4aef3bf096c113a55a8299648642af4cc`
+  passed its packet gates and main CI run `29244720040`.
+- PR #583 squash merge `d3f854d90546c7a333176941f6e2af8fcaa3121c`
+  passed the real DX12 same-device native-texture test, 40 deterministic
+  presenter tests with one intentional GPU ignore, and main CI run
+  `29245863157`.
+- PR #585 squash merge `0314eb3a550bc359b170a95cf6eddf0f8ce9a51c`
+  passed the real foreign-device rejection/rebind test, both serialized GPU
+  tests, 40 deterministic presenter tests with two intentional GPU ignores,
+  and main CI run `29246438434`.
+- PR #587 squash merge `a31ff5412004df95697a21f0d36de3c503b17c5e`
+  passed example checks, warning-denied Clippy, 45 presenter tests with two
+  intentional GPU ignores, archive/member/dependency validation, an extracted
+  all-target/all-feature package check, and main CI run `29247077875`.
+- All five PRs were independently reviewed at P0/P1/P2=`0/0/0`; their issues
+  are closed and their campaign branches have been pruned.
+
+#### Remaining risks and deferred findings
+
+Vello atlas-copy bandwidth and duplicate GPU memory remain unmeasured and are
+owned by Stage 7 performance work. Zero-copy, arbitrary texture views,
+foreign/shared-device import, explicit synchronization, a reusable offscreen
+presenter, general multi-window coordination, HDR/wide-gamut/ICC conversion,
+and additional presenter backends remain deferred by the ADR.
+
+Physical driver-loss and window-surface recreation were not induced on real
+hardware; deterministic `REND-03` lifecycle evidence covers the recovery
+branch. The producer example compiled and packaged but was not manually
+observed interactively. The root lock's yanked `swash 0.2.8` remains a Stage 7
+dependency/release risk. No tag, package publication, deployment, release, or
+alpha-readiness claim occurred.
 
 ## Packet Completion Template
 

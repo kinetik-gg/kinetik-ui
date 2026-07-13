@@ -4,9 +4,9 @@
 
 ## Execution Contract
 
-Campaign status: REND-04A is **Complete / Accepted**; REND-04B is **next**.
+Campaign status: REND-04 is **Complete / Accepted**; `LAYOUT-UI-01` is **next**.
 
-Integrated REND-04 remains **Current / Authorized**.
+Integrated REND-04 is **Complete / Accepted**.
 
 Stage 5 remains **Current / Authorized**; Stages 6-7 remain **Authorized / Queued**.
 
@@ -106,7 +106,7 @@ overlap, and shell behavior with no recorded owner would have stopped the
 campaign. Those checks passed; at the Stage 3 gate, the campaign advanced Stage
 4 to Current / Authorized without requiring new approval. Stage 4 subsequently
 passed, and Stage 5 is now Current / Authorized with `REND-ADR-01` and
-`REND-03` and `REND-04A` accepted and `REND-04B` next.
+`REND-03` and integrated `REND-04` accepted; `LAYOUT-UI-01` is next.
 
 ## Deferrals
 
