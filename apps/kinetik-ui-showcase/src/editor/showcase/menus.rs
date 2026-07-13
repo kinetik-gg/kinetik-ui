@@ -158,10 +158,10 @@ impl EditorShowcase {
                 ),
                 menu_action(
                     ACTION_SAVE,
-                    "Save Scene (Experimental)",
-                    Some(ctrl_char("s")),
+                    "Save Scene",
                     None,
-                    false,
+                    None,
+                    true,
                 ),
                 MenuItem::Separator,
                 menu_action(

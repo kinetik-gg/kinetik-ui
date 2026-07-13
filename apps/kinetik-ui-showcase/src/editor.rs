@@ -14,10 +14,9 @@ use std::time::Duration;
 
 use kinetik_ui::core::{
     ActionContext, ActionDescriptor, ActionIcon, ActionId, ActionInvocation, ActionQueue,
-    ActionSource, Axis, Brush, ClipId, Color, CornerRadius, CursorShape, ImagePrimitive, Key,
-    KeyState, LinePrimitive, Modifiers, PlatformRequest, Point, Primitive, Rect, RectPrimitive,
-    RepaintRequest, Response, SemanticNode, SemanticRole, Shortcut, Size, Stroke, TextPrimitive,
-    TextureId, Theme, Vec2, WidgetId,
+    ActionSource, Axis, Brush, Color, CornerRadius, CursorShape, ImagePrimitive, Key, KeyState,
+    Modifiers, PlatformRequest, Point, Primitive, Rect, RectPrimitive, RepaintRequest, Response,
+    Shortcut, Size, Stroke, TextPrimitive, TextureId, Theme, Vec2, WidgetId,
 };
 use kinetik_ui::render::{
     ImageAtlasRegion, ImageResource, RenderImage, RenderImageSampling, RenderResources,
@@ -26,13 +25,12 @@ use kinetik_ui::render::{
 use kinetik_ui::text::TextEditState;
 use kinetik_ui::widgets::{
     AssetSlotAsset, AssetSlotConfig, DiagnosticSource, DiagnosticStrip, DiagnosticStripItem,
-    DiagnosticStripItemId, DiagnosticStripSeverity, Dock, DockChromeStyle, DockDropTarget,
-    DockDropZone, DockInteractionPolicy, DockNode, DockPlacement, DockSplitterContextActionKind,
-    DockTabDrag, DropdownItem, DropdownItemId, DropdownModel, EdgeDescriptor, EdgeId,
-    FeedbackAction, FeedbackDismiss, FeedbackId, FeedbackItem, FeedbackKind, FeedbackStack, Frame,
-    FrameId, FrameLayout, FrameTab, GraphPoint, GraphRect, GraphVector, GridColumns, GridLayout,
-    Guide, ItemId, JobCancel, JobList, JobPhase, JobProgress, JobRow, JobRowId, ListLayout, Menu,
-    MenuBar, MenuBarMenu, MenuBarMenuId, MenuBarOverlayRequest, MenuItem, MenuOverlay, ModalAction,
+    DiagnosticStripItemId, DiagnosticStripSeverity, Dock, DockChromeStyle, DockInteractionPolicy,
+    DockNode, DockSplitterContextActionKind, DropdownItem, DropdownItemId, DropdownModel,
+    EdgeDescriptor, EdgeId, FeedbackAction, FeedbackDismiss, FeedbackId, FeedbackItem,
+    FeedbackKind, FeedbackStack, Frame, FrameId, GraphPoint, GraphRect, GraphVector, ItemId,
+    JobCancel, JobList, JobPhase, JobProgress, JobRow, JobRowId, ListLayout, Menu, MenuBar,
+    MenuBarMenu, MenuBarMenuId, MenuBarOverlayRequest, MenuItem, MenuOverlay, ModalAction,
     ModalActionRole, ModalDialog, ModalDialogOverlay, NodeDescriptor, NodeFrameDescriptor,
     NodeFrameId, NodeGraphDescriptor, NodeGraphEdgeRoutePoint, NodeGraphEmissionError,
     NodeGraphPanZoom, NodeGraphSelection, NodeGraphSelectionTarget, NodeGraphStaticOutput,
@@ -41,17 +39,18 @@ use kinetik_ui::widgets::{
     Panel, PanelId, PanelInstanceId, PanelInstancePolicy, PanelInstanceSnapshot,
     PanelOpenActionMetadata, PanelOpenDecision, PanelRegistry, PanelTypeCategory,
     PanelTypeDescriptor, PanelTypeId, PanelWorkspaceContext, PathFieldConfig, PopoverPlacement,
-    PortDescriptor, PortDirection, PortEndpoint, PortId, PortTypeId, PropertyGridAffordanceLayout,
-    PropertyGridLayout, PropertyGridRow, PropertyGridRowStatus, RerouteDescriptor, RerouteId,
-    SelectFieldConfig, StatusBar, StatusItem, StatusItemId, StatusItemKind, StatusProgress,
-    TabStrip, TableColumn, TableLayout, Toolbar, ToolbarGroup, ToolbarGroupId, ToolbarItem,
-    ToolbarItemPresentation, TreeExpansion, TreeItem, TreeLayout, TreeModel, Ui,
-    VectorScrubInputConfig, ViewportComposition, ViewportFit, ViewportSurface, WorkspaceSnapshot,
-    classify_numeric_input_draft, frame_tabs, icon_button_semantics,
-    property_grid_row_affordance_rects, resolve_dock_splitter_context_actions_with_policy,
-    resolve_frame_drop_zone_with_policy, solve_dock_layout, solve_dock_splitters_with_style,
+    PortDescriptor, PortDirection, PortEndpoint, PortId, PortTypeId, PropertyGridLayout,
+    PropertyGridRow, PropertyGridRowStatus, RerouteDescriptor, RerouteId, SelectFieldConfig,
+    StatusBar, StatusItem, StatusItemId, StatusItemKind, StatusProgress, TableColumn, TableLayout,
+    Toolbar, ToolbarGroup, ToolbarGroupId, ToolbarItem, ToolbarItemPresentation, TreeExpansion, Ui,
+    VectorScrubInputConfig, ViewportFit, WorkspaceSnapshot, classify_numeric_input_draft,
+    icon_button_semantics, resolve_dock_splitter_context_actions_with_policy, solve_dock_layout,
+    solve_dock_splitters_with_style,
 };
+#[cfg(test)]
+use kinetik_ui::widgets::{FrameTab, TabStrip, frame_tabs};
 
+include!("editor/workflow.rs");
 include!("editor/root_state.rs");
 include!("editor/resources.rs");
 include!("editor/models.rs");

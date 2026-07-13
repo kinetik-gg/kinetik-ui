@@ -37,6 +37,10 @@ impl EditorShowcase {
                 status.clone_into(&mut self.status);
                 true
             }
+            ACTION_SAVE => {
+                self.save_project_in_memory();
+                true
+            }
             ACTION_DOCS => {
                 "Online documentation requested".clone_into(&mut self.status);
                 true
@@ -60,8 +64,16 @@ impl EditorShowcase {
             ui.viewport().logical_size.width,
             ui.viewport().logical_size.height,
         );
+        let outliner_model = workflow_outliner_model(&self.object_names);
+        let asset_model = workflow_asset_model();
+        let workflow = self.prepare_workflow_scenes(
+            ui,
+            viewport,
+            &outliner_model,
+            &asset_model,
+        );
         let mut invocations = Vec::new();
-        self.resolve_pointer_plan(ui, viewport);
+        self.resolve_pointer_plan(ui, viewport, &workflow);
         if self.about_modal_open {
             self.about_modal_input(ui, viewport, &mut invocations);
         }
@@ -69,7 +81,7 @@ impl EditorShowcase {
         self.dismiss_menu_for_input(ui, viewport);
         self.tool_bar(ui, viewport, &mut invocations);
         self.menu_bar(ui, viewport);
-        self.workspace(ui, viewport);
+        self.workspace(ui, &workflow);
         self.menu_overlay(ui, viewport, &mut invocations);
         self.status_bar(ui, viewport, action_count + invocations.len() as u32);
         if self.about_modal_open {
@@ -96,7 +108,12 @@ impl EditorShowcase {
         true
     }
 
-    fn resolve_pointer_plan(&self, ui: &mut Ui<'_>, viewport: Rect) {
+    fn resolve_pointer_plan(
+        &self,
+        ui: &mut Ui<'_>,
+        viewport: Rect,
+        workflow: &EditorWorkflowScenes<'_>,
+    ) {
         if self.about_modal_open {
             let overlay = self.about_modal_overlay_model(viewport);
             let surface = ui.make_id("editor.about-modal.surface");
@@ -125,6 +142,7 @@ impl EditorShowcase {
         }
 
         let Some(kind) = self.open_menu else {
+            self.install_workflow_pointer_plan(ui, workflow);
             return;
         };
         let overlay = self.menu_overlay_model(kind, viewport);
