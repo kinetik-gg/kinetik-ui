@@ -29,9 +29,12 @@ pub use virtual_list::{
     VirtualList, VirtualListConfig, VirtualListItemResponse, VirtualListOutput, VirtualListRow,
     VirtualListSelectionMode,
 };
+pub(crate) use virtual_table::VirtualTableCursorMove;
 pub use virtual_table::{
-    VirtualTable, VirtualTableConfig, VirtualTableHeaderResponse, VirtualTableMaterializedRow,
-    VirtualTableOutput, VirtualTableRow, VirtualTableWindow,
+    TableColumnResizeRequest, VirtualTable, VirtualTableConfig, VirtualTableCursorTarget,
+    VirtualTableHeaderResponse, VirtualTableMaterializedRow, VirtualTableOutput, VirtualTableRow,
+    VirtualTableSelection, VirtualTableSelectionMode, VirtualTableSelectionResponse,
+    VirtualTableTarget, VirtualTableWindow,
 };
 pub use virtual_tree::{
     VirtualTree, VirtualTreeConfig, VirtualTreeItemResponse, VirtualTreeOutput, VirtualTreeRow,
