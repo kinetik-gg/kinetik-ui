@@ -21,7 +21,8 @@ use vello::{
 
 use super::{GpuState, VelloWindowPresenter};
 use crate::{
-    VelloNativeTextureUpdateOutcome, VelloPresenterConfig, device::DeviceInbox, lifecycle::Extent,
+    PresenterGpuErrorKind, VelloNativeTextureUpdateOutcome, VelloPresenterConfig,
+    VelloPresenterError, VelloRecoveryKind, device::DeviceInbox, lifecycle::Extent,
 };
 
 const WIDTH: u32 = 8;
@@ -93,8 +94,133 @@ fn same_device_native_texture_pixels_cover_update_replace_lifetime_and_remove() 
     });
 }
 
+#[test]
+#[ignore = "explicit two-device GPU gate; run with WGPU_BACKEND=dx12"]
+fn foreign_device_rejection_requires_rebind_after_device_recovery() {
+    pollster::block_on(async {
+        let (mut presenter, old_scope) = headless_presenter().await;
+        // Two devices in one wgpu instance share the validation hub, so a
+        // resource from the second device is unambiguously foreign to the first.
+        let shared_instance = presenter
+            .gpu
+            .as_ref()
+            .expect("installed GPU")
+            .context
+            .instance
+            .clone();
+        let replacement_gpu = headless_gpu_for_instance(shared_instance).await;
+        let texture_id = TextureId::from_raw(58_201);
+        let resource = TextureResource {
+            id: texture_id,
+            size: Size::new(1.0, 1.0),
+            sampling: RenderImageSampling::Pixelated,
+            snapshot: Some(
+                RenderImage::rgba8(1, 1, vec![255, 0, 255, 255]).expect("valid one-pixel fallback"),
+            ),
+        };
+        let mut resources = RenderResources::new();
+        resources.register_texture(resource.clone());
+        let primitives = [Primitive::Texture(TexturePrimitive {
+            texture: texture_id,
+            rect: Rect::new(2.0, 2.0, 4.0, 4.0),
+            source_size: Size::new(1.0, 1.0),
+        })];
+        let replacement_source = create_source_on_gpu(&replacement_gpu, [16, 200, 80, 255]);
+
+        let old_registration = presenter
+            .register_native_texture(&old_scope, &resource, &replacement_source, 1)
+            .expect("registration records metadata before GPU provenance is exercised");
+        let old_target = create_target(&presenter);
+        let _ = render_center(&mut presenter, &resources, &primitives, &old_target);
+        let error = presenter
+            .device_scope()
+            .expect_err("foreign-device use must reach the uncaptured-error inbox");
+        match error {
+            VelloPresenterError::UncapturedGpu(error) => {
+                assert_eq!(error.kind(), PresenterGpuErrorKind::Validation);
+            }
+            other => panic!("expected typed GPU validation error, got {other:?}"),
+        }
+        drop(old_target);
+
+        presenter
+            .transition_device_loss()
+            .expect("enter production device-loss teardown");
+        assert_eq!(
+            presenter.status().recovery(),
+            Some(VelloRecoveryKind::RebuildDevice)
+        );
+        assert!(presenter.status().device_scope().is_none());
+        assert!(presenter.gpu.is_none());
+        assert_eq!(
+            presenter.with_device(&old_scope, |_| ()),
+            Err(VelloPresenterError::StaleDeviceScope)
+        );
+        assert_eq!(
+            presenter.update_native_texture(&old_registration, 2),
+            Err(VelloPresenterError::DeviceUnavailable)
+        );
+
+        let ((), new_scope) = presenter
+            .control
+            .complete_device_rebuild(
+                Extent {
+                    width: WIDTH,
+                    height: HEIGHT,
+                },
+                Ok::<(), VelloPresenterError>(()),
+            )
+            .expect("complete test device generation rebuild");
+        install_gpu(&mut presenter, new_scope.clone(), replacement_gpu);
+        assert_ne!(old_scope, new_scope);
+        assert_eq!(
+            presenter.update_native_texture(&old_registration, 2),
+            Err(VelloPresenterError::StaleNativeTextureRegistration {
+                texture: texture_id
+            })
+        );
+
+        let new_registration = presenter
+            .register_native_texture(&new_scope, &resource, &replacement_source, 1)
+            .expect("re-register on replacement device");
+        assert_eq!(new_registration.texture_id(), texture_id);
+        let new_target = create_target(&presenter);
+        assert_pixel_near(
+            render_center(&mut presenter, &resources, &primitives, &new_target),
+            [16, 200, 80, 255],
+        );
+    });
+}
+
 async fn headless_presenter() -> (VelloWindowPresenter, crate::PresenterDeviceScope) {
-    let mut context = RenderContext::new();
+    let gpu = headless_gpu().await;
+    let mut presenter = VelloWindowPresenter::new(
+        VelloPresenterConfig::new().with_antialiasing_method(AaConfig::Area),
+    )
+    .expect("headless presenter");
+    let (scope, _test_sender) = presenter
+        .install_test_device(Extent {
+            width: WIDTH,
+            height: HEIGHT,
+        })
+        .expect("install attached test lifecycle");
+    install_gpu(&mut presenter, scope.clone(), gpu);
+    (presenter, scope)
+}
+
+async fn headless_gpu() -> GpuState {
+    headless_gpu_from_context(RenderContext::new()).await
+}
+
+async fn headless_gpu_for_instance(instance: vello::wgpu::Instance) -> GpuState {
+    headless_gpu_from_context(RenderContext {
+        instance,
+        devices: Vec::new(),
+    })
+    .await
+}
+
+async fn headless_gpu_from_context(mut context: RenderContext) -> GpuState {
     let dev_id = context
         .device(None)
         .await
@@ -115,27 +241,23 @@ async fn headless_presenter() -> (VelloWindowPresenter, crate::PresenterDeviceSc
     .expect("create real Vello renderer");
     let native_scope = VelloNativeTextureScope::new().expect("native texture scope");
     let native_registry = VelloNativeTextureRegistry::new(&native_scope);
-
-    let mut presenter = VelloWindowPresenter::new(
-        VelloPresenterConfig::new().with_antialiasing_method(AaConfig::Area),
-    )
-    .expect("headless presenter");
-    let (scope, _test_sender) = presenter
-        .install_test_device(Extent {
-            width: WIDTH,
-            height: HEIGHT,
-        })
-        .expect("install attached test lifecycle");
-    let inbox = DeviceInbox::install(&device_handle.device, scope.clone());
-    presenter.gpu = Some(GpuState {
+    GpuState {
         renderer,
         context,
         dev_id,
         native_registry,
         native_scope,
-    });
+    }
+}
+
+fn install_gpu(
+    presenter: &mut VelloWindowPresenter,
+    scope: crate::PresenterDeviceScope,
+    gpu: GpuState,
+) {
+    let inbox = DeviceInbox::install(&gpu.context.devices[gpu.dev_id].device, scope);
+    presenter.gpu = Some(gpu);
     presenter.inbox = Some(inbox);
-    (presenter, scope)
 }
 
 fn create_source(
@@ -187,6 +309,13 @@ fn write_rgba(queue: &vello::wgpu::Queue, texture: &Texture, rgba: [u8; 4]) {
             depth_or_array_layers: 1,
         },
     );
+}
+
+fn create_source_on_gpu(gpu: &GpuState, rgba: [u8; 4]) -> Texture {
+    let device_handle = &gpu.context.devices[gpu.dev_id];
+    let texture = device_handle.device.create_texture(&source_descriptor());
+    write_rgba(&device_handle.queue, &texture, rgba);
+    texture
 }
 
 fn source_descriptor() -> TextureDescriptor<'static> {
