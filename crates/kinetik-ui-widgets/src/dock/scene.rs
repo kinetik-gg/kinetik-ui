@@ -300,23 +300,21 @@ impl DockScene {
         ordinal = ordinal.max(panel_content(plan, PointerOrder::new(ordinal)).raw());
 
         for frame in &self.layout.frames {
-            plan.with_clip(frame.tab_list_rect, |plan| {
-                for tab in &frame.tabs {
-                    let mut target = PointerTarget::new(tab.id, tab.rect, take_order(&mut ordinal))
-                        .drop_owner(tab.id.child("dock-drop"));
-                    if tab.draggable {
-                        target = target.domain_drag_source();
-                    }
-                    plan.target(target.enabled(enabled));
-                    if let Some(close_rect) = tab.close_rect {
-                        plan.target(
-                            PointerTarget::new(tab.close_id, close_rect, take_order(&mut ordinal))
-                                .drop_owner(tab.close_id.child("dock-drop"))
-                                .enabled(enabled && tab.close_visible),
-                        );
-                    }
+            for tab in &frame.tabs {
+                let mut target = PointerTarget::new(tab.id, tab.rect, take_order(&mut ordinal))
+                    .drop_owner(tab.id.child("dock-drop"));
+                if tab.draggable {
+                    target = target.domain_drag_source();
                 }
-            });
+                plan.target(target.enabled(enabled));
+                if let Some(close_rect) = tab.close_rect {
+                    plan.target(
+                        PointerTarget::new(tab.close_id, close_rect, take_order(&mut ordinal))
+                            .drop_owner(tab.close_id.child("dock-drop"))
+                            .enabled(enabled && tab.close_visible),
+                    );
+                }
+            }
         }
 
         for splitter in &self.layout.splitters {

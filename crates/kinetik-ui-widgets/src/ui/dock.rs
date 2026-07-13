@@ -86,6 +86,7 @@ impl Ui<'_> {
         let mut output = DockControllerOutput::default();
 
         self.reconcile_dock_controller(scene, dock, controller);
+        let drag_was_retained = controller.drag.is_some();
 
         for frame in &scene.layout().frames {
             let response = self.pressable_with_id(frame.id, frame.rect, disabled);
@@ -206,6 +207,7 @@ impl Ui<'_> {
                 .filter(|target| dock_drop_target_is_current(dock, *target))
                 .filter(|target| {
                     hovered_frame.is_some_and(|frame| dock_drop_target_frame(*target) == frame)
+                        || (!drag_was_retained && self.memory().drag_source() == source_widget)
                 });
             controller.preview = resolved;
 
@@ -228,6 +230,7 @@ impl Ui<'_> {
                 splitter.rect,
                 disabled || !config.policy.splitters.allow_resize,
             );
+            let pointer_context_requested = gesture.response.secondary_clicked;
             for action in gesture.actions {
                 if matches!(action.phase, DomainDragGesturePhase::Move) {
                     dock.resize_split_with_policy(
@@ -241,7 +244,7 @@ impl Ui<'_> {
 
             let (input, memory) = self.runtime.input_and_memory_mut();
             let context = context_menu_trigger(splitter.id, splitter.rect, input, memory, disabled);
-            if context.context_requested {
+            if pointer_context_requested || context.context_requested {
                 let frames = solve_dock_layout(dock, bounds);
                 if let Some(model_splitter) =
                     solve_dock_splitters_with_style(dock, bounds, scene.config().chrome_style)
@@ -322,7 +325,15 @@ impl Ui<'_> {
                 .frame(focus.frame)
                 .is_none_or(|frame| !frame.panels.iter().any(|panel| panel.id == focus.panel))
         {
-            if self.memory().focused() == Some(focus.widget) {
+            if let Some(frame) = dock.frames().into_iter().find_map(|frame| {
+                frame
+                    .panels
+                    .iter()
+                    .any(|panel| panel.id == focus.panel)
+                    .then_some(frame.id)
+            }) {
+                controller.focus = Some(DockControllerFocus { frame, ..focus });
+            } else if self.memory().focused() == Some(focus.widget) {
                 if let Some(repaired) = active_dock_focus(scene, dock) {
                     self.runtime.memory_mut().focus(repaired.widget);
                     controller.focus = Some(repaired);
