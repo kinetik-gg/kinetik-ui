@@ -291,7 +291,9 @@ impl DockScene {
 
         for frame in &self.layout.frames {
             plan.target(
-                PointerTarget::new(frame.id, frame.rect, take_order(&mut ordinal)).enabled(enabled),
+                PointerTarget::new(frame.id, frame.rect, take_order(&mut ordinal))
+                    .drop_owner(frame.id)
+                    .enabled(enabled),
             );
         }
 
@@ -318,6 +320,7 @@ impl DockScene {
         for splitter in &self.layout.splitters {
             plan.target(
                 PointerTarget::new(splitter.id, splitter.rect, take_order(&mut ordinal))
+                    .domain_drag_source()
                     .enabled(enabled),
             );
         }
