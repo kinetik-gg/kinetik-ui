@@ -164,14 +164,28 @@ impl Ui<'_> {
         let mut hovered_frame = None;
         let mut dropped_frame = None;
         if source_widget.is_some() {
+            let mut drop_surfaces = Vec::new();
             for frame in &scene.layout().frames {
+                drop_surfaces.push((frame.id, frame.rect, frame.frame));
+                for tab in &frame.tabs {
+                    drop_surfaces.push((tab.id.child("dock-drop"), tab.rect, frame.frame));
+                    if let Some(close_rect) = tab.close_rect {
+                        drop_surfaces.push((
+                            tab.close_id.child("dock-drop"),
+                            close_rect,
+                            frame.frame,
+                        ));
+                    }
+                }
+            }
+            for (id, rect, frame) in drop_surfaces {
                 let (input, memory) = self.runtime.input_and_memory_mut();
-                let response = drop_target(frame.id, frame.rect, input, memory, disabled);
+                let response = drop_target(id, rect, input, memory, disabled);
                 if response.source == source_widget && response.response.state.hovered {
-                    hovered_frame = Some(frame.frame);
+                    hovered_frame = Some(frame);
                 }
                 if response.source == source_widget && response.dropped {
-                    dropped_frame = Some(frame.frame);
+                    dropped_frame = Some(frame);
                 }
             }
         }
