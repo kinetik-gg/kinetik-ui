@@ -2,24 +2,24 @@
 
 [Back to the alpha-readiness index](../alpha-readiness.md)
 
-Campaign status: integrated `OVL-UI-01` is **Complete / Accepted**;
-`CHROME-UI-01` is **next**, and `COLL-UI-01` remains queued behind the frozen
-measured-`Ui` and overlay seams.
+Campaign status: integrated `CHROME-UI-01` is **Complete / Accepted**;
+`COLL-UI-01A` stable collection navigation and reconciliation is **next**,
+followed by the painted list/tree and table packets.
 
-Integrated `REND-04`, `LAYOUT-UI-01`, and `OVL-UI-01` are **Complete /
-Accepted**.
+Integrated `REND-04`, `LAYOUT-UI-01`, `OVL-UI-01`, and `CHROME-UI-01` are
+**Complete / Accepted**.
 
 Stage 5 remains **Current / Authorized**; Stages 6-7 remain **Authorized / Queued**.
 
 Kinetik UI remains a foundation/developer-preview; this packet does not tag, publish, deploy, release, or claim alpha readiness.
 
-Stages 0-4 are Complete; Stage 4 is Complete / Accepted through `REND-02` squash merge `1239dd994619de3765d8cee05c5f8ddd34c2c6de`. Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, `REND-04`, `LAYOUT-UI-01`, and `OVL-UI-01` Complete / Accepted; `CHROME-UI-01` is next, while `COLL-UI-01` remains queued behind the frozen measured-`Ui` and overlay seams. Stages 6-7 remain Authorized / Queued for continuous sequential execution without intermediate approval. Every remaining packet still has to pass its deterministic gates, and any Runway stop condition halts the active packet or stage.
+Stages 0-4 are Complete; Stage 4 is Complete / Accepted through `REND-02` squash merge `1239dd994619de3765d8cee05c5f8ddd34c2c6de`. Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, `REND-04`, `LAYOUT-UI-01`, `OVL-UI-01`, and `CHROME-UI-01` Complete / Accepted; `COLL-UI-01A` is next. Stages 6-7 remain Authorized / Queued for continuous sequential execution without intermediate approval. Every remaining packet still has to pass its deterministic gates, and any Runway stop condition halts the active packet or stage.
 
 Campaign workflow policy: `create-if-available` issues, `create-if-gates-pass` pull requests, and `squash-after-gates` merges. Tagging, package publishing, and an alpha release remain outside this authorization.
 
 ## Stage 0: Plan And Baseline
 
-Status: Complete. This closed the documentation task only; Stages 1-4 subsequently completed and Stage 5 is Current / Authorized with presenter, external-texture, measured-layout, and overlay work Complete / Accepted; `CHROME-UI-01` is next under the recorded campaign authorization.
+Status: Complete. This closed the documentation task only; Stages 1-4 subsequently completed and Stage 5 is Current / Authorized with presenter, external-texture, measured-layout, overlay, and chrome work Complete / Accepted; `COLL-UI-01A` is next under the recorded campaign authorization.
 
 ### Changed files
 
@@ -2268,8 +2268,8 @@ publication, deployment, release, or alpha-readiness claim occurred.
 ### Integrated `OVL-UI-01`: painted overlay composition
 
 Status: **Complete / Accepted**. Issues #595 and #599 closed through
-squash-merged PRs #600 and #601. `CHROME-UI-01` is next, while `COLL-UI-01`
-remains queued behind the frozen measured-`Ui` and overlay seams.
+squash-merged PRs #600 and #601. `CHROME-UI-01` was the next packet at this
+checkpoint and is now Complete / Accepted.
 
 #### Changed files
 
@@ -2299,8 +2299,8 @@ Interactive row IDs derive from overlay identity plus stable action/item
 identity. Disabled, hidden, label, separator, clipped, and overflow rows remain
 inert. Outside activation and Escape dismiss one deterministic topmost surface,
 and keyboard/pointer activation share the same result path. Menu-bar triggers
-and overflow painting stay with `CHROME-UI-01`; this acceptance does not claim a
-complete editor workflow.
+and overflow painting were delivered by `CHROME-UI-01`; this acceptance does
+not claim a complete editor workflow.
 
 #### Tests run and results
 
@@ -2332,12 +2332,82 @@ passive labels/separators use occurrence identity because the existing menu
 model has no passive-item ID. Command-palette query editing remains
 application-owned.
 
-Menu-bar trigger and overflow painting remain explicitly owned by
+Menu-bar trigger and overflow painting were subsequently delivered by
 `CHROME-UI-01`. Broader Showcase adoption and public editor workflow proof
 remain `SHOW-02`. Rich arbitrary modal/popover body layout, animation, submenu
 aim delay, native OS menus, gamepad/touch behavior, and a new theme schema stay
 outside this MVP. No tag, package publication, deployment, release, or
 alpha-readiness claim occurred.
+
+### Integrated `CHROME-UI-01`: painted application chrome
+
+Status: **Complete / Accepted**. Issues #604 and #606 closed through
+squash-merged PRs #605 and #607. `COLL-UI-01A` stable collection navigation and
+reconciliation is next.
+
+#### Changed files
+
+- `crates/kinetik-ui-widgets/src/chrome/overflow.rs`, its module/export seams,
+  and `tests/chrome_overflow_conformance.rs` add stable-key one-dimensional
+  width projection, conditional overflow-trigger placement, sanitization, and
+  finite-geometry guards.
+- `crates/kinetik-ui-widgets/src/chrome/scene.rs`,
+  `crates/kinetik-ui-widgets/src/ui/chrome.rs`, their public module/export
+  seams, and `tests/chrome_scene_conformance.rs` add one borrowed public scene
+  for menu bar, toolbar, tab strip, and status bar models, including frame-wide
+  pointer targets, themed primitives, typed intents, and ordered semantics.
+- The changelog, public API policy, GPU presenter ADR, and readiness documents
+  record integrated acceptance and the next serialized Stage 5 work.
+
+#### Reasoning and contract decisions
+
+Chrome was split into a deterministic overflow foundation and one shared
+paint/input/semantics scene. Stable model keys determine item identity across
+reorder and removal; presentation indexes do not. The scene clips targets to
+each finite surface, blocks lower input inside chrome, keeps disabled and
+hidden actions inert, separates tab-body and close targets, and preserves
+source order when returning overflow requests.
+
+The public scene emits backend-independent primitives and semantic roles and
+returns typed menu, action, tab, close, and overflow intents. Toolbar action
+activation uses the existing action queue exactly once for mouse or keyboard;
+application command execution and overflow-overlay ownership remain outside
+widgets.
+
+#### Tests run and results
+
+- Issue #604 / PR #605 candidate
+  `13cb1c1b1d4df4e3da96fdc2b39b09cca7529e69` passed 8 focused overflow
+  conformance tests, warning-denied all-target Clippy, no-deps docs,
+  formatting, and diff checks. Independent review verified the huge-finite
+  `f32` trigger-extent remedy and ended at P0/P1/P2=`0/0/0`. PR CI run
+  `29255087043` passed before squash merge
+  `1417c034eef673b8b9b594a3c92ad7944ee19f02`; main CI run `29255288227`
+  passed.
+- Issue #606 / PR #607 candidate
+  `af687ccb6b211a95a26eb1cb8eb4a5166529b255` passed 8 focused chrome-scene
+  conformance tests, the full all-feature widgets suite (227 unit tests plus
+  all integration/conformance and doc tests), warning-denied all-target
+  Clippy, no-deps docs, formatting, and diff checks. Independent review
+  verified actual removal coverage and ended at P0/P1/P2=`0/0/0`. PR CI run
+  `29256920719` passed before squash merge
+  `6a887d66b905b8129364017687e506f20b26b68c`; main CI run `29257082144`
+  passed.
+- Both issues are closed, both PRs are squash-merged, and their exact merge and
+  CI evidence was rechecked on GitHub for this documentation closure.
+
+#### Remaining risks and deferred findings
+
+Callers must provide unique stable model IDs and usable positive widths;
+missing or invalid widths deterministically resolve to omission. Extremely
+large finite coordinates can numerically absorb very small widths without
+violating finite/non-overlap guarantees. Exhausting the existing `u64` pointer
+order remains a caller-contract edge.
+
+Toolbar icon/presentation fidelity remains visual polish. Broader Showcase
+adoption and public editor workflow proof remain `SHOW-02`; native OS menus,
+gamepad/touch behavior, and a new theme schema stay outside this MVP. No tag,
+package publication, deployment, release, or alpha-readiness claim occurred.
 
 ## Packet Completion Template
 

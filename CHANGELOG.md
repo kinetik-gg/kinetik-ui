@@ -8,23 +8,29 @@ follow the repository release policy.
 `0.1.0-alpha.1` is the planned first prerelease. It has not been dated, tagged,
 published, or accepted as an alpha release.
 
-Integrated `OVL-UI-01`: **Complete / Accepted**; `CHROME-UI-01` is **next**,
-and `COLL-UI-01` remains queued behind the frozen measured-`Ui` and overlay
-seams.
+Integrated `CHROME-UI-01`: **Complete / Accepted**; `COLL-UI-01A` stable
+collection navigation and reconciliation is **next**, followed by the painted
+list/tree and table packets.
 
 No tag, package publication, deployment, release, or alpha-readiness claim is
 made by this acceptance.
 
 ### Changed
 
+- Added stable-key chrome overflow projection and one public borrowed painted
+  chrome scene over menu bar, toolbar, tab strip, and status bar models. The
+  scene contributes clipped pointer targets, emits themed backend-independent
+  primitives and ordered semantics, and returns typed menu, action, tab, and
+  overflow intents. Integrated `CHROME-UI-01` is accepted; toolbar icon polish
+  remains `VIS-01`, and broader Showcase adoption remains `SHOW-02`.
 - Added pure menu/dropdown keyboard, typeahead, reconciliation, and submenu
   intents plus one public painted overlay scene for menus, context menus,
   dropdowns, command palettes, modals, popovers, tooltips, and drag previews.
   The scene contributes to the caller's frame-wide pointer plan, emits themed
   backend-independent primitives and ordered semantics, and returns lifecycle
   and application-owned action intents. Integrated `OVL-UI-01` is accepted;
-  menu-bar trigger/overflow painting remains `CHROME-UI-01`, and broader
-  Showcase adoption remains `SHOW-02`.
+  menu-bar trigger/overflow painting was delivered by accepted
+  `CHROME-UI-01`, and broader Showcase adoption remains `SHOW-02`.
 - Added deterministic measured grid allocation and public keyed `Ui` row,
   column, grid, padding, stack, and scrolling containers, then dogfooded that
   seam through the facade example and Showcase layout preview without changing
