@@ -76,7 +76,7 @@ impl EditorShowcase {
         };
         let output = ui.viewport_widget(viewport, &mut self.viewport_pan_zoom, &[]);
         if output.changed() {
-            self.status = "Viewport navigation updated".to_owned();
+            "Viewport navigation updated".clone_into(&mut self.status);
         }
         if let Some(tools) = tools {
             let output = ui.viewport_tool_scene(tools, &mut self.viewport_tool_controller);

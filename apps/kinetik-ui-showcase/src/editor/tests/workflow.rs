@@ -129,14 +129,14 @@ fn workflow_points(editor: &EditorShowcase) -> WorkflowPoints {
 
 fn semantic_node<'a>(
     output: &'a FrameOutput,
-    role: SemanticRole,
+    role: &SemanticRole,
     label: &str,
 ) -> &'a kinetik_ui::core::SemanticNode {
     output
         .semantics
         .nodes()
         .iter()
-        .find(|node| node.role == role && node.label.as_deref() == Some(label))
+        .find(|node| &node.role == role && node.label.as_deref() == Some(label))
         .unwrap_or_else(|| panic!("missing {role:?} semantics for {label}"))
 }
 
@@ -148,11 +148,11 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
 
     let idle = render_frame(&mut editor, &mut memory, UiInput::default());
     assert!(idle.warnings.is_empty());
-    semantic_node(&idle, SemanticRole::List, "Scene outliner");
-    semantic_node(&idle, SemanticRole::Grid, "Project assets");
-    semantic_node(&idle, SemanticRole::Grid, "Property grid");
-    semantic_node(&idle, SemanticRole::Viewport, "Project viewport");
-    semantic_node(&idle, SemanticRole::ListItem, "terrain_forest");
+    semantic_node(&idle, &SemanticRole::List, "Scene outliner");
+    semantic_node(&idle, &SemanticRole::Grid, "Project assets");
+    semantic_node(&idle, &SemanticRole::Grid, "Property grid");
+    semantic_node(&idle, &SemanticRole::Viewport, "Project viewport");
+    semantic_node(&idle, &SemanticRole::ListItem, "terrain_forest");
     assert!(idle.semantics.nodes().iter().all(|node| {
         !matches!(
             node.label.as_deref(),
@@ -181,7 +181,7 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
     let _ = render_frame(&mut editor, &mut memory, typed_input("terrain_forest"));
     assert_eq!(editor.asset_filter.text, "terrain_forest");
     let filtered = render_frame(&mut editor, &mut memory, UiInput::default());
-    semantic_node(&filtered, SemanticRole::ListItem, "terrain_forest");
+    semantic_node(&filtered, &SemanticRole::ListItem, "terrain_forest");
     assert_eq!(
         filtered
             .semantics
@@ -227,9 +227,9 @@ fn rendered_public_editor_workflow_edits_drags_moves_and_saves_project_state() {
     assert_eq!(editor.outliner_state.rename_target(), None);
     assert_eq!(editor.status, "Renamed object to Hero");
     let renamed = render_frame(&mut editor, &mut memory, UiInput::default());
-    semantic_node(&renamed, SemanticRole::ListItem, "Hero");
+    semantic_node(&renamed, &SemanticRole::ListItem, "Hero");
 
-    let roughness_row = semantic_node(&renamed, SemanticRole::Row, "Roughness");
+    let roughness_row = semantic_node(&renamed, &SemanticRole::Row, "Roughness");
     let roughness_slider = renamed
         .semantics
         .nodes()

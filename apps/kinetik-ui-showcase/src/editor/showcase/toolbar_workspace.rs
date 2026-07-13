@@ -276,13 +276,13 @@ impl EditorShowcase {
         );
         if output.changed {
             self.next_drop_frame = self.next_drop_frame.saturating_add(1);
-            self.status = "Dock layout updated".to_owned();
+            "Dock layout updated".clone_into(&mut self.status);
         }
         if let Some(close) = output.close_requests.first() {
             self.status = format!("Close requested for panel {}", close.panel.raw());
         }
         if !output.splitter_context_requests.is_empty() {
-            self.status = "Dock splitter actions requested".to_owned();
+            "Dock splitter actions requested".clone_into(&mut self.status);
         }
 
         let _ = ui.dock_scene(&workflow.dock, |ui, panel| match panel.panel {

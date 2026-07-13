@@ -435,11 +435,11 @@ impl EditorShowcase {
                     );
                     self.position[0] = self.viewport_selection_rect.x;
                     self.position[1] = self.viewport_selection_rect.y;
-                    self.status = "Viewport object moved".to_owned();
+                    "Viewport object moved".clone_into(&mut self.status);
                 }
                 viewport::ViewportTransformInteractionPhase::Cancelled => {
                     self.viewport_selection_rect = drag.source_content_rect;
-                    self.status = "Viewport move cancelled".to_owned();
+                    "Viewport move cancelled".clone_into(&mut self.status);
                 }
                 _ => {}
             }
