@@ -116,6 +116,11 @@ fn native_texture_wins_over_compatible_cpu_snapshot() {
     );
     assert!(output.diagnostics.is_empty());
     assert_eq!(renderer.scene().encoding().resources.patches.len(), 1);
+    assert_eq!(
+        renderer.cached_texture_count(),
+        0,
+        "native resolution must not populate the CPU snapshot cache"
+    );
 
     let (mismatch_scope, mismatch_registry) =
         native_registry(texture, [3, 2], RenderImageSampling::Pixelated);
@@ -138,7 +143,7 @@ fn native_metadata_mismatch_falls_back_with_invalid_geometry() {
     let texture = TextureId::from_raw(703);
     let resources = resources(texture, None);
     let primitives = vec![texture_primitive(texture)];
-    let (scope, registry) = native_registry(texture, [4, 2], RenderImageSampling::Smooth);
+    let (scope, registry) = native_registry(texture, [2, 2], RenderImageSampling::Smooth);
     let translation =
         translate_primitives_with_native(&primitives, &resources, Some((&registry, &scope)));
 
@@ -154,6 +159,30 @@ fn native_metadata_mismatch_falls_back_with_invalid_geometry() {
             .diagnostics
             .contains(&RenderDiagnostic::MissingTextureSnapshot(texture,))
     );
+
+    let mut renderer = VelloRenderer::new();
+    let output = renderer.submit_frame_with_native_textures(
+        RenderFrameInput {
+            viewport: viewport(),
+            primitives: &primitives,
+            resources: &resources,
+        },
+        &registry,
+        &scope,
+    );
+    assert!(
+        output
+            .diagnostics
+            .contains(&RenderDiagnostic::InvalidGeometry(
+                "native_texture_metadata",
+            ))
+    );
+    assert!(
+        output
+            .diagnostics
+            .contains(&RenderDiagnostic::MissingTextureSnapshot(texture,))
+    );
+    assert_eq!(renderer.scene().encoding().resources.patches.len(), 0);
 }
 
 #[test]

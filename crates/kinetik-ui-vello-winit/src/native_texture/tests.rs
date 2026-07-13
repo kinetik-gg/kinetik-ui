@@ -262,22 +262,68 @@ fn unchanged_revision_is_noop_and_regressed_revision_is_atomic() {
 fn invalid_metadata_and_duplicate_registration_mutate_nothing() {
     let texture = TextureId::from_raw(803);
     let valid_resource = resource(texture, 2.0, 2.0);
-    let mut cases = Vec::new();
-    cases.push((
-        resource(texture, 2.0, 2.0),
-        descriptor(0, 2),
-        VelloNativeTextureValidationError::ZeroExtent,
-    ));
-    cases.push((
-        resource(texture, 1.5, 2.0),
-        descriptor(2, 2),
-        VelloNativeTextureValidationError::NonIntegralResourceExtent,
-    ));
-    cases.push((
-        resource(texture, 3.0, 2.0),
-        descriptor(2, 2),
-        VelloNativeTextureValidationError::ResourceExtentMismatch,
-    ));
+    let mut cases = vec![
+        (
+            resource(texture, 2.0, 2.0),
+            descriptor(0, 2),
+            VelloNativeTextureValidationError::ZeroExtent,
+        ),
+        (
+            resource(texture, 2.0, 2.0),
+            descriptor(2, 0),
+            VelloNativeTextureValidationError::ZeroExtent,
+        ),
+        (
+            resource(texture, f32::NAN, 2.0),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::NonIntegralResourceExtent,
+        ),
+        (
+            resource(texture, 2.0, f32::INFINITY),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::NonIntegralResourceExtent,
+        ),
+        (
+            resource(texture, 0.0, 2.0),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::NonIntegralResourceExtent,
+        ),
+        (
+            resource(texture, 2.0, 0.0),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::NonIntegralResourceExtent,
+        ),
+        (
+            resource(texture, -1.0, 2.0),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::NonIntegralResourceExtent,
+        ),
+        (
+            resource(texture, 2.0, -1.0),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::NonIntegralResourceExtent,
+        ),
+        (
+            resource(texture, 1.5, 2.0),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::NonIntegralResourceExtent,
+        ),
+        (
+            resource(texture, 2.0, 1.5),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::NonIntegralResourceExtent,
+        ),
+        (
+            resource(texture, 3.0, 2.0),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::ResourceExtentMismatch,
+        ),
+        (
+            resource(texture, 2.0, 3.0),
+            descriptor(2, 2),
+            VelloNativeTextureValidationError::ResourceExtentMismatch,
+        ),
+    ];
     let mut invalid_format = descriptor(2, 2);
     invalid_format.format = wgpu::TextureFormat::Bgra8Unorm;
     cases.push((
@@ -401,6 +447,31 @@ fn invalid_metadata_and_duplicate_registration_mutate_nothing() {
             if rejected == texture
     ));
     assert!(operations.trace.is_empty());
+}
+
+#[test]
+fn copy_source_usage_superset_is_accepted() {
+    let texture = TextureId::from_raw(8_033);
+    let scope = scope(8_033, 1);
+    let mut driver = NativeTextureMutationDriver::new();
+    let mut operations = FakeOperations::default();
+    let mut native = descriptor(2, 2);
+    native.usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+
+    let registration = driver
+        .register(
+            &scope,
+            &resource(texture, 2.0, 2.0),
+            native,
+            1,
+            &mut operations,
+        )
+        .expect("COPY_SRC usage supersets are valid producer textures");
+
+    assert_eq!(registration.texture_id(), texture);
+    assert_eq!(operations.trace, vec!["register", "publish"]);
+    assert!(operations.pending.is_empty());
+    assert!(operations.active.contains_key(&texture));
 }
 
 #[test]
