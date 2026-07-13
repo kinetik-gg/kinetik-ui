@@ -9,6 +9,8 @@ use kinetik_ui_core::{
 
 mod surface;
 pub use surface::*;
+mod widget;
+pub use widget::*;
 mod actions;
 pub use actions::*;
 mod tools;
