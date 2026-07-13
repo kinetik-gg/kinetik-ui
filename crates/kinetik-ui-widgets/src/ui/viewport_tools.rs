@@ -26,6 +26,7 @@ impl Ui<'_> {
     ///
     /// Returned requests are data only. The application remains responsible
     /// for snapping, constraints, geometry mutation, undo, and persistence.
+    #[allow(clippy::too_many_lines)]
     pub fn viewport_tool_scene(
         &mut self,
         scene: &ViewportToolScene,
@@ -56,14 +57,16 @@ impl Ui<'_> {
                 },
                 |action| (action.ordinal, action.modifiers, action.position),
             );
-            output.interactions.push(transform_interaction(
-                scene,
-                &capture,
-                ViewportTransformInteractionPhase::Cancelled,
-                ordinal,
-                modifiers,
-                point,
-            ));
+            if controller.started {
+                output.interactions.push(transform_interaction(
+                    scene,
+                    &capture,
+                    ViewportTransformInteractionPhase::Cancelled,
+                    ordinal,
+                    modifiers,
+                    point,
+                ));
+            }
             *controller = ViewportToolController::default();
             repaint = true;
         }
@@ -83,24 +86,33 @@ impl Ui<'_> {
             if gesture.response.state.hovered {
                 output.hovered_handle = Some(handle.id);
             }
-            if gesture.response.state.hovered
-                || controller.captured_handle() == Some(handle.id)
-                || self.memory().released_drag_source() == Some(id)
-            {
-                self.runtime.request_cursor_for(
-                    id,
-                    viewport_cursor_shape(&handle.cursor.shape, controller.started),
-                );
-            }
-
-            for action in &gesture.actions {
+            let start_move = (!controller.started && drag_crossed_threshold)
+                .then(|| {
+                    gesture
+                        .actions
+                        .iter()
+                        .rposition(|action| matches!(action.phase, DomainDragGesturePhase::Move))
+                })
+                .flatten();
+            for (index, action) in gesture.actions.iter().enumerate() {
                 repaint |= self.apply_viewport_handle_action(
                     scene,
                     handle,
                     controller,
                     action,
                     drag_crossed_threshold,
+                    start_move == Some(index),
                     &mut output,
+                );
+            }
+
+            if gesture.response.state.hovered
+                || controller.captured_handle() == Some(handle.id)
+                || self.memory().released_drag_source() == Some(id)
+            {
+                self.runtime.request_cursor_for(
+                    id,
+                    viewport_cursor_shape(&handle.cursor.shape, self.memory().is_drag_source(id)),
                 );
             }
 
@@ -128,6 +140,7 @@ impl Ui<'_> {
         output
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_viewport_handle_action(
         &mut self,
         scene: &ViewportToolScene,
@@ -135,6 +148,7 @@ impl Ui<'_> {
         controller: &mut ViewportToolController,
         action: &DomainDragGestureAction,
         drag_crossed_threshold: bool,
+        starts_transform: bool,
         output: &mut ViewportToolSceneOutput,
     ) -> bool {
         match action.phase {
@@ -151,7 +165,7 @@ impl Ui<'_> {
                 let Some(capture) = matching_capture(controller, handle) else {
                     return false;
                 };
-                if !drag_crossed_threshold && !controller.started {
+                if !controller.started && !starts_transform {
                     return false;
                 }
                 let phase = if controller.started {
@@ -178,6 +192,17 @@ impl Ui<'_> {
                 let Some(capture) = matching_capture(controller, handle) else {
                     return false;
                 };
+                if !controller.started && drag_crossed_threshold {
+                    controller.started = true;
+                    output.interactions.push(transform_interaction(
+                        scene,
+                        &capture,
+                        ViewportTransformInteractionPhase::Started,
+                        action.ordinal,
+                        action.modifiers,
+                        action.position,
+                    ));
+                }
                 if controller.started {
                     output.interactions.push(transform_interaction(
                         scene,
@@ -195,14 +220,16 @@ impl Ui<'_> {
                 let Some(capture) = matching_capture(controller, handle) else {
                     return false;
                 };
-                output.interactions.push(transform_interaction(
-                    scene,
-                    &capture,
-                    ViewportTransformInteractionPhase::Cancelled,
-                    action.ordinal,
-                    action.modifiers,
-                    action.position,
-                ));
+                if controller.started {
+                    output.interactions.push(transform_interaction(
+                        scene,
+                        &capture,
+                        ViewportTransformInteractionPhase::Cancelled,
+                        action.ordinal,
+                        action.modifiers,
+                        action.position,
+                    ));
+                }
                 *controller = ViewportToolController::default();
                 true
             }
@@ -210,6 +237,9 @@ impl Ui<'_> {
     }
 
     fn request_active_tool_cursor(&mut self, scene: &ViewportToolScene) {
+        if scene.config().disabled {
+            return;
+        }
         let Some(tool) = scene.config().active_tool.as_ref() else {
             return;
         };

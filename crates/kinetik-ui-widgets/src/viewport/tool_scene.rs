@@ -75,6 +75,7 @@ impl ViewportToolScene {
     /// Resolves outlines and handles through the exact prepared viewport snapshot.
     #[must_use]
     pub fn new(viewport: &ViewportWidget, mut config: ViewportToolSceneConfig) -> Self {
+        config.disabled |= viewport.config().disabled;
         config.snap_tolerance = config
             .snap_tolerance
             .filter(|tolerance| tolerance.is_finite() && *tolerance > 0.0);
