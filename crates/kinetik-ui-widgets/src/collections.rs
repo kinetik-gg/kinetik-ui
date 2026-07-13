@@ -4,6 +4,7 @@ mod grid;
 mod identity;
 mod list;
 mod math;
+mod navigation;
 mod selection;
 mod table;
 mod tree_layout;
@@ -13,6 +14,7 @@ mod virtualization;
 pub use grid::{GridColumns, GridLayout};
 pub use identity::{CollectionProjectedItem, CollectionProjection, ItemId, ItemRect};
 pub use list::ListLayout;
+pub use navigation::{CollectionCursor, CollectionCursorMove, CollectionCursorTarget};
 pub use selection::{Selection, SelectionProjection, SelectionProjectionPolicy};
 pub use table::{
     SortDirection, TableCellRect, TableColumn, TableColumnConstraints, TableHeaderRect,
