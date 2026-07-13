@@ -345,7 +345,11 @@ impl<'a> AssetBrowserScene<'a> {
             &state.selection,
             None,
         );
-        let context_scene = state.context.as_ref().map(|context| context.scene.clone());
+        let context_scene = state
+            .context
+            .as_ref()
+            .filter(|context| context_target_valid(model, &projection, &context.target))
+            .map(|context| context.scene.clone());
 
         Some(Self {
             root,
@@ -418,12 +422,14 @@ impl<'a> AssetBrowserScene<'a> {
                         && !item.item.state.disabled
                         && !item.item.state.read_only
                         && item.item.state.renamable;
-                    plan.target(
-                        PointerTarget::new(item_id, item.rect, take_order(&mut ordinal))
-                            .drop_owner(drop_widget_id(item_id))
-                            .domain_drag_source()
-                            .enabled(!item.item.state.disabled && !editing),
-                    );
+                    let target = PointerTarget::new(item_id, item.rect, take_order(&mut ordinal))
+                        .drop_owner(drop_widget_id(item_id));
+                    let target = if item.item.state.read_only {
+                        target
+                    } else {
+                        target.domain_drag_source()
+                    };
+                    plan.target(target.enabled(!item.item.state.disabled && !editing));
                     if editing {
                         plan.target(PointerTarget::new(
                             self.rename_widget_id(item.item.id),
@@ -452,6 +458,10 @@ impl<'a> AssetBrowserScene<'a> {
 
     pub(crate) const fn has_prepared_context(&self) -> bool {
         self.context_scene.is_some()
+    }
+
+    pub(crate) fn context_target_valid(&self, target: &CollectionContextTarget) -> bool {
+        context_target_valid(self.model, &self.projection, target)
     }
 
     pub(crate) fn item(&self, item: ItemId) -> Option<&AssetBrowserItemRect> {
@@ -546,6 +556,17 @@ fn item_matches_query(item: &AssetBrowserItem, query: &str) -> bool {
             .tags
             .iter()
             .any(|tag| tag.to_lowercase().contains(query))
+}
+
+fn context_target_valid(
+    model: &AssetBrowserModel,
+    projection: &CollectionProjection,
+    target: &CollectionContextTarget,
+) -> bool {
+    target.target_ids().into_iter().all(|item| {
+        projection.projected_index(item).is_some()
+            && model.item_by_id(item).is_some_and(|item| !item.disabled)
+    })
 }
 
 fn valid_bounds(bounds: Rect) -> Option<()> {

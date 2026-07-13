@@ -455,7 +455,8 @@ impl AssetBrowserResolvedItem {
     /// Creates stable drag source metadata for this asset item.
     #[must_use]
     pub fn drag_source(&self, selection: &Selection) -> Option<CollectionDragSource> {
-        (!self.state.disabled).then(|| CollectionDragSource::from_selection(self.id, selection))
+        (!self.state.disabled && !self.state.read_only)
+            .then(|| CollectionDragSource::from_selection(self.id, selection))
     }
 
     /// Creates a context-menu target for this asset item.
@@ -492,7 +493,7 @@ impl AssetBrowserItemRect {
     /// Resolves this item as a drop target for a drag source.
     #[must_use]
     pub fn drop_target(&self, source: &CollectionDragSource) -> Option<AssetBrowserDropTarget> {
-        if self.item.state.disabled || source.contains(self.item.id) {
+        if self.item.state.disabled || self.item.state.read_only || source.contains(self.item.id) {
             return None;
         }
 

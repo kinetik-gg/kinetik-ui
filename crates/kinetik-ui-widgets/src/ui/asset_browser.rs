@@ -183,6 +183,18 @@ impl Ui<'_> {
                     });
                 }
 
+                let double_click_position = gesture
+                    .actions
+                    .iter()
+                    .rev()
+                    .find(|action| {
+                        action.phase == DomainDragGesturePhase::Release
+                            && action.release_clicked
+                            && action.click_count >= 2
+                    })
+                    .and_then(|action| action.position)
+                    .or(self.input().pointer.position);
+
                 let mut response = gesture.response;
                 response.keyboard_activated = keyboard_preview == Some(item);
                 if response.clicked && !item_rect.item.state.disabled {
@@ -208,10 +220,7 @@ impl Ui<'_> {
                 }
 
                 if response.double_clicked {
-                    let rename_hit = self
-                        .input()
-                        .pointer
-                        .position
+                    let rename_hit = double_click_position
                         .is_some_and(|point| item_rect.name_rect.contains_point(point));
                     if rename_hit
                         && let Some(begin) = item_rect.item.inline_rename_begin_request(root)
@@ -240,7 +249,8 @@ impl Ui<'_> {
                     )
                 };
                 if (pointer_context_requested || context_response.context_requested)
-                    && let Some(target) = item_rect.item.context_target(&state.selection)
+                    && let Some(target) =
+                        asset_browser_context_target(scene, item_rect, &state.selection)
                 {
                     pending_context.get_or_insert_with(|| {
                         (
@@ -390,6 +400,7 @@ impl Ui<'_> {
                 Ok(request) => {
                     output.requests.push(AssetBrowserRequest::Rename(request));
                     state.clear_rename();
+                    output.rename_conflict = None;
                     self.runtime
                         .memory_mut()
                         .focus(scene.item_widget_id(target));
@@ -466,7 +477,7 @@ impl Ui<'_> {
         let context_valid = state
             .context
             .as_ref()
-            .is_none_or(|context| context_target_valid(scene, &context.target));
+            .is_none_or(|context| scene.context_target_valid(&context.target));
         if (config.disabled || !context_valid) && state.context.take().is_some() {
             self.request_repaint(RepaintRequest::NextFrame);
         }
@@ -474,9 +485,11 @@ impl Ui<'_> {
         if let Some(drag) = state.drag.as_ref() {
             let owner_retained = self.memory().drag_source() == Some(drag.widget)
                 || self.memory().released_drag_source() == Some(drag.widget);
-            let source_visible = scene
-                .strict_items()
-                .any(|item| item.item.id == drag.source.source && !item.item.state.disabled);
+            let source_visible = scene.strict_items().any(|item| {
+                item.item.id == drag.source.source
+                    && !item.item.state.disabled
+                    && !item.item.state.read_only
+            });
             if config.disabled || !owner_retained || !source_visible {
                 if owner_retained {
                     self.runtime.memory_mut().clear_drag();
@@ -506,6 +519,7 @@ impl Ui<'_> {
                     )));
             }
             state.clear_rename();
+            output.rename_conflict = None;
             if text_widget.is_some_and(|text_widget| self.memory().is_focused(text_widget)) {
                 self.runtime.memory_mut().clear_focus();
             }
@@ -538,6 +552,7 @@ impl Ui<'_> {
                 Ok(request) => {
                     output.requests.push(AssetBrowserRequest::Rename(request));
                     state.clear_rename();
+                    output.rename_conflict = None;
                     self.focus_and_reveal_asset_browser_target(scene, cursor_target);
                 }
                 Err(conflict) => {
@@ -645,9 +660,12 @@ impl Ui<'_> {
                     }
                 }
                 Key::Function(2) => {
-                    if let Some(begin) = scene
-                        .model()
-                        .inline_rename_begin_from_selection(&state.selection, scene.widget_id())
+                    if let Some(active) = state.cursor.active()
+                        && state.selection.contains(active)
+                        && let Some(begin) = scene
+                            .model()
+                            .item_by_id(active)
+                            .and_then(|item| item.inline_rename_begin_request(scene.widget_id()))
                     {
                         let text_widget = begin.text_widget_id;
                         self.register_id(text_widget);
@@ -997,11 +1015,25 @@ fn asset_browser_item_selectable(scene: &AssetBrowserScene<'_>, item: ItemId) ->
         .is_some_and(|item| !item.disabled)
 }
 
-fn context_target_valid(scene: &AssetBrowserScene<'_>, target: &CollectionContextTarget) -> bool {
-    target.target_ids().into_iter().all(|item| {
-        scene.projection().projected_index(item).is_some()
-            && asset_browser_item_selectable(scene, item)
-    })
+fn asset_browser_context_target(
+    scene: &AssetBrowserScene<'_>,
+    item: &AssetBrowserItemRect,
+    selection: &Selection,
+) -> Option<CollectionContextTarget> {
+    if item.item.state.disabled {
+        return None;
+    }
+    if selection.contains(item.item.id) {
+        let visible_selection = scene
+            .projection()
+            .items()
+            .iter()
+            .map(|projected| projected.id)
+            .filter(|id| selection.contains(*id));
+        CollectionContextTarget::selection(visible_selection)
+    } else {
+        Some(CollectionContextTarget::item(item.item.id))
+    }
 }
 
 fn validate_asset_browser_rename(
