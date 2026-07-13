@@ -47,7 +47,7 @@ impl Ui<'_> {
                     rect: panel.rect,
                 });
                 self.runtime
-                    .push_id_scope(("dock-panel-content", panel.panel.raw()));
+                    .push_id_scope(("dock-panel-content", panel.id.raw()));
                 output.push(panel_content(self, panel));
                 self.runtime.pop_id_scope();
                 self.primitive(Primitive::ClipEnd { id: clip });

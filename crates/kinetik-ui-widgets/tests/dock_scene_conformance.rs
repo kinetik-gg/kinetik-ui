@@ -440,6 +440,30 @@ fn identity_derived_ids_survive_tab_reorder_and_topology_changes() {
 }
 
 #[test]
+fn panel_content_scopes_include_the_scene_root() {
+    let dock = Dock::new(DockNode::Frame(frame(1, vec![panel(11, "Inspector")])));
+    let first = DockScene::new(
+        DockSceneConfig::new(WidgetId::from_key("first-dock"), BOUNDS),
+        &dock,
+    );
+    let second = DockScene::new(
+        DockSceneConfig::new(WidgetId::from_key("second-dock"), BOUNDS),
+        &dock,
+    );
+    let input = UiInput::default();
+    let mut memory = UiMemory::new();
+    let theme = default_dark_theme();
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+
+    let first_ids = ui.dock_scene(&first, |ui, _| ui.make_id("field"));
+    let second_ids = ui.dock_scene(&second, |ui, _| ui.make_id("field"));
+
+    assert_eq!(first_ids.len(), 1);
+    assert_eq!(second_ids.len(), 1);
+    assert_ne!(first_ids[0], second_ids[0]);
+}
+
+#[test]
 fn invalid_bounds_and_empty_frames_are_safe() {
     let root = WidgetId::from_key("dock-scene-invalid");
     let dock = Dock::new(DockNode::Frame(frame(1, vec![panel(1, "Panel")])));
