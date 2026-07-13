@@ -1,7 +1,8 @@
 use kinetik_ui_core::{
-    Brush, ClipId, Color, ComponentState, Key, KeyState, MouseButton, Point, Primitive, Rect,
-    RectPrimitive, RepaintRequest, SemanticAction, SemanticActionKind, SemanticNode, SemanticRole,
-    Stroke, TextPrimitive, TextRole, UiInput, UiInputEvent, WidgetId, pressable,
+    Brush, ClipId, Color, ComponentState, InteractionState, Key, KeyState, MouseButton, Point,
+    Primitive, Rect, RectPrimitive, RepaintRequest, Response, SemanticAction, SemanticActionKind,
+    SemanticNode, SemanticRole, SemanticValue, Stroke, TextPrimitive, TextRole, UiInput,
+    UiInputEvent, WidgetId, pressable,
 };
 
 use super::Ui;
@@ -9,10 +10,12 @@ use crate::components::{AssetSlotOutput, ColorFieldOutput, PathFieldOutput, Sele
 use crate::inspector::pickers::{
     AssetPickerItem, ColorPickerAction, ColorPickerChannel, ColorPickerScene,
     InspectorPickerCancelReason, InspectorPickerCommit, InspectorPickerKind, InspectorPickerOutput,
-    InspectorPickerSceneKind, InspectorPickerState, PathPickerKind, PathPickerResult,
+    InspectorPickerScene, InspectorPickerSceneKind, InspectorPickerState, PathPickerKind,
+    PathPickerResult,
 };
 use crate::overlays::{
     DropdownModel, OverlayId, OverlayScene, OverlaySceneDismissReason, OverlaySceneIntent,
+    overlay_semantics,
 };
 
 impl Ui<'_> {
@@ -28,6 +31,7 @@ impl Ui<'_> {
     ) -> bool {
         let opened = state.open_select_from(field, overlay_id, bounds, label, model);
         if opened {
+            state.mark_scene_opened_frame(self.time().frame_index);
             self.request_repaint(RepaintRequest::NextFrame);
         }
         opened
@@ -43,6 +47,7 @@ impl Ui<'_> {
     ) -> bool {
         let opened = state.open_color_from(field, overlay_id, bounds);
         if opened {
+            state.mark_scene_opened_frame(self.time().frame_index);
             self.request_repaint(RepaintRequest::NextFrame);
         }
         opened
@@ -61,6 +66,7 @@ impl Ui<'_> {
     ) -> bool {
         let opened = state.open_asset_from(field, overlay_id, bounds, label, items);
         if opened {
+            state.mark_scene_opened_frame(self.time().frame_index);
             self.request_repaint(RepaintRequest::NextFrame);
         }
         opened
@@ -97,6 +103,17 @@ impl Ui<'_> {
                 ..InspectorPickerOutput::default()
             };
         };
+        if scene.opened_frame == Some(self.time().frame_index) {
+            scene.opened_frame = None;
+            self.paint_picker_opening_frame(&scene);
+            state.restore_scene(scene);
+            return InspectorPickerOutput {
+                active,
+                service_request,
+                ..InspectorPickerOutput::default()
+            };
+        }
+        scene.opened_frame = None;
         let resolution = match &mut scene.kind {
             InspectorPickerSceneKind::Select {
                 trigger,
@@ -214,24 +231,7 @@ impl Ui<'_> {
 
         self.paint_color_picker_surface(scene);
         let controls = scene.controls();
-        let children = controls
-            .iter()
-            .map(|control| control.id)
-            .collect::<Vec<_>>();
-        let mut root = SemanticNode::new(
-            scene.root,
-            SemanticRole::Custom("color-picker".to_owned()),
-            scene.bounds,
-        )
-        .with_label("Color picker")
-        .with_children(children);
-        root.description = Some(color_description(scene.draft));
-        root.state.expanded = Some(true);
-        root.actions.push(SemanticAction::new(
-            SemanticActionKind::Dismiss,
-            "Cancel color picker",
-        ));
-        self.push_semantic_node(root);
+        self.push_color_picker_root(scene, &controls);
 
         let clip = ClipId::from_raw(scene.root.child("clip").raw());
         self.primitive(Primitive::ClipBegin {
@@ -319,6 +319,144 @@ impl Ui<'_> {
             )),
             radius: self.theme.radii.sm,
         }));
+    }
+
+    fn paint_picker_opening_frame(&mut self, scene: &InspectorPickerScene) {
+        match &scene.kind {
+            InspectorPickerSceneKind::Select { scene, .. }
+            | InspectorPickerSceneKind::Asset { scene, .. } => {
+                self.paint_passive_dropdown_scene(scene);
+            }
+            InspectorPickerSceneKind::Color(scene) => {
+                self.paint_color_picker_surface(scene);
+                let controls = scene.controls();
+                self.push_color_picker_root(scene, &controls);
+                let clip = ClipId::from_raw(scene.root.child("clip").raw());
+                self.primitive(Primitive::ClipBegin {
+                    id: clip,
+                    rect: scene.bounds,
+                });
+                self.paint_color_channel_labels(scene);
+                for control in controls {
+                    let response =
+                        Response::new(control.id, control.rect, InteractionState::default());
+                    self.paint_color_control(&control, &response);
+                    self.push_semantic_node(color_control_semantics(&control, &response));
+                }
+                self.primitive(Primitive::ClipEnd { id: clip });
+            }
+        }
+    }
+
+    fn paint_passive_dropdown_scene(&mut self, scene: &OverlayScene) {
+        for surface_index in 0..scene.surfaces().len() {
+            let surface = &scene.surfaces()[surface_index];
+            let entry = surface.entry();
+            self.paint_picker_panel(entry.rect);
+            let rows = scene.rows(surface_index);
+            let children = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+            self.push_semantic_node(
+                overlay_semantics(entry, surface.label()).with_children(children),
+            );
+            let clip = ClipId::from_raw(
+                WidgetId::from_raw(entry.id.raw())
+                    .child("inspector-picker-opening-clip")
+                    .raw(),
+            );
+            self.primitive(Primitive::ClipBegin {
+                id: clip,
+                rect: entry.rect,
+            });
+            for row in rows {
+                let recipe = self.theme.row(ComponentState {
+                    hovered: false,
+                    pressed: false,
+                    focused: false,
+                    disabled: !row.enabled,
+                    selected: row.selected,
+                });
+                self.primitive(Primitive::Rect(RectPrimitive {
+                    rect: row.rect,
+                    fill: Some(recipe.background),
+                    stroke: Some(recipe.border),
+                    radius: recipe.radius,
+                }));
+                let font = self.theme.font(TextRole::Label);
+                self.primitive(Primitive::Text(TextPrimitive {
+                    layout: None,
+                    origin: Point::new(
+                        row.rect.x + self.theme.controls.padding_x,
+                        row.rect.y
+                            + (row.rect.height - font.line_height).max(0.0) * 0.5
+                            + font.size,
+                    ),
+                    text: row.label.clone(),
+                    family: font.family.to_owned(),
+                    size: font.size,
+                    line_height: font.line_height,
+                    brush: Brush::Solid(recipe.foreground),
+                }));
+                let mut node = SemanticNode::new(row.id, row.role.clone(), row.rect)
+                    .with_label(&row.label)
+                    .focusable(row.enabled);
+                node.state.disabled = !row.enabled;
+                node.state.selected = row.selected;
+                node.state.checked = row.checked;
+                node.state.expanded = row.expanded;
+                node.state.value = Some(SemanticValue::Text(row.label.clone()));
+                if row.enabled {
+                    node.actions.push(SemanticAction::new(
+                        SemanticActionKind::Invoke,
+                        "Select item",
+                    ));
+                }
+                self.push_semantic_node(node);
+            }
+            self.primitive(Primitive::ClipEnd { id: clip });
+        }
+    }
+
+    fn paint_picker_panel(&mut self, bounds: Rect) {
+        if let Some(shadow) = self
+            .theme
+            .elevation_shadow(self.theme.elevation.overlay, self.theme.radii.md.top_left)
+        {
+            self.primitive(Primitive::Shadow(shadow.primitive(bounds)));
+        }
+        self.primitive(Primitive::Rect(RectPrimitive {
+            rect: bounds,
+            fill: Some(Brush::Solid(self.theme.colors.overlay)),
+            stroke: Some(Stroke::new(
+                self.theme.controls.border_width,
+                Brush::Solid(self.theme.colors.border),
+            )),
+            radius: self.theme.radii.md,
+        }));
+    }
+
+    fn push_color_picker_root(
+        &mut self,
+        scene: &ColorPickerScene,
+        controls: &[crate::inspector::pickers::ColorPickerControl],
+    ) {
+        let children = controls
+            .iter()
+            .map(|control| control.id)
+            .collect::<Vec<_>>();
+        let mut root = SemanticNode::new(
+            scene.root,
+            SemanticRole::Custom("color-picker".to_owned()),
+            scene.bounds,
+        )
+        .with_label("Color picker")
+        .with_children(children);
+        root.description = Some(color_description(scene.draft));
+        root.state.expanded = Some(true);
+        root.actions.push(SemanticAction::new(
+            SemanticActionKind::Dismiss,
+            "Cancel color picker",
+        ));
+        self.push_semantic_node(root);
     }
 
     fn paint_color_channel_labels(&mut self, scene: &ColorPickerScene) {

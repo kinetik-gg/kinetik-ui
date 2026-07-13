@@ -10,6 +10,9 @@ use crate::overlays::{
     OverlayId, OverlayKind, OverlayScene, OverlaySceneSurface,
 };
 
+const MIN_COLOR_PICKER_WIDTH: f32 = 128.0;
+const MIN_COLOR_PICKER_HEIGHT: f32 = 148.0;
+
 /// Inspector picker kind currently owned by [`InspectorPickerState`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectorPickerKind {
@@ -227,6 +230,7 @@ impl InspectorPickerState {
         match &self.session {
             Some(InspectorPickerSession::Scene(InspectorPickerScene {
                 kind: InspectorPickerSceneKind::Color(scene),
+                ..
             })) => Some(scene.draft),
             _ => None,
         }
@@ -273,7 +277,7 @@ impl InspectorPickerState {
         let InspectorPickerSceneKind::Select { scene, .. } = &mut scene.kind else {
             return false;
         };
-        if !valid_dropdown_items(model.items()) {
+        if !unique_dropdown_items(model.items()) {
             return false;
         }
         let Some(OverlaySceneSurface::Dropdown { overlay, .. }) = scene.surfaces_mut().first_mut()
@@ -290,6 +294,9 @@ impl InspectorPickerState {
     }
 
     /// Opens a color overlay from a live entry-field request.
+    ///
+    /// Bounds smaller than 128 by 148 logical units are rejected so the four
+    /// component rows and Apply/Cancel controls never overlap.
     pub fn open_color_from(
         &mut self,
         field: &ColorFieldOutput,
@@ -300,7 +307,7 @@ impl InspectorPickerState {
             || !field.open_requested
             || field.read_only
             || field.response.state.disabled
-            || !valid_overlay_bounds(bounds)
+            || !valid_color_overlay_bounds(bounds)
         {
             return false;
         }
@@ -311,6 +318,7 @@ impl InspectorPickerState {
                 bounds,
                 field.color,
             )),
+            opened_frame: None,
         }));
         true
     }
@@ -357,7 +365,7 @@ impl InspectorPickerState {
 
     /// Reconciles asset choices while retaining valid identity state.
     pub fn reconcile_assets(&mut self, items: &[AssetPickerItem]) -> bool {
-        if !valid_asset_items(items) {
+        if !unique_asset_items(items) {
             return false;
         }
         let Some(scene) = self.scene_mut() else {
@@ -439,6 +447,7 @@ impl InspectorPickerState {
         };
         if result.generation != session.request.generation
             || result.trigger != session.request.trigger
+            || !session.emitted
         {
             return None;
         }
@@ -479,6 +488,12 @@ impl InspectorPickerState {
         self.session = Some(InspectorPickerSession::Scene(scene));
     }
 
+    pub(crate) fn mark_scene_opened_frame(&mut self, frame_index: u64) {
+        if let Some(scene) = self.scene_mut() {
+            scene.opened_frame = Some(frame_index);
+        }
+    }
+
     fn scene_mut(&mut self) -> Option<&mut InspectorPickerScene> {
         match &mut self.session {
             Some(InspectorPickerSession::Scene(scene)) => Some(scene),
@@ -491,6 +506,7 @@ impl InspectorPickerState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct InspectorPickerScene {
     pub(crate) kind: InspectorPickerSceneKind,
+    pub(crate) opened_frame: Option<u64>,
 }
 
 impl InspectorPickerScene {
@@ -764,6 +780,7 @@ fn dropdown_scene(
                 unreachable!("dropdown scenes are select or asset pickers")
             }
         },
+        opened_frame: None,
     }
 }
 
@@ -779,22 +796,26 @@ fn ensure_highlight(model: &mut DropdownModel) {
 }
 
 fn valid_dropdown_items(items: &[DropdownItem]) -> bool {
+    items.iter().any(|item| item.enabled) && unique_dropdown_items(items)
+}
+
+fn unique_dropdown_items(items: &[DropdownItem]) -> bool {
     let mut ids = BTreeSet::new();
-    !items.is_empty()
-        && items.iter().any(|item| item.enabled)
-        && items.iter().all(|item| ids.insert(item.id))
+    items.iter().all(|item| ids.insert(item.id))
 }
 
 fn valid_asset_items(items: &[AssetPickerItem]) -> bool {
+    items.iter().any(|item| item.enabled) && unique_asset_items(items)
+}
+
+fn unique_asset_items(items: &[AssetPickerItem]) -> bool {
     let mut ids = BTreeSet::new();
     let mut identities = BTreeSet::new();
-    !items.is_empty()
-        && items.iter().any(|item| item.enabled)
-        && items.iter().all(|item| {
-            !item.identity.is_empty()
-                && ids.insert(item.id)
-                && identities.insert(item.identity.as_str())
-        })
+    items.iter().all(|item| {
+        !item.identity.is_empty()
+            && ids.insert(item.id)
+            && identities.insert(item.identity.as_str())
+    })
 }
 
 fn valid_overlay_bounds(bounds: Rect) -> bool {
@@ -804,6 +825,12 @@ fn valid_overlay_bounds(bounds: Rect) -> bool {
         && bounds.height.is_finite()
         && bounds.width > 0.0
         && bounds.height > 0.0
+}
+
+fn valid_color_overlay_bounds(bounds: Rect) -> bool {
+    valid_overlay_bounds(bounds)
+        && bounds.width >= MIN_COLOR_PICKER_WIDTH
+        && bounds.height >= MIN_COLOR_PICKER_HEIGHT
 }
 
 fn sanitize_color(color: Color) -> Color {
