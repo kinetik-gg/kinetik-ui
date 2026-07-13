@@ -1,6 +1,6 @@
 const ACTION_NEW_SCENE: &str = "editor.scene.new";
 const ACTION_OPEN_PROJECT: &str = "editor.project.open";
-/// Saves the current editor project once persistence is implemented.
+/// Saves the current editor project to an application-owned in-memory snapshot.
 pub const ACTION_SAVE: &str = "editor.save";
 const ACTION_IMPORT_ASSET: &str = "editor.asset.import";
 const ACTION_EXPORT: &str = "editor.export";
@@ -448,14 +448,22 @@ pub type EditorInvocation = ActionInvocation;
 #[allow(clippy::struct_excessive_bools)]
 pub struct EditorShowcase {
     dock: Dock,
+    dock_controller: dock::DockController,
     scene_expansion: TreeExpansion,
+    outliner_state: outliner::OutlinerState,
     selected_node: ItemId,
+    object_names: Vec<String>,
+    asset_browser_state: asset_browser::AssetBrowserState,
     selected_asset: usize,
+    dragged_asset: Option<ItemId>,
+    assigned_asset: Option<ItemId>,
     selected_tool: EditorTool,
     running: bool,
     grid_visible: bool,
     snap_enabled: bool,
     viewport_pan_zoom: PanZoom,
+    viewport_tool_controller: viewport::ViewportToolController,
+    viewport_selection_rect: Rect,
     asset_filter: TextEditState,
     position: [f32; 3],
     position_states: [TextEditState; 3],
@@ -467,6 +475,8 @@ pub struct EditorShowcase {
     roughness: f32,
     timeline: f32,
     status: String,
+    saved_project: Option<EditorProjectSnapshot>,
+    save_revision: u64,
     open_menu: Option<EditorMenuKind>,
     about_modal_open: bool,
     next_drop_frame: u64,
@@ -478,11 +488,22 @@ impl Default for EditorShowcase {
         scene_expansion.expand(item_id(1));
         scene_expansion.expand(item_id(2));
         scene_expansion.expand(item_id(6));
+        let mut outliner_state = outliner::OutlinerState::new();
+        outliner_state.expansion = scene_expansion.clone();
+        outliner_state.selection.replace(item_id(7));
+        let mut asset_browser_state = asset_browser::AssetBrowserState::new();
+        asset_browser_state.selection.replace(workflow_asset_id(0));
         Self {
             dock: default_dock(),
+            dock_controller: dock::DockController::new(),
             scene_expansion,
+            outliner_state,
             selected_node: item_id(7),
+            object_names: workflow_object_names(),
+            asset_browser_state,
             selected_asset: 0,
+            dragged_asset: None,
+            assigned_asset: None,
             selected_tool: EditorTool::Move,
             running: false,
             grid_visible: true,
@@ -492,6 +513,8 @@ impl Default for EditorShowcase {
                 zoom: 1.0,
                 pan: Vec2::ZERO,
             },
+            viewport_tool_controller: viewport::ViewportToolController::default(),
+            viewport_selection_rect: Rect::new(720.0, 210.0, 210.0, 280.0),
             asset_filter: TextEditState::new("terrain"),
             position: [12.0, 1.5, -6.0],
             position_states: [
@@ -507,6 +530,8 @@ impl Default for EditorShowcase {
             roughness: 0.36,
             timeline: 0.41,
             status: "Editor ready".to_owned(),
+            saved_project: None,
+            save_revision: 0,
             open_menu: None,
             about_modal_open: false,
             next_drop_frame: FRAME_DRAG_INSERT_START,

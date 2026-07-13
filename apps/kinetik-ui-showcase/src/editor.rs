@@ -52,6 +52,7 @@ use kinetik_ui::widgets::{
     resolve_frame_drop_zone_with_policy, solve_dock_layout, solve_dock_splitters_with_style,
 };
 
+include!("editor/workflow.rs");
 include!("editor/root_state.rs");
 include!("editor/resources.rs");
 include!("editor/models.rs");

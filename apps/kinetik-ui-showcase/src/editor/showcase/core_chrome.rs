@@ -37,6 +37,10 @@ impl EditorShowcase {
                 status.clone_into(&mut self.status);
                 true
             }
+            ACTION_SAVE => {
+                self.save_project_in_memory();
+                true
+            }
             ACTION_DOCS => {
                 "Online documentation requested".clone_into(&mut self.status);
                 true

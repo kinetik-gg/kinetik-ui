@@ -43,6 +43,8 @@ use kinetik_ui::widgets::{
     viewport_cursor_request,
 };
 
+mod workflow;
+
 struct EditorTimelineFixture {
     descriptor: TimelineDescriptor,
     candidates: Vec<TimelineSnapCandidate>,
