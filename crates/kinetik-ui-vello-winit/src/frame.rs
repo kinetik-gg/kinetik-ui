@@ -28,7 +28,7 @@ pub(crate) trait PresentOperations {
     fn blit_submit(&mut self, frame: &Self::Frame);
     fn pre_present_notify(&mut self);
     fn present(&mut self, frame: Self::Frame);
-    fn device_events_after_render_failure(&mut self) -> CurrentDeviceEventOutcome;
+    fn device_events_after_render(&mut self) -> CurrentDeviceEventOutcome;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,13 +83,24 @@ pub(crate) fn drive_present<O: PresentOperations>(
     let output = operations.encode_scene(input);
     if let Err(error) = operations.render_vello() {
         operations.drop_frame(frame);
-        return match operations.device_events_after_render_failure() {
+        return match operations.device_events_after_render() {
             CurrentDeviceEventOutcome::Lost => Err(DriveFailure::DeviceLostAfterRender),
             CurrentDeviceEventOutcome::Actionable(actionable) => {
                 Err(DriveFailure::Actionable(actionable))
             }
             CurrentDeviceEventOutcome::None => Err(DriveFailure::Render(error)),
         };
+    }
+    match operations.device_events_after_render() {
+        CurrentDeviceEventOutcome::None => {}
+        CurrentDeviceEventOutcome::Lost => {
+            operations.drop_frame(frame);
+            return Err(DriveFailure::DeviceLostAfterRender);
+        }
+        CurrentDeviceEventOutcome::Actionable(actionable) => {
+            operations.drop_frame(frame);
+            return Err(DriveFailure::Actionable(actionable));
+        }
     }
     operations.blit_submit(&frame);
     operations.pre_present_notify();
@@ -167,5 +178,5 @@ pub(crate) enum FrameOperation {
     BlitSubmit,
     PrePresentNotify,
     Present,
-    PollAfterRenderFailure,
+    PollAfterRender,
 }

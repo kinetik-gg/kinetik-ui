@@ -220,8 +220,8 @@ impl PresentOperations for FakeOperations {
         self.operations.push(FrameOperation::Present);
     }
 
-    fn device_events_after_render_failure(&mut self) -> CurrentDeviceEventOutcome {
-        self.operations.push(FrameOperation::PollAfterRenderFailure);
+    fn device_events_after_render(&mut self) -> CurrentDeviceEventOutcome {
+        self.operations.push(FrameOperation::PollAfterRender);
         std::mem::replace(
             &mut self.post_render_outcome,
             CurrentDeviceEventOutcome::None,
@@ -266,6 +266,7 @@ fn successful_frame_uses_the_exact_present_order_and_preserves_diagnostics() {
             FrameOperation::ValidateAcquiredExtent,
             FrameOperation::EncodeScene,
             FrameOperation::VelloRenderSubmit,
+            FrameOperation::PollAfterRender,
             FrameOperation::BlitSubmit,
             FrameOperation::PrePresentNotify,
             FrameOperation::Present,
@@ -274,6 +275,104 @@ fn successful_frame_uses_the_exact_present_order_and_preserves_diagnostics() {
     assert_eq!(report.status(), VelloPresentStatus::Presented);
     assert_eq!(report.redraw(), VelloRedrawGuidance::UseApplicationRequest);
     assert_eq!(report.frame_output(), Some(&fake.output));
+}
+
+#[test]
+fn post_render_device_outcome_matrix_controls_presentation() {
+    #[derive(Debug, Clone, Copy)]
+    enum DeviceOutcome {
+        None,
+        Lost,
+        Actionable,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum ExpectedResult {
+        Presented,
+        Render,
+        Lost,
+        Actionable,
+    }
+
+    let extent = Extent {
+        width: 640,
+        height: 360,
+    };
+    let resources = RenderResources::new();
+    let cases = [
+        (false, DeviceOutcome::None, ExpectedResult::Presented),
+        (false, DeviceOutcome::Lost, ExpectedResult::Lost),
+        (false, DeviceOutcome::Actionable, ExpectedResult::Actionable),
+        (true, DeviceOutcome::None, ExpectedResult::Render),
+        (true, DeviceOutcome::Lost, ExpectedResult::Lost),
+        (true, DeviceOutcome::Actionable, ExpectedResult::Actionable),
+    ];
+
+    for (render_fails, outcome, expected_result) in cases {
+        let mut fake = FakeOperations::new(FakeAcquire::Success(extent));
+        fake.render_fails = render_fails;
+        fake.post_render_outcome = match outcome {
+            DeviceOutcome::None => CurrentDeviceEventOutcome::None,
+            DeviceOutcome::Lost => CurrentDeviceEventOutcome::Lost,
+            DeviceOutcome::Actionable => CurrentDeviceEventOutcome::Actionable(
+                VelloPresenterError::UncapturedErrorOverflow { dropped: 3 },
+            ),
+        };
+
+        let result = drive_present(&mut fake, input(&resources, extent), extent);
+        match expected_result {
+            ExpectedResult::Presented => {
+                assert!(matches!(
+                    result,
+                    Ok(DrivenFrame::Presented {
+                        suboptimal: false,
+                        ..
+                    })
+                ));
+            }
+            ExpectedResult::Render => {
+                assert_eq!(result, Err(DriveFailure::Render("injected Vello failure")));
+            }
+            ExpectedResult::Lost => {
+                assert_eq!(result, Err(DriveFailure::DeviceLostAfterRender));
+            }
+            ExpectedResult::Actionable => {
+                assert_eq!(
+                    result,
+                    Err(DriveFailure::Actionable(
+                        VelloPresenterError::UncapturedErrorOverflow { dropped: 3 }
+                    ))
+                );
+            }
+        }
+
+        let mut expected_operations = vec![
+            FrameOperation::Acquire,
+            FrameOperation::ValidateAcquiredExtent,
+            FrameOperation::EncodeScene,
+            FrameOperation::VelloRenderSubmit,
+        ];
+        if render_fails {
+            expected_operations.push(FrameOperation::DropAcquired);
+        }
+        expected_operations.push(FrameOperation::PollAfterRender);
+        if !render_fails {
+            match outcome {
+                DeviceOutcome::None => expected_operations.extend([
+                    FrameOperation::BlitSubmit,
+                    FrameOperation::PrePresentNotify,
+                    FrameOperation::Present,
+                ]),
+                DeviceOutcome::Lost | DeviceOutcome::Actionable => {
+                    expected_operations.push(FrameOperation::DropAcquired);
+                }
+            }
+        }
+        assert_eq!(
+            fake.operations, expected_operations,
+            "render_fails={render_fails}, outcome={outcome:?}"
+        );
+    }
 }
 
 #[test]
@@ -467,7 +566,7 @@ fn render_failure_drops_frame_polls_inbox_and_does_not_blit_notify_or_present() 
             FrameOperation::EncodeScene,
             FrameOperation::VelloRenderSubmit,
             FrameOperation::DropAcquired,
-            FrameOperation::PollAfterRenderFailure,
+            FrameOperation::PollAfterRender,
         ]
     );
 }
@@ -493,7 +592,7 @@ fn current_loss_after_render_failure_wins_recovery_transition() {
     );
     assert_eq!(
         fake.operations.last(),
-        Some(&FrameOperation::PollAfterRenderFailure)
+        Some(&FrameOperation::PollAfterRender)
     );
 }
 

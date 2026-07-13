@@ -1026,7 +1026,7 @@ impl PresentOperations for RealPresentOperations<'_> {
         frame.present();
     }
 
-    fn device_events_after_render_failure(&mut self) -> CurrentDeviceEventOutcome {
+    fn device_events_after_render(&mut self) -> CurrentDeviceEventOutcome {
         let events = self.inbox.drain_current(&self.current_scope);
         classify_current_device_events(events)
     }
