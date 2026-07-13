@@ -2,25 +2,23 @@
 
 [Back to the alpha-readiness index](../alpha-readiness.md)
 
-Campaign status: Stage 5 is **Complete / Accepted** through integrated
-`COLL-UI-01` and `COLL-UI-02`; Stage 6 is **Current / Authorized** with
-`DOCK-UI-01` **next**.
+Campaign status: Stage 6 is **Complete / Accepted** through `SHOW-02` squash
+merge `f38805e` and passing main Linux CI run `29285719629`. Stage 7 is
+**Current / Authorized** with `PERF-01` **next**.
 
-Integrated `REND-ADR-01`, `REND-03`, `REND-04`, `LAYOUT-UI-01`,
-`OVL-UI-01`, `CHROME-UI-01`, `COLL-UI-01`, and `COLL-UI-02` are
-**Complete / Accepted**.
+Integrated `DOCK-UI-01`, `DOCK-UI-02`, `VIEW-UI-01`, `VIEW-UI-02`,
+`INSP-UI-01`, `INSP-UI-02`, `OUT-UI-01`, `ASSET-UI-01`, `SYS-UI-01`, and
+`SHOW-02` are **Complete / Accepted**.
 
-Stage 6 is **Current / Authorized**; Stage 7 remains **Authorized / Queued**.
+Stage 7 is **Current / Authorized**.
 
 Kinetik UI remains a foundation/developer-preview; this packet does not tag, publish, deploy, release, or claim alpha readiness.
 
-Stages 0-5 are Complete; Stage 5 is Complete / Accepted through `COLL-UI-02`
-squash merge `98f4aec4c091438d8a86fee05c8c65ed9e96a5f2` and passing main CI
-run `29265615424`. Stage 6 is Current / Authorized with `DOCK-UI-01` next.
-Stage 7 remains Authorized / Queued for continuous sequential execution after
-the Stage 6 gate passes. Every remaining packet still has to pass its
-deterministic gates, and any Runway stop condition halts the active packet or
-stage.
+Stages 0-6 are Complete. Stage 6 is Complete / Accepted through `SHOW-02`
+squash merge `f38805ea75e511ce50de4923458296adb16b0c66` and passing main Linux
+CI run `29285719629`. Stage 7 is Current / Authorized with `PERF-01` next.
+Every remaining packet still has to pass its deterministic gates, and any
+Runway stop condition halts the active packet or stage.
 
 Campaign workflow policy: `create-if-available` issues, `create-if-gates-pass` pull requests, and `squash-after-gates` merges. Tagging, package publishing, and an alpha release remain outside this authorization.
 
