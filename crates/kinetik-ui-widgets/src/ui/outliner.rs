@@ -18,9 +18,10 @@ use crate::outliner::{
 };
 use crate::{
     CollectionContextActionRequest, CollectionContextTarget, CollectionCursorMove,
-    CollectionCursorTarget, InlineEditCancelReason, InlineEditCommitReason, InlineEditRequest,
-    ItemId, Menu, MenuOverlay, OverlayDismissal, OverlayKind, OverlayScene, OverlaySceneIntent,
-    OverlaySceneSurface, PopoverPlacement, Selection, TextFieldAccess, collection_context_actions,
+    CollectionCursorTarget, InlineEditCancelReason, InlineEditCommitReason,
+    InlineEditFocusLossPolicy, InlineEditRequest, ItemId, Menu, MenuOverlay, OverlayDismissal,
+    OverlayKind, OverlayScene, OverlaySceneIntent, OverlaySceneSurface, PopoverPlacement,
+    Selection, TextFieldAccess, collection_context_actions,
 };
 
 impl Ui<'_> {
@@ -57,8 +58,6 @@ impl Ui<'_> {
     ) -> OutlinerOutput {
         let root = scene.widget_id();
         let config = scene.config();
-        let prepared_rename = state.rename_target();
-        let context_was_prepared = scene.has_prepared_context() && state.context.is_some();
         self.register_id(root);
 
         let scroll = {
@@ -88,18 +87,9 @@ impl Ui<'_> {
             responses: Vec::with_capacity(scene.rows().len()),
         };
 
-        if let Some(target) = state.rename_target()
-            && scene.model().item_by_id(target).is_none()
-            && let Some(edit) = state.edit.as_ref()
-        {
-            output
-                .requests
-                .push(OutlinerRequest::Rename(InlineEditRequest::Cancel(
-                    edit.session
-                        .cancel_request(InlineEditCancelReason::Explicit),
-                )));
-            state.clear_rename();
-        }
+        self.reconcile_outliner_retained_state(scene, state, &mut output);
+        let prepared_rename = state.rename_target();
+        let context_was_prepared = scene.has_prepared_context() && state.context.is_some();
 
         self.reconcile_outliner_cursor(scene, state);
         let mut keyboard_activated = None;
@@ -111,14 +101,14 @@ impl Ui<'_> {
             .iter()
             .map(|row| row.row.id)
             .collect::<BTreeSet<_>>();
-        let mut semantics = outliner_semantics(
+        let mut root_semantics = outliner_semantics(
             root,
             config.bounds,
             &strict_rows,
             &state.selection,
             &config.label,
-        );
-        let mut root_semantics = semantics.remove(0);
+        )
+        .remove(0);
         root_semantics.state.disabled = config.disabled;
         if let Some(target) = prepared_rename
             && strict_ids.contains(&target)
@@ -130,7 +120,6 @@ impl Ui<'_> {
             *child = scene.rename_widget_id(target);
         }
         self.push_semantic_node(root_semantics);
-        let mut row_semantics = semantics.into_iter();
 
         let clip = ClipId::from_raw(root.child("outliner-clip").raw());
         self.primitive(Primitive::ClipBegin {
@@ -201,7 +190,7 @@ impl Ui<'_> {
                     if let Some(target) = state.cursor.activate(scene.projection(), item) {
                         output.selection_changed |= apply_outliner_selection(
                             &mut state.selection,
-                            scene.projection(),
+                            scene,
                             target.id,
                             modifiers,
                             config.selection_mode,
@@ -213,6 +202,7 @@ impl Ui<'_> {
                 if response.double_clicked {
                     if let Some(begin) = zones.row.inline_rename_begin_request(root) {
                         let text_widget = begin.text_widget_id;
+                        self.register_id(text_widget);
                         output
                             .requests
                             .push(OutlinerRequest::Rename(state.begin_rename(begin, config)));
@@ -316,15 +306,6 @@ impl Ui<'_> {
                 }
             }
 
-            if strict_ids.contains(&item)
-                && let Some(mut semantic) = row_semantics.next()
-                && !editing
-            {
-                semantic.state.focused = row_response.state.focused;
-                semantic.state.pressed = row_response.state.pressed;
-                self.push_semantic_node(semantic);
-            }
-
             if row_response.clicked
                 || row_response.double_clicked
                 || row_response.keyboard_activated
@@ -342,6 +323,32 @@ impl Ui<'_> {
                 visibility,
                 lock,
             });
+        }
+
+        let final_semantics = outliner_semantics(
+            root,
+            config.bounds,
+            &strict_rows,
+            &state.selection,
+            &config.label,
+        );
+        for (zones, mut semantic) in strict_rows.iter().zip(final_semantics.into_iter().skip(1)) {
+            if prepared_rename == Some(zones.row.id) {
+                continue;
+            }
+            if let Some(response) = output
+                .responses
+                .iter()
+                .find(|response| response.item == zones.row.id)
+            {
+                semantic.state.focused = response.row.state.focused;
+                semantic.state.pressed = response.row.state.pressed;
+            }
+            semantic.state.expanded = zones
+                .row
+                .has_children
+                .then_some(state.expansion.is_expanded(zones.row.id));
+            self.push_semantic_node(semantic);
         }
 
         let background_id = self.register_id(background_widget_id(root));
@@ -459,12 +466,111 @@ impl Ui<'_> {
         output
     }
 
+    fn reconcile_outliner_retained_state(
+        &mut self,
+        scene: &OutlinerScene<'_>,
+        state: &mut OutlinerState,
+        output: &mut OutlinerOutput,
+    ) {
+        let config = scene.config();
+        if config.disabled && state.context.take().is_some() {
+            self.request_repaint(RepaintRequest::NextFrame);
+        }
+
+        if let Some(drag) = state.drag.as_ref() {
+            let owner_retained = self.memory().drag_source() == Some(drag.widget)
+                || self.memory().released_drag_source() == Some(drag.widget);
+            let source_visible = scene
+                .strict_rows()
+                .any(|row| row.row.id == drag.source.source);
+            if config.disabled || !owner_retained || !source_visible {
+                if owner_retained {
+                    self.runtime.memory_mut().clear_drag();
+                }
+                state.drag = None;
+                self.request_repaint(RepaintRequest::NextFrame);
+            }
+        }
+
+        let Some(target) = state.rename_target() else {
+            return;
+        };
+        let eligible = !config.disabled
+            && scene
+                .model()
+                .item_by_id(target)
+                .is_some_and(|item| item.flags.can_request_rename());
+        let projected_index = scene.projection().projected_index(target);
+        if !eligible || projected_index.is_none() {
+            let text_widget = state.edit.as_ref().map(|edit| edit.session.text_widget_id);
+            if let Some(edit) = state.edit.as_ref() {
+                output
+                    .requests
+                    .push(OutlinerRequest::Rename(InlineEditRequest::Cancel(
+                        edit.session
+                            .cancel_request(InlineEditCancelReason::Explicit),
+                    )));
+            }
+            state.clear_rename();
+            if text_widget.is_some_and(|text_widget| self.memory().is_focused(text_widget)) {
+                self.runtime.memory_mut().clear_focus();
+            }
+            self.request_repaint(RepaintRequest::NextFrame);
+            return;
+        }
+
+        if scene.strict_rows().any(|row| row.row.id == target) {
+            return;
+        }
+        let projected_index = projected_index.unwrap_or_default();
+        let cursor_target = CollectionCursorTarget {
+            id: target,
+            projected_index,
+        };
+        let focus_loss_policy = state
+            .edit
+            .as_ref()
+            .map(|edit| edit.session.focus_loss_policy);
+        if focus_loss_policy == Some(InlineEditFocusLossPolicy::KeepEditing) {
+            self.retain_and_reveal_outliner_rename(scene, cursor_target);
+            return;
+        }
+
+        let request = state
+            .edit
+            .as_ref()
+            .and_then(|edit| edit.session.focus_loss_request());
+        if let Some(request) = request {
+            output.requests.push(OutlinerRequest::Rename(request));
+            state.clear_rename();
+            self.focus_and_reveal_outliner_target(scene, cursor_target);
+        } else {
+            self.retain_and_reveal_outliner_rename(scene, cursor_target);
+        }
+    }
+
+    fn retain_and_reveal_outliner_rename(
+        &mut self,
+        scene: &OutlinerScene<'_>,
+        target: CollectionCursorTarget,
+    ) {
+        self.register_id(scene.rename_widget_id(target.id));
+        let reveal = scene.reveal_scroll_offset(target);
+        self.runtime
+            .memory_mut()
+            .stage_scroll_offset(scene.widget_id(), Vec2::new(0.0, reveal));
+        self.request_repaint(RepaintRequest::NextFrame);
+    }
+
     fn reconcile_outliner_cursor(&mut self, scene: &OutlinerScene<'_>, state: &mut OutlinerState) {
         let old_active = state.cursor.active();
         let old_index = state.cursor.last_projected_index();
         let old_focused =
             old_active.is_some_and(|item| self.memory().is_focused(scene.row_widget_id(item)));
-        let repaired = state.cursor.reconcile(scene.projection());
+        let repaired = state
+            .cursor
+            .reconcile(scene.projection())
+            .and_then(|target| repair_outliner_cursor_target(scene, &mut state.cursor, target));
         let changed =
             old_active != state.cursor.active() || old_index != state.cursor.last_projected_index();
         if old_focused && changed {
@@ -516,15 +622,12 @@ impl Ui<'_> {
                 _ => None,
             };
             if let Some(movement) = movement {
-                if let Some(target) = state.cursor.navigate(scene.projection(), movement)
-                    && scene
-                        .model()
-                        .item_by_id(target.id)
-                        .is_some_and(|item| item.flags.can_request_selection())
+                if let Some(target) =
+                    navigate_selectable_outliner_target(scene, &mut state.cursor, movement)
                 {
                     output.selection_changed |= apply_outliner_selection(
                         &mut state.selection,
-                        scene.projection(),
+                        scene,
                         target.id,
                         event.modifiers,
                         config.selection_mode,
@@ -550,7 +653,7 @@ impl Ui<'_> {
                 {
                     output.selection_changed |= apply_outliner_selection(
                         &mut state.selection,
-                        scene.projection(),
+                        scene,
                         target.id,
                         event.modifiers,
                         config.selection_mode,
@@ -574,11 +677,13 @@ impl Ui<'_> {
                         .inline_rename_begin_from_selection(&state.selection, scene.widget_id())
                     {
                         let text_widget = begin.text_widget_id;
+                        self.register_id(text_widget);
                         output
                             .requests
                             .push(OutlinerRequest::Rename(state.begin_rename(begin, config)));
                         self.runtime.memory_mut().focus(text_widget);
                         self.request_repaint(RepaintRequest::NextFrame);
+                        return;
                     }
                 }
                 _ => {}
@@ -909,7 +1014,7 @@ impl Ui<'_> {
 
 fn apply_outliner_selection(
     selection: &mut Selection,
-    projection: &crate::CollectionProjection,
+    scene: &OutlinerScene<'_>,
     id: ItemId,
     modifiers: Modifiers,
     mode: OutlinerSelectionMode,
@@ -917,7 +1022,13 @@ fn apply_outliner_selection(
     let before = selection.clone();
     match mode {
         OutlinerSelectionMode::Multiple if modifiers.shift => {
-            let visible = projection.visible_ids();
+            let visible = scene
+                .projection()
+                .items()
+                .iter()
+                .map(|item| item.id)
+                .filter(|item| outliner_item_selectable(scene, *item))
+                .collect::<Vec<_>>();
             if !selection.select_range(&visible, id) {
                 selection.replace(id);
             }
@@ -965,6 +1076,7 @@ fn navigate_outliner_horizontally(
         return HorizontalOutlinerNavigation {
             target: children
                 .first()
+                .filter(|child| outliner_item_selectable(scene, **child))
                 .and_then(|child| cursor.activate(scene.projection(), *child)),
             toggled: false,
         };
@@ -979,9 +1091,72 @@ fn navigate_outliner_horizontally(
     HorizontalOutlinerNavigation {
         target: item
             .parent
+            .filter(|parent| outliner_item_selectable(scene, *parent))
             .and_then(|parent| cursor.activate(scene.projection(), parent)),
         toggled: false,
     }
+}
+
+fn navigate_selectable_outliner_target(
+    scene: &OutlinerScene<'_>,
+    cursor: &mut crate::CollectionCursor,
+    movement: CollectionCursorMove,
+) -> Option<CollectionCursorTarget> {
+    let old_active = cursor.active();
+    let candidate = cursor.navigate(scene.projection(), movement)?;
+    let indices: Box<dyn Iterator<Item = usize>> = match movement {
+        CollectionCursorMove::First
+        | CollectionCursorMove::Next
+        | CollectionCursorMove::PageNext { .. } => {
+            Box::new(candidate.projected_index..scene.projection().len())
+        }
+        CollectionCursorMove::Last
+        | CollectionCursorMove::Previous
+        | CollectionCursorMove::PagePrevious { .. } => {
+            Box::new((0..=candidate.projected_index).rev())
+        }
+    };
+    for index in indices {
+        let Some(item) = scene.projection().get(index) else {
+            continue;
+        };
+        if outliner_item_selectable(scene, item.id) {
+            return cursor.activate(scene.projection(), item.id);
+        }
+    }
+    if let Some(old_active) = old_active {
+        cursor.activate(scene.projection(), old_active)
+    } else {
+        cursor.clear();
+        None
+    }
+}
+
+fn repair_outliner_cursor_target(
+    scene: &OutlinerScene<'_>,
+    cursor: &mut crate::CollectionCursor,
+    target: CollectionCursorTarget,
+) -> Option<CollectionCursorTarget> {
+    if outliner_item_selectable(scene, target.id) {
+        return Some(target);
+    }
+    let following = target.projected_index..scene.projection().len();
+    let preceding = (0..target.projected_index).rev();
+    for index in following.chain(preceding) {
+        let item = scene.projection().get(index)?;
+        if outliner_item_selectable(scene, item.id) {
+            return cursor.activate(scene.projection(), item.id);
+        }
+    }
+    cursor.clear();
+    None
+}
+
+fn outliner_item_selectable(scene: &OutlinerScene<'_>, item: ItemId) -> bool {
+    scene
+        .model()
+        .item_by_id(item)
+        .is_some_and(|item| item.flags.can_request_selection())
 }
 
 fn outliner_context_anchor(position: Option<Point>, fallback: Rect) -> Rect {

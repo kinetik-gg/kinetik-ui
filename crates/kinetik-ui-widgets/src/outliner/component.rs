@@ -293,10 +293,11 @@ impl<'a> OutlinerScene<'a> {
     ) -> Option<Self> {
         valid_bounds(config.bounds)?;
         config.layout.tree.effective_row_height()?;
-        model.validate().ok()?;
+        let tree = model.tree_model();
+        tree.validate().ok()?;
 
         let projection =
-            CollectionProjection::from_source_ids(&model.visible_item_ids(&state.expansion));
+            CollectionProjection::from_source_ids(&tree.visible_item_ids(&state.expansion));
         let window = config.layout.tree.virtual_window(
             projection.len(),
             retained_scroll_offset,
@@ -380,7 +381,8 @@ impl<'a> OutlinerScene<'a> {
                 for zones in &self.rows {
                     let row_id = self.row_widget_id(zones.row.id);
                     let drop_id = drop_widget_id(row_id);
-                    let editing = state.rename_target() == Some(zones.row.id);
+                    let editing = state.rename_target() == Some(zones.row.id)
+                        && zones.row.flags.can_request_rename();
                     plan.target(
                         PointerTarget::new(row_id, zones.rect, take_order(&mut ordinal))
                             .drop_owner(drop_id)
@@ -418,7 +420,9 @@ impl<'a> OutlinerScene<'a> {
                 }
             }
         });
-        if let Some(context_scene) = &self.context_scene {
+        if !self.config.disabled
+            && let Some(context_scene) = &self.context_scene
+        {
             return context_scene.declare_pointer_targets(plan, PointerOrder::new(ordinal));
         }
         PointerOrder::new(ordinal)
