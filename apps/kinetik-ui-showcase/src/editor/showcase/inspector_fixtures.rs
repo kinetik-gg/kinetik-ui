@@ -1,145 +1,41 @@
 impl EditorShowcase {
     pub(super) fn inspector(&mut self, ui: &mut Ui<'_>, body: Rect) {
-        rect(ui, body, rgb(24, 25, 27), None);
-        let header = Rect::new(body.x + 8.0, body.y + 8.0, body.width - 16.0, 34.0);
-        rect(ui, header, rgb(37, 39, 43), Some(rgb(55, 58, 64)));
-        draw_icon(
-            ui,
-            Rect::new(header.x + 7.0, header.y + 7.0, 20.0, 20.0),
-            scene_icon(self.selected_node),
-            DENSE_ICON_SIZE,
-        );
-        text(
-            ui,
-            header.x + 34.0,
-            header.y + 12.0,
-            "Inspector",
-            9.0,
-            rgb(151, 158, 166),
-        );
-        text(
-            ui,
-            header.x + 34.0,
-            header.y + 27.0,
-            scene_label(self.selected_node),
-            12.0,
-            rgb(231, 233, 237),
-        );
-        draw_icon(
-            ui,
-            Rect::new(header.max_x() - 27.0, header.y + 7.0, 20.0, 20.0),
-            ToolbarIcon::Gear,
-            DENSE_ICON_SIZE,
-        );
-
         let rows = inspector_rows(&self.mass.text);
-        let grid = Rect::new(
-            body.x + 8.0,
-            body.y + 52.0,
-            body.width - 16.0,
-            body.height - 60.0,
+        let grid = body.inset(8.0);
+        let layout = PropertyGridLayout::new(
+            24.0,
+            26.0,
+            inspector_label_width(grid.width),
+            6.0,
+            12.0,
         );
-        let layout =
-            PropertyGridLayout::new(24.0, 26.0, inspector_label_width(grid.width), 6.0, 12.0);
-        ui.scroll_area(
-            "editor.inspector.scroll",
-            grid,
-            Size::new(grid.width, layout.content_height(&rows).max(grid.height)),
-            false,
-            |ui, offset| {
-                for row in layout.visible_row_rects_content(grid, &rows, offset.y, 2) {
-                    match row.kind {
-                        kinetik_ui::widgets::PropertyGridRowKind::Section => {
-                            rect(ui, row.rect, rgb(31, 33, 36), Some(rgb(46, 49, 55)));
-                            text(
-                                ui,
-                                row.label_rect.x + 8.0,
-                                row.label_rect.y + 17.0,
-                                &rows[row.index].label,
-                                12.0,
-                                rgb(205, 209, 216),
-                            );
-                        }
-                        kinetik_ui::widgets::PropertyGridRowKind::Property { .. } => {
-                            let model_row = &rows[row.index];
-                            let status = model_row.state.status.presentation();
-                            let label_color = match status.severity {
-                                kinetik_ui::widgets::PropertyGridStatusSeverity::None => {
-                                    rgb(154, 160, 168)
-                                }
-                                kinetik_ui::widgets::PropertyGridStatusSeverity::Info => {
-                                    rgb(126, 179, 236)
-                                }
-                                kinetik_ui::widgets::PropertyGridStatusSeverity::Warning => {
-                                    rgb(232, 179, 90)
-                                }
-                                kinetik_ui::widgets::PropertyGridStatusSeverity::Error => {
-                                    rgb(236, 96, 96)
-                                }
-                            };
-                            rect(ui, row.rect, rgb(24, 25, 27), Some(rgb(38, 40, 45)));
-                            if status.accented {
-                                rect(
-                                    ui,
-                                    Rect::new(row.rect.x, row.rect.y, 3.0, row.rect.height),
-                                    label_color,
-                                    None,
-                                );
-                                text(
-                                    ui,
-                                    row.label_rect.max_x() - 10.0,
-                                    row.label_rect.y + 16.0,
-                                    match status.severity {
-                                        kinetik_ui::widgets::PropertyGridStatusSeverity::Info => {
-                                            "i"
-                                        }
-                                        kinetik_ui::widgets::PropertyGridStatusSeverity::Warning => {
-                                            "!"
-                                        }
-                                        kinetik_ui::widgets::PropertyGridStatusSeverity::Error => {
-                                            "x"
-                                        }
-                                        kinetik_ui::widgets::PropertyGridStatusSeverity::None => "",
-                                    },
-                                    9.0,
-                                    label_color,
-                                );
-                            }
-                            text(
-                                ui,
-                                row.label_rect.x + 6.0,
-                                row.label_rect.y + 16.0,
-                                &model_row.label,
-                                11.0,
-                                label_color,
-                            );
-                            let affordance_rects = property_grid_row_affordance_rects(
-                                model_row,
-                                row.value_rect.inset(2.0),
-                                PropertyGridAffordanceLayout::default(),
-                            );
-                            self.inspector_value(ui, model_row, affordance_rects.value_rect);
-                            let affordance = ui.property_grid_row_affordance_controls(
-                                ("editor.inspector.affordance", row.id.raw()),
-                                model_row,
-                                affordance_rects,
-                            );
-                            if affordance.reset_requested {
-                                self.status = format!("Reset requested for {}", model_row.label);
-                            } else if affordance.keyframe_toggle_requested {
-                                let state = if affordance.requested_keyed {
-                                    "add"
-                                } else {
-                                    "remove"
-                                };
-                                self.status =
-                                    format!("Keyframe {state} requested for {}", model_row.label);
-                            }
-                        }
-                    }
+        let roughness_before = self.roughness;
+        let output = ui
+            .property_grid(
+                "editor.workflow.property-grid",
+                grid,
+                &rows,
+                kinetik_ui::widgets::inspector::PropertyGridConfig::new(layout),
+                |ui, cell| self.inspector_value(ui, cell.row, cell.value_rect),
+            )
+            .expect("editor property rows have stable unique IDs");
+        if roughness_before.to_bits() != self.roughness.to_bits() {
+            self.status = format!("Roughness edited to {:.2}", self.roughness);
+        }
+        for intent in output.intents {
+            self.status = match intent {
+                kinetik_ui::widgets::inspector::PropertyGridIntent::Reset { row } => {
+                    format!("Reset requested for property {}", row.raw())
                 }
-            },
-        );
+                kinetik_ui::widgets::inspector::PropertyGridIntent::SetKeyed { row, keyed } => {
+                    format!(
+                        "{} keyframe requested for property {}",
+                        if keyed { "Add" } else { "Remove" },
+                        row.raw()
+                    )
+                }
+            };
+        }
     }
 
     pub(super) fn inspector_value(

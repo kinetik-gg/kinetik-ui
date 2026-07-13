@@ -315,22 +315,6 @@ fn editor_panel(instance: PanelInstanceId) -> Panel {
     Panel::from_instance_id(spec.id, spec.title)
 }
 
-fn scene_model() -> TreeModel {
-    TreeModel::new(vec![
-        tree_item(1, None, true),
-        tree_item(2, Some(1), true),
-        tree_item(3, Some(2), false),
-        tree_item(4, Some(2), false),
-        tree_item(5, Some(2), false),
-        tree_item(6, Some(1), true),
-        tree_item(7, Some(6), false),
-        tree_item(8, Some(6), false),
-        tree_item(9, Some(1), false),
-        tree_item(10, Some(1), false),
-        tree_item(11, Some(1), false),
-    ])
-}
-
 const MASS_VALIDATION_ERROR: &str = "Mass must be positive";
 
 fn mass_status(mass_text: &str) -> PropertyGridRowStatus {
@@ -391,6 +375,7 @@ fn inspector_label_width(grid_width: f32) -> f32 {
     (grid_width * 0.42).clamp(52.0, 96.0)
 }
 
+#[cfg(test)]
 fn frame_tab_rects(frame: &Frame, frame_rect: Rect, tab_height: f32) -> Vec<(FrameTab, Rect)> {
     let mut tab_x = frame_rect.x + 1.0;
     frame_tab_strip(frame)
@@ -406,76 +391,9 @@ fn frame_tab_rects(frame: &Frame, frame_rect: Rect, tab_height: f32) -> Vec<(Fra
         .collect()
 }
 
+#[cfg(test)]
 fn frame_tab_strip(frame: &Frame) -> TabStrip {
     TabStrip::from_frame_tabs(frame_tabs(frame))
-}
-
-fn dock_drop_status(target: DockDropTarget) -> String {
-    match target {
-        DockDropTarget::Tab { frame } => {
-            format!("Dock tab merged into frame {}", frame.raw())
-        }
-        DockDropTarget::Split {
-            frame, placement, ..
-        } => {
-            let placement = match placement {
-                DockPlacement::Left => "left of",
-                DockPlacement::Right => "right of",
-                DockPlacement::Top => "above",
-                DockPlacement::Bottom => "below",
-            };
-            format!("Dock tab split {placement} frame {}", frame.raw())
-        }
-    }
-}
-
-fn draw_dock_drop_affordance(ui: &mut Ui<'_>, frame_rect: Rect, target: DockDropTarget) {
-    let preview = match target {
-        DockDropTarget::Tab { .. } => frame_rect.inset(24.0),
-        DockDropTarget::Split {
-            placement: DockPlacement::Left,
-            ..
-        } => Rect::new(
-            frame_rect.x + 6.0,
-            frame_rect.y + 6.0,
-            frame_rect.width * 0.35,
-            frame_rect.height - 12.0,
-        ),
-        DockDropTarget::Split {
-            placement: DockPlacement::Right,
-            ..
-        } => Rect::new(
-            frame_rect.max_x() - frame_rect.width * 0.35 - 6.0,
-            frame_rect.y + 6.0,
-            frame_rect.width * 0.35,
-            frame_rect.height - 12.0,
-        ),
-        DockDropTarget::Split {
-            placement: DockPlacement::Top,
-            ..
-        } => Rect::new(
-            frame_rect.x + 6.0,
-            frame_rect.y + 6.0,
-            frame_rect.width - 12.0,
-            frame_rect.height * 0.35,
-        ),
-        DockDropTarget::Split {
-            placement: DockPlacement::Bottom,
-            ..
-        } => Rect::new(
-            frame_rect.x + 6.0,
-            frame_rect.max_y() - frame_rect.height * 0.35 - 6.0,
-            frame_rect.width - 12.0,
-            frame_rect.height * 0.35,
-        ),
-    };
-    rect_fill(
-        ui,
-        preview,
-        rgba(78, 142, 245, 0.18),
-        Some(rgb(86, 151, 245)),
-        CornerRadius::all(3.0),
-    );
 }
 
 fn run_toolbar_buttons(
