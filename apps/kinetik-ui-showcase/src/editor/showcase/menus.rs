@@ -159,7 +159,7 @@ impl EditorShowcase {
                 menu_action(
                     ACTION_SAVE,
                     "Save Scene",
-                    Some(ctrl_char("s")),
+                    None,
                     None,
                     true,
                 ),

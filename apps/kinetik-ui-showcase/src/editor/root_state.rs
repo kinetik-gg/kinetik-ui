@@ -227,20 +227,8 @@ enum ToolbarIcon {
     Stop,
     Rocket,
     Download,
-    Plus,
-    Dots,
-    Search,
-    Gear,
     Layers,
-    Caret,
-    Eye,
     Component,
-    Cube,
-    Archive,
-    Image,
-    Code,
-    Tokens,
-    Box,
 }
 
 const EDITOR_TOOL_BUTTONS: [(EditorTool, ToolbarIcon, &str, &str); 4] = [
@@ -285,20 +273,8 @@ impl ToolbarIcon {
             Self::Stop => 10,
             Self::Rocket => 11,
             Self::Download => 12,
-            Self::Plus => 13,
-            Self::Dots => 14,
-            Self::Search => 15,
-            Self::Gear => 16,
             Self::Layers => 17,
-            Self::Caret => 18,
-            Self::Eye => 19,
             Self::Component => 20,
-            Self::Cube => 21,
-            Self::Archive => 22,
-            Self::Image => 23,
-            Self::Code => 24,
-            Self::Tokens => 25,
-            Self::Box => 26,
         }
     }
 
@@ -316,20 +292,8 @@ impl ToolbarIcon {
             Self::Stop => PhosphorIcon::Stop,
             Self::Rocket => PhosphorIcon::Rocket,
             Self::Download => PhosphorIcon::Download,
-            Self::Plus => PhosphorIcon::Plus,
-            Self::Dots => PhosphorIcon::Dots,
-            Self::Search => PhosphorIcon::Search,
-            Self::Gear => PhosphorIcon::Gear,
             Self::Layers => PhosphorIcon::Layers,
-            Self::Caret => PhosphorIcon::Caret,
-            Self::Eye => PhosphorIcon::Eye,
             Self::Component => PhosphorIcon::Component,
-            Self::Cube => PhosphorIcon::Cube,
-            Self::Archive => PhosphorIcon::Archive,
-            Self::Image => PhosphorIcon::Image,
-            Self::Code => PhosphorIcon::Code,
-            Self::Tokens => PhosphorIcon::Tokens,
-            Self::Box => PhosphorIcon::Box,
         }
     }
 
@@ -347,20 +311,8 @@ impl ToolbarIcon {
             Self::Stop => "stop",
             Self::Rocket => "rocket",
             Self::Download => "download",
-            Self::Plus => "plus",
-            Self::Dots => "dots",
-            Self::Search => "search",
-            Self::Gear => "gear",
             Self::Layers => "layers",
-            Self::Caret => "caret",
-            Self::Eye => "eye",
             Self::Component => "component",
-            Self::Cube => "cube",
-            Self::Archive => "archive",
-            Self::Image => "image",
-            Self::Code => "code",
-            Self::Tokens => "tokens",
-            Self::Box => "box",
         }
     }
 }

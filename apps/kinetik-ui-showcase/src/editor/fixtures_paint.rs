@@ -1,11 +1,3 @@
-fn tree_item(raw: u64, parent: Option<u64>, has_children: bool) -> TreeItem {
-    TreeItem {
-        id: item_id(raw),
-        parent: parent.map(item_id),
-        has_children,
-    }
-}
-
 const fn item_id(raw: u64) -> ItemId {
     ItemId::from_raw(raw)
 }
@@ -87,49 +79,40 @@ fn feedback_kind_color(kind: FeedbackKind) -> Color {
 struct Asset {
     name: &'static str,
     kind: &'static str,
-    icon: ToolbarIcon,
 }
 
 const ASSETS: &[Asset] = &[
     Asset {
         name: "camp_scene",
         kind: "scene",
-        icon: ToolbarIcon::Cube,
     },
     Asset {
         name: "terrain_forest",
         kind: "mesh",
-        icon: ToolbarIcon::Box,
     },
     Asset {
         name: "van_body",
         kind: "mesh",
-        icon: ToolbarIcon::Component,
     },
     Asset {
         name: "campfire",
         kind: "prefab",
-        icon: ToolbarIcon::Tokens,
     },
     Asset {
         name: "night_sky",
         kind: "texture",
-        icon: ToolbarIcon::Image,
     },
     Asset {
         name: "hero_ctrl",
         kind: "script",
-        icon: ToolbarIcon::Code,
     },
     Asset {
         name: "audio_loop",
         kind: "asset",
-        icon: ToolbarIcon::Archive,
     },
     Asset {
         name: "lighting_lut",
         kind: "texture",
-        icon: ToolbarIcon::Image,
     },
 ];
 
@@ -184,21 +167,6 @@ fn scene_label(id: ItemId) -> &'static str {
     }
 }
 
-fn scene_icon(id: ItemId) -> ToolbarIcon {
-    match id.raw() {
-        1 => ToolbarIcon::Layers,
-        2 | 6 => ToolbarIcon::Caret,
-        3 => ToolbarIcon::Eye,
-        4 => ToolbarIcon::Crosshair,
-        5 => ToolbarIcon::Grid,
-        7 => ToolbarIcon::Component,
-        8 | 9 => ToolbarIcon::Cube,
-        10 => ToolbarIcon::Rocket,
-        11 => ToolbarIcon::Archive,
-        _ => ToolbarIcon::Box,
-    }
-}
-
 fn inspector_value_label(id: ItemId) -> &'static str {
     match id.raw() {
         9 => "M_AdventureNight",
@@ -229,35 +197,6 @@ fn log_color(level: &str) -> Color {
     }
 }
 
-trait RectExt {
-    fn with_width(self, width: f32) -> Self;
-    fn right_strip(self, width: f32) -> Self;
-}
-
-impl RectExt for Rect {
-    fn with_width(self, width: f32) -> Self {
-        Rect::new(self.x, self.y, width.max(0.0), self.height)
-    }
-
-    fn right_strip(self, width: f32) -> Self {
-        let width = width.max(0.0).min(self.width.max(0.0));
-        Rect::new(self.max_x() - width, self.y, width, self.height)
-    }
-}
-
-trait PanZoomExt {
-    fn content_zoom(self) -> f32;
-}
-
-impl PanZoomExt for PanZoom {
-    fn content_zoom(self) -> f32 {
-        match self.fit {
-            ViewportFit::Zoom => self.zoom,
-            _ => 1.0,
-        }
-    }
-}
-
 fn rect(ui: &mut Ui<'_>, rect: Rect, fill: Color, stroke: Option<Color>) {
     rect_fill(ui, rect, fill, stroke, CornerRadius::all(0.0));
 }
@@ -274,14 +213,6 @@ fn rect_fill(
         fill: Some(Brush::Solid(fill)),
         stroke: stroke.map(|stroke| Stroke::new(1.0, Brush::Solid(stroke))),
         radius,
-    }));
-}
-
-fn line(ui: &mut Ui<'_>, from: Point, to: Point, color: Color, width: f32) {
-    ui.primitive(Primitive::Line(LinePrimitive {
-        from,
-        to,
-        stroke: Stroke::new(width, Brush::Solid(color)),
     }));
 }
 
@@ -375,10 +306,6 @@ fn paint_toolbar_icon_button_sized(
     if response.state.hovered && !disabled {
         ui.push_platform_request(PlatformRequest::SetCursor(CursorShape::PointingHand));
     }
-}
-
-fn draw_icon(ui: &mut Ui<'_>, bounds: Rect, icon: ToolbarIcon, size: f32) {
-    draw_tinted_icon(ui, bounds, icon, size, rgb(205, 212, 222));
 }
 
 fn draw_tinted_icon(ui: &mut Ui<'_>, bounds: Rect, icon: ToolbarIcon, size: f32, color: Color) {
