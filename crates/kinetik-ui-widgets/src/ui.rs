@@ -5,6 +5,7 @@ mod behavior;
 mod choice_controls;
 mod frame;
 mod inspector_fields;
+mod layout;
 mod output;
 mod passive;
 mod sliders;
