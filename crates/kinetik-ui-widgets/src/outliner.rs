@@ -1,5 +1,16 @@
 //! Data-only outliner contracts for hierarchy navigation.
 
+mod component;
+
+pub use component::{
+    OutlinerConfig, OutlinerContextMenuConfig, OutlinerOutput, OutlinerRequest,
+    OutlinerRowResponse, OutlinerScene, OutlinerSelectionMode, OutlinerState,
+};
+pub(crate) use component::{
+    OutlinerContextState, OutlinerDragState, background_widget_id, context_overlay_id,
+    disclosure_widget_id, drop_widget_id, lock_widget_id, visibility_widget_id,
+};
+
 use std::collections::BTreeSet;
 use std::ops::Range;
 
