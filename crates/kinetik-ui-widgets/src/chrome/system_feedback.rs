@@ -336,14 +336,10 @@ impl std::error::Error for SystemFeedbackSceneError {}
 /// Borrowed, validated scene over application-owned feedback snapshots.
 #[derive(Debug)]
 pub struct SystemFeedbackScene<'a> {
-    /// Caller-owned geometry and diagnostic action metadata.
-    pub config: SystemFeedbackSceneConfig,
-    /// Application-owned job snapshot.
-    pub jobs: &'a JobList,
-    /// Application-owned diagnostic snapshot.
-    pub diagnostics: &'a DiagnosticStrip,
-    /// Application-owned feedback snapshot.
-    pub feedback: &'a FeedbackStack,
+    config: SystemFeedbackSceneConfig,
+    jobs: &'a JobList,
+    diagnostics: &'a DiagnosticStrip,
+    feedback: &'a FeedbackStack,
     now: Duration,
 }
 
