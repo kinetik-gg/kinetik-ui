@@ -10,6 +10,7 @@ mod frame;
 mod inspector_fields;
 mod inspector_pickers;
 mod layout;
+mod outliner;
 mod output;
 mod overlays;
 mod passive;
