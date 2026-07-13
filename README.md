@@ -154,8 +154,18 @@ alpha acceptance.
 
 The default facade stack includes the composite `vello-winit` feature. Its
 presenter remains qualified at `kinetik_ui::vello_winit` and is deliberately
-absent from the prelude. A complete application-owned event-loop example is in
-`kinetik-ui-vello-winit/examples/one_window.rs`.
+absent from the prelude. The complete application-owned event-loop example at
+`kinetik-ui-vello-winit/examples/one_window.rs` creates a texture on the
+presenter's device, updates it through GPU queue submissions, and composites it
+without a CPU snapshot or readback:
+
+```text
+cargo run -p kinetik-ui-vello-winit --example one_window
+```
+
+The example recreates and re-registers its producer texture when the presenter
+reports a new device scope. This demonstrates GPU-copy interoperability; it is
+not a zero-copy claim.
 
 The `ef7c2f9` crate consolidation renamed the old `kinetik-ui-render-vello`
 crate to `kinetik-ui-vello` and the old `kinetik-ui-platform-winit` crate to
