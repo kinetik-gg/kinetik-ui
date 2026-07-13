@@ -4,6 +4,7 @@ mod diagnostics;
 mod feedback;
 mod jobs;
 mod menu_bar;
+mod overflow;
 mod status_bar;
 mod tab_strip;
 mod toolbar;
@@ -21,6 +22,10 @@ pub use jobs::{
     JobRowId, JobSummaryCounts,
 };
 pub use menu_bar::{MenuBar, MenuBarMenu, MenuBarMenuId, MenuBarMove, MenuBarOverlayRequest};
+pub use overflow::{
+    ChromeOverflowItem, ChromeOverflowPlacement, ChromeOverflowProjection, ChromeOverflowTrigger,
+    project_chrome_overflow,
+};
 pub use status_bar::{StatusBar, StatusItem, StatusItemId, StatusItemKind, StatusProgress};
 pub use tab_strip::{TabStrip, TabStripMove, TabStripTarget};
 pub use toolbar::{Toolbar, ToolbarGroup, ToolbarGroupId, ToolbarItem, ToolbarItemPresentation};
