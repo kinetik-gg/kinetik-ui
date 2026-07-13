@@ -386,12 +386,13 @@ fn prepare_tabs(
         return Vec::new();
     }
 
-    let width = (tab_list_rect.width / tabs.len() as f32).min(PREFERRED_TAB_WIDTH);
+    let tab_count = u16::try_from(tabs.len()).unwrap_or(u16::MAX);
+    let width = (tab_list_rect.width / f32::from(tab_count)).min(PREFERRED_TAB_WIDTH);
+    let mut x = tab_list_rect.x;
     tabs.into_iter()
-        .enumerate()
-        .map(|(index, tab)| {
-            let x = tab_list_rect.x + width * index as f32;
+        .map(move |tab| {
             let rect = Rect::new(x, tab_list_rect.y, width, tab_list_rect.height);
+            x += width;
             let close_rect = (tab.close_visible && width >= TAB_CLOSE_WIDTH * 2.0).then(|| {
                 Rect::new(
                     rect.max_x() - TAB_CLOSE_WIDTH,
