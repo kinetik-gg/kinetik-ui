@@ -54,7 +54,8 @@ pub use interaction::{
 };
 pub use layout::{
     Alignment, Axis, Insets, LayoutItem, Measurement, SeparatorKind, SizeRule, column_layout,
-    fit_box, pad_rect, rect_from_size, row_layout, split_leading, split_trailing, stack_layout,
+    fit_box, grid_layout, pad_rect, rect_from_size, row_layout, split_leading, split_trailing,
+    stack_layout,
 };
 #[allow(deprecated)]
 pub use liveness::LivenessGeneration;

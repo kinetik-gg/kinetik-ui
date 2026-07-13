@@ -3,8 +3,8 @@
 use kinetik_ui_core::layout::{separator, spacer};
 use kinetik_ui_core::{
     Alignment, Axis, Insets, LayoutItem, Measurement, Rect, SeparatorKind, Size, SizeRule,
-    column_layout, fit_box, pad_rect, rect_from_size, row_layout, split_leading, split_trailing,
-    stack_layout,
+    column_layout, fit_box, grid_layout, pad_rect, rect_from_size, row_layout, split_leading,
+    split_trailing, stack_layout,
 };
 
 const EPSILON: f32 = 0.0001;
@@ -159,6 +159,170 @@ fn layout_invariants_size_rule_resolution_sanitizes_invalid_inputs() {
 fn layout_invariants_empty_child_lists_return_empty() {
     assert!(row_layout(Rect::new(0.0, 0.0, f32::NAN, -10.0), &[], f32::INFINITY).is_empty());
     assert!(column_layout(Rect::new(0.0, 0.0, -10.0, f32::NAN), &[], f32::NAN).is_empty());
+    assert!(
+        grid_layout(
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            &[],
+            &[SizeRule::Fill],
+            &[Measurement::new(Size::ZERO)],
+            0.0,
+            0.0,
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn layout_invariants_grid_fit_tracks_use_intrinsic_maxima() {
+    let rect = Rect::new(10.0, 20.0, 100.0, 60.0);
+    let measurements = [
+        Measurement::new(Size::new(10.0, 7.0)),
+        Measurement::new(Size::new(20.0, 9.0)),
+        Measurement::new(Size::new(30.0, 11.0)),
+        Measurement::new(Size::new(5.0, 13.0)),
+    ];
+
+    let grid = grid_layout(
+        rect,
+        &[SizeRule::Fit, SizeRule::Fill],
+        &[SizeRule::Fit, SizeRule::Fill],
+        &measurements,
+        4.0,
+        3.0,
+    );
+
+    assert_eq!(
+        grid,
+        vec![
+            Rect::new(10.0, 20.0, 30.0, 9.0),
+            Rect::new(44.0, 20.0, 66.0, 9.0),
+            Rect::new(10.0, 32.0, 30.0, 48.0),
+            Rect::new(44.0, 32.0, 66.0, 48.0),
+        ]
+    );
+}
+
+#[test]
+fn layout_invariants_grid_fill_tracks_share_remaining_space() {
+    let grid = grid_layout(
+        Rect::new(0.0, 0.0, 100.0, 20.0),
+        &[SizeRule::Fixed(20.0), SizeRule::Fill, SizeRule::Fill],
+        &[SizeRule::Fill],
+        &[Measurement::default(); 3],
+        5.0,
+        0.0,
+    );
+
+    assert_eq!(
+        grid,
+        vec![
+            Rect::new(0.0, 0.0, 20.0, 20.0),
+            Rect::new(25.0, 0.0, 35.0, 20.0),
+            Rect::new(65.0, 0.0, 35.0, 20.0),
+        ]
+    );
+}
+
+#[test]
+fn layout_invariants_grid_extended_rules_match_axis_resolution() {
+    let grid = grid_layout(
+        Rect::new(0.0, 0.0, 200.0, 40.0),
+        &[
+            SizeRule::MinMax {
+                min: 10.0,
+                max: 25.0,
+            },
+            SizeRule::Percent(0.25),
+            SizeRule::AspectRatio(2.0),
+        ],
+        &[SizeRule::AspectRatio(2.0)],
+        &[
+            Measurement::new(Size::new(50.0, 8.0)),
+            Measurement::default(),
+            Measurement::default(),
+        ],
+        0.0,
+        0.0,
+    );
+
+    assert_eq!(
+        grid,
+        vec![
+            Rect::new(0.0, 0.0, 25.0, 100.0),
+            Rect::new(25.0, 0.0, 50.0, 100.0),
+            Rect::new(75.0, 0.0, 80.0, 100.0),
+        ]
+    );
+}
+
+#[test]
+fn layout_invariants_grid_overflow_is_explicit_finite_and_ordered() {
+    let grid = grid_layout(
+        Rect::new(0.0, 0.0, 10.0, 5.0),
+        &[SizeRule::Fixed(8.0), SizeRule::Fit, SizeRule::Fill],
+        &[SizeRule::Fixed(7.0), SizeRule::Fill],
+        &[
+            Measurement::new(Size::new(1.0, 1.0)),
+            Measurement::new(Size::new(9.0, 1.0)),
+            Measurement::default(),
+            Measurement::default(),
+            Measurement::default(),
+            Measurement::default(),
+        ],
+        2.0,
+        3.0,
+    );
+
+    assert_rects_invariants(&grid);
+    assert_eq!(grid[0], Rect::new(0.0, 0.0, 8.0, 7.0));
+    assert_eq!(grid[1], Rect::new(10.0, 0.0, 9.0, 7.0));
+    assert_eq!(grid[2], Rect::new(21.0, 0.0, 0.0, 7.0));
+    assert_eq!(grid[3], Rect::new(0.0, 10.0, 8.0, 0.0));
+    assert!(grid[0].x <= grid[1].x && grid[1].x <= grid[2].x);
+    assert!(grid[0].y <= grid[3].y);
+}
+
+#[test]
+fn layout_invariants_grid_partial_and_excess_inputs_are_deterministic() {
+    let rect = Rect::new(0.0, 0.0, 40.0, 40.0);
+    let columns = [SizeRule::Fit, SizeRule::Fill];
+    let rows = [SizeRule::Fit, SizeRule::Fill];
+    let measurements = [
+        Measurement::new(Size::new(10.0, 10.0)),
+        Measurement::new(Size::new(5.0, 20.0)),
+        Measurement::new(Size::new(30.0, 5.0)),
+        Measurement::new(Size::new(15.0, 40.0)),
+        Measurement::new(Size::new(10_000.0, 10_000.0)),
+    ];
+
+    let partial = grid_layout(rect, &columns, &rows, &measurements[..3], 0.0, 0.0);
+    let partial_again = grid_layout(rect, &columns, &rows, &measurements[..3], 0.0, 0.0);
+    let exact = grid_layout(rect, &columns, &rows, &measurements[..4], 0.0, 0.0);
+    let excess = grid_layout(rect, &columns, &rows, &measurements, 0.0, 0.0);
+
+    assert_eq!(partial.len(), 3);
+    assert_eq!(partial, partial_again);
+    assert_eq!(excess, exact);
+}
+
+#[test]
+fn layout_invariants_grid_sanitizes_invalid_inputs() {
+    let grid = grid_layout(
+        Rect::new(f32::NAN, f32::INFINITY, f32::INFINITY, -10.0),
+        &[
+            SizeRule::Fixed(f32::NAN),
+            SizeRule::Percent(f32::INFINITY),
+            SizeRule::Fill,
+        ],
+        &[SizeRule::Fit, SizeRule::AspectRatio(f32::NAN)],
+        &[Measurement::new(Size::new(f32::NAN, f32::INFINITY)); 6],
+        f32::INFINITY,
+        f32::NAN,
+    );
+
+    assert_eq!(grid.len(), 6);
+    assert_rects_invariants(&grid);
+    assert!(grid.iter().all(|rect| *rect == Rect::ZERO));
 }
 
 #[test]

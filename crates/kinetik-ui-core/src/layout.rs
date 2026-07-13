@@ -375,6 +375,74 @@ pub fn column_layout(rect: Rect, items: &[LayoutItem], spacing: f32) -> Vec<Rect
     linear_layout(Axis::Vertical, rect, items, spacing)
 }
 
+/// Lays out measured children in a row-major grid.
+///
+/// Track sizing follows the same rules as [`row_layout`] and [`column_layout`].
+/// `Fit` tracks use the largest intrinsic measurement in that track, while
+/// `Fill` tracks share the remaining space after non-fill tracks and spacing.
+/// Measurements beyond the grid's capacity are ignored.
+#[must_use]
+pub fn grid_layout(
+    rect: Rect,
+    columns: &[SizeRule],
+    rows: &[SizeRule],
+    measurements: &[Measurement],
+    column_spacing: f32,
+    row_spacing: f32,
+) -> Vec<Rect> {
+    if columns.is_empty() || rows.is_empty() || measurements.is_empty() {
+        return Vec::new();
+    }
+
+    let rect = sanitize_rect(rect);
+    let column_spacing = sanitize_size(column_spacing);
+    let row_spacing = sanitize_size(row_spacing);
+    let capacity = columns.len().saturating_mul(rows.len());
+    let child_count = measurements.len().min(capacity);
+    let mut measured_columns = vec![0.0_f32; columns.len()];
+    let mut measured_rows = vec![0.0_f32; rows.len()];
+
+    for (index, measurement) in measurements.iter().take(child_count).enumerate() {
+        let column = index % columns.len();
+        let row = index / columns.len();
+        measured_columns[column] =
+            measured_columns[column].max(sanitize_size(measurement.desired.width));
+        measured_rows[row] = measured_rows[row].max(sanitize_size(measurement.desired.height));
+    }
+
+    let column_sizes = resolve_tracks(
+        SizeDimension::Width,
+        columns,
+        rect.width,
+        &measured_columns,
+        rect.height,
+        column_spacing,
+    );
+    let row_sizes = resolve_tracks(
+        SizeDimension::Height,
+        rows,
+        rect.height,
+        &measured_rows,
+        rect.width,
+        row_spacing,
+    );
+    let column_origins = track_origins(rect.x, &column_sizes, column_spacing);
+    let row_origins = track_origins(rect.y, &row_sizes, row_spacing);
+
+    (0..child_count)
+        .map(|index| {
+            let column = index % columns.len();
+            let row = index / columns.len();
+            Rect::new(
+                column_origins[column],
+                row_origins[row],
+                column_sizes[column],
+                row_sizes[row],
+            )
+        })
+        .collect()
+}
+
 /// Returns the measurement of a spacer along an axis.
 #[must_use]
 pub fn spacer(axis: Axis, amount: f32) -> Measurement {
@@ -403,6 +471,76 @@ fn aligned_origin(origin: f32, available: f32, actual: f32, alignment: Alignment
         Alignment::Center => origin + (available - actual) * 0.5,
         Alignment::End => origin + available - actual,
     }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn resolve_tracks(
+    dimension: SizeDimension,
+    rules: &[SizeRule],
+    available: f32,
+    measured: &[f32],
+    cross_available: f32,
+    spacing: f32,
+) -> Vec<f32> {
+    let available = sanitize_size(available);
+    let cross_available = sanitize_size(cross_available);
+    let spacing = sanitize_size(spacing);
+    let total_spacing = spacing * rules.len().saturating_sub(1) as f32;
+    let available_without_spacing = if total_spacing.is_finite() {
+        (available - total_spacing).max(0.0)
+    } else {
+        0.0
+    };
+    let fill_count = rules.iter().filter(|rule| **rule == SizeRule::Fill).count();
+    let reserved = rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| **rule != SizeRule::Fill)
+        .map(|(index, rule)| {
+            rule.resolve_dimension(
+                dimension,
+                available,
+                measured.get(index).copied().unwrap_or_default(),
+                cross_available,
+            )
+        })
+        .sum::<f32>();
+    let fill_size = if fill_count == 0 {
+        0.0
+    } else {
+        (available_without_spacing - reserved).max(0.0) / fill_count as f32
+    };
+
+    rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| {
+            if *rule == SizeRule::Fill {
+                fill_size
+            } else {
+                rule.resolve_dimension(
+                    dimension,
+                    available,
+                    measured.get(index).copied().unwrap_or_default(),
+                    cross_available,
+                )
+            }
+        })
+        .collect()
+}
+
+fn track_origins(origin: f32, sizes: &[f32], spacing: f32) -> Vec<f32> {
+    let mut cursor = sanitize_origin(origin);
+
+    sizes
+        .iter()
+        .map(|size| {
+            let current = cursor;
+            let next = cursor + *size + spacing;
+            cursor = if next.is_finite() { next } else { f32::MAX };
+            current
+        })
+        .collect()
 }
 
 #[allow(clippy::cast_precision_loss)]
