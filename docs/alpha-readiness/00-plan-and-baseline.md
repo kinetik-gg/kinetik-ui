@@ -4,9 +4,9 @@
 
 ## Execution Contract
 
-Campaign status: REND-04A is **Complete / Accepted**; REND-04B is **next**.
+Campaign status: REND-04 is **Complete / Accepted**; `LAYOUT-UI-01` is **next**.
 
-Integrated REND-04 remains **Current / Authorized**.
+Integrated REND-04 is **Complete / Accepted**.
 
 Stage 5 remains **Current / Authorized**; Stages 6-7 remain **Authorized / Queued**.
 
@@ -17,7 +17,7 @@ Kinetik UI remains a foundation/developer-preview; this packet does not tag, pub
 | Status | Complete; documentation only; no audit roadmap ID closes here |
 | Impact / confidence | High / High |
 | Dependency | Accepted architecture gate at audited revision `32b45f2` |
-| Token checkpoint | Documentation verification passed; Stages 1-4 subsequently completed and Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, and `REND-04A` accepted and `REND-04B` next |
+| Token checkpoint | Documentation verification passed; Stages 1-4 subsequently completed and Stage 5 is Current / Authorized with presenter/external-texture work accepted and `LAYOUT-UI-01` next |
 
 ## Scope And Work Items
 
@@ -57,7 +57,7 @@ Only one active task may own a zone unless accepted tasks prove exact disjoint f
 
 ## Acceptance Gate And Verification Expectations
 
-Stage 0 completed only after all ten target documents existed, all 43 unique IDs were represented, index-local links resolved, dependencies and overlap zones matched the accepted plan, and documentation-only checks passed. Stages 1-4 subsequently completed, and Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, and `REND-04A` accepted and `REND-04B` next. A stale path, invented finding, changed alpha scope, or write outside the allowed paths remains a stop condition.
+Stage 0 completed only after all ten target documents existed, all 43 unique IDs were represented, index-local links resolved, dependencies and overlap zones matched the accepted plan, and documentation-only checks passed. Stages 1-4 subsequently completed, and Stage 5 is Current / Authorized with `REND-ADR-01`, `REND-03`, and integrated `REND-04` accepted; `LAYOUT-UI-01` is next. A stale path, invented finding, changed alpha scope, or write outside the allowed paths remains a stop condition.
 
 Verification is limited to Markdown/file/link/ID review, `git diff --check`, targeted search, and targeted status. No source or test gate is claimed.
 

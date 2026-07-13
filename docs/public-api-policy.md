@@ -6,9 +6,9 @@ the alpha-readiness campaign. Prelude inclusion is a convenience decision and
 never implies Stable conformance. Candidate-for-alpha-stable is a separate
 product decision from conformance status.
 
-REND-04A: **Complete / Accepted**; REND-04B: **next**; integrated REND-04 remains **Current / Authorized**.
+REND-04: **Complete / Accepted**; `LAYOUT-UI-01` is **next**.
 
-No tag, package publication, deployment, release, or alpha-readiness claim is made by REND-04A.
+No tag, package publication, deployment, release, or alpha-readiness claim is made by REND-04 acceptance.
 
 The application-facing native texture API is qualified-only; none of its symbols are exported by `kinetik_ui::prelude`.
 
@@ -65,7 +65,7 @@ curation.
 | Render | Provisional Experimental | `kinetik_ui::render`; current common subset is also in `kinetik_ui::prelude` | Yes: backend-independent frame and resource contract | Presenter, resource-lifetime, diagnostic, and external-texture workflow proof |
 | Winit | Provisional Experimental, feature-gated | `kinetik_ui::platform_winit` | Yes: supported window and platform loop | Winit input, IME/clipboard/cursor/platform-request, accessibility boundary, and redraw-loop proof; no new prelude exports before presenter proof |
 | Vello | Provisional Experimental, feature-gated | `kinetik_ui::render_vello` | Yes: supported 2D backend and presenter | Surface acquisition/recovery, resize/scale, presentation, diagnostics, and Vello-backed workflow proof; no new prelude exports before presenter proof |
-| Vello/Winit presenter | Provisional Experimental, feature-gated, qualified only | `kinetik_ui::vello_winit` | Yes: supported one-window live presenter | REND-04A is Complete / Accepted; REND-04B is next for real-GPU evidence; access remains qualified only, and no presenter item enters the prelude |
+| Vello/Winit presenter | Provisional Experimental, feature-gated, qualified only | `kinetik_ui::vello_winit` | Yes: supported one-window live presenter | REND-04 is Complete / Accepted with real-GPU and packaged-example evidence; access remains qualified only, and no presenter item enters the prelude |
 | Widgets | Provisional Experimental | Common composition path: `kinetik_ui::widgets`; advanced APIs use the qualified modules listed below | Yes: controls and viewport surface; exact final subset deferred | Public paint/input/accessibility/platform/live-workflow evidence for each selected component |
 
 ### Facade state inventory

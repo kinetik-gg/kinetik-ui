@@ -8,23 +8,26 @@ follow the repository release policy.
 `0.1.0-alpha.1` is the planned first prerelease. It has not been dated, tagged,
 published, or accepted as an alpha release.
 
-REND-04A: **Complete / Accepted**; REND-04B: **next**; integrated REND-04 remains **Current / Authorized**.
+REND-04: **Complete / Accepted**; `LAYOUT-UI-01` is **next**.
 
-No tag, package publication, deployment, release, or alpha-readiness claim is made by REND-04A.
+No tag, package publication, deployment, release, or alpha-readiness claim is made by REND-04 acceptance.
 
 ### Changed
 
 - Added the qualified native-texture registration and Vello resolver foundation,
   including checked registration/revision identity, native-first texture command
   resolution, same-renderer lower bridge scoping, and device-lifetime invalidation.
+- Added real-DX12 native-texture evidence for color/alpha, producer-handle
+  lifetime, update/replace/remove, foreign-device validation, and recovery
+  rebind, plus a runnable GPU producer and extracted package-consumer proof.
 - Added the Experimental `kinetik-ui-vello-winit` presenter boundary with a
   qualified facade feature, exact one-window acquire/render/blit/notify/present
   policy, zero-size handling, generation-scoped device borrowing, typed surface
   and device recovery, deterministic lifecycle evidence, and a runnable public
   example. The Showcase now adopts the public presenter while retaining
-  application-owned input, shell, frame, and repaint work; only `REND-04`
-  external native textures remain as the serialized renderer follow-up. This
-  does not publish or accept an alpha release.
+  application-owned input, shell, frame, and repaint work. Integrated `REND-04`
+  now accepts the qualified native-texture path; this does not publish or accept
+  an alpha release.
 - Prepared package metadata and dependency constraints for the planned
   prerelease archives.
 - Made Winit platform batches owned and consuming, with ordered shell services,
