@@ -89,7 +89,7 @@ impl Ui<'_> {
             {
                 self.runtime.request_cursor_for(
                     id,
-                    viewport_cursor_shape(handle.cursor.shape.clone(), controller.started),
+                    viewport_cursor_shape(&handle.cursor.shape, controller.started),
                 );
             }
 
@@ -224,7 +224,7 @@ impl Ui<'_> {
         {
             self.runtime.request_cursor_for(
                 scene.viewport_id(),
-                viewport_cursor_shape(cursor.shape.clone(), false),
+                viewport_cursor_shape(&cursor.shape, false),
             );
         }
     }
@@ -328,7 +328,7 @@ fn transform_interaction(
     }
 }
 
-fn viewport_cursor_shape(shape: ViewportCursorShape, active: bool) -> CursorShape {
+fn viewport_cursor_shape(shape: &ViewportCursorShape, active: bool) -> CursorShape {
     match shape {
         ViewportCursorShape::Default | ViewportCursorShape::Custom(_) => CursorShape::Default,
         ViewportCursorShape::Pointer => CursorShape::PointingHand,
