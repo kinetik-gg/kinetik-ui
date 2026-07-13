@@ -1,15 +1,18 @@
-//! Public prepared/painted virtual-table foundation conformance tests.
+//! Public prepared/painted virtual-table conformance tests.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use kinetik_ui_core::{
-    FrameContext, Modifiers, PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder,
-    PointerTarget, Primitive, Rect, Response, ScaleFactor, SemanticActionKind, SemanticRole, Size,
-    TimeInfo, UiInput, UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
+    FrameContext, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, MouseButton, PhysicalSize,
+    Point, PointerButtonState, PointerInput, PointerOrder, PointerTarget, Primitive, Rect,
+    RepaintRequest, Response, ScaleFactor, SemanticActionKind, SemanticRole, Size, TimeInfo,
+    UiInput, UiInputEvent, UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
 use kinetik_ui_widgets::{
-    CollectionProjection, ItemId, SortDirection, TableColumn, TableLayout, TableSort, Ui,
-    VirtualTableConfig, VirtualTableOutput, VirtualTableRow,
+    CollectionProjection, ItemId, SortDirection, TableColumn, TableColumnConstraints, TableLayout,
+    TableSort, Ui, VirtualTableConfig, VirtualTableOutput, VirtualTableRow, VirtualTableSelection,
+    VirtualTableSelectionMode, VirtualTableTarget,
 };
 
 const BOUNDS: Rect = Rect::new(0.0, 0.0, 120.0, 80.0);
@@ -80,6 +83,50 @@ fn wheel_input(x: f32, y: f32) -> UiInput {
     }
 }
 
+fn key_input(key: Key) -> UiInput {
+    UiInput {
+        keyboard: KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: vec![KeyEvent::new(
+                key,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            )],
+        },
+        ..UiInput::default()
+    }
+}
+
+fn drag_input(x: f32, y: f32, down: bool, pressed: bool, released: bool, delta_x: f32) -> UiInput {
+    let position = Point::new(x, y);
+    let mut input = UiInput::default();
+    if pressed {
+        input.push_event(UiInputEvent::PointerButton {
+            button: MouseButton::Primary,
+            down: true,
+            click_count: 1,
+            position: Some(position),
+        });
+    } else if released {
+        input.pointer.position = Some(position);
+        input.pointer.primary = PointerButtonState::new(true, false, false);
+        input.push_event(UiInputEvent::PointerButton {
+            button: MouseButton::Primary,
+            down: false,
+            click_count: 1,
+            position: Some(position),
+        });
+    } else {
+        input.pointer.primary = PointerButtonState::new(down, false, false);
+        input.push_event(UiInputEvent::PointerMoved {
+            position,
+            delta: Vec2::new(delta_x, 0.0),
+        });
+    }
+    input
+}
+
 struct Run {
     table_id: WidgetId,
     lower: Option<Response>,
@@ -91,6 +138,24 @@ struct Run {
 fn run_frame(
     projection: &CollectionProjection,
     config: VirtualTableConfig,
+    memory: &mut UiMemory,
+    input: UiInput,
+    lower: bool,
+) -> Run {
+    run_frame_with_selection(
+        projection,
+        config,
+        &mut VirtualTableSelection::new(),
+        memory,
+        input,
+        lower,
+    )
+}
+
+fn run_frame_with_selection(
+    projection: &CollectionProjection,
+    config: VirtualTableConfig,
+    selection: &mut VirtualTableSelection,
     memory: &mut UiMemory,
     input: UiInput,
     lower: bool,
@@ -111,7 +176,7 @@ fn run_frame(
     .expect("valid shared pointer plan");
     let lower_response = lower.then(|| ui.pressable("lower", LOWER, false));
     let mut callbacks = Vec::new();
-    let output = ui.virtual_table(&table, |item| {
+    let output = ui.virtual_table(&table, selection, |item| {
         callbacks.push(item.id);
         VirtualTableRow::new([
             format!("Row {} name", item.id.raw()),
@@ -127,6 +192,67 @@ fn run_frame(
         callbacks,
         frame,
     }
+}
+
+fn click_body(
+    x: f32,
+    y: f32,
+    projection: &CollectionProjection,
+    config: VirtualTableConfig,
+    selection: &mut VirtualTableSelection,
+    memory: &mut UiMemory,
+) -> Run {
+    let _ = run_frame_with_selection(
+        projection,
+        config.clone(),
+        selection,
+        memory,
+        pointer_input(x, y, true, false),
+        false,
+    );
+    run_frame_with_selection(
+        projection,
+        config,
+        selection,
+        memory,
+        pointer_input(x, y, false, true),
+        false,
+    )
+}
+
+fn drag_resize(
+    x: f32,
+    delta_x: f32,
+    projection: &CollectionProjection,
+    config: VirtualTableConfig,
+    selection: &mut VirtualTableSelection,
+    memory: &mut UiMemory,
+) -> Run {
+    let _ = run_frame_with_selection(
+        projection,
+        config.clone(),
+        selection,
+        memory,
+        drag_input(x, 10.0, true, true, false, 0.0),
+        false,
+    );
+    let moved = run_frame_with_selection(
+        projection,
+        config.clone(),
+        selection,
+        memory,
+        drag_input(x + delta_x, 10.0, true, false, false, delta_x),
+        false,
+    );
+    let _ = run_frame_with_selection(
+        projection,
+        config,
+        selection,
+        memory,
+        drag_input(x + delta_x, 10.0, false, false, true, 0.0),
+        false,
+    );
+    moved
 }
 
 fn click_header(
@@ -419,4 +545,521 @@ fn empty_disabled_and_invalid_tables_are_inert_or_rejected() {
         )
         .is_none()
     );
+}
+
+#[test]
+fn row_selection_traverses_pages_reveals_vertically_and_preserves_horizontal_scroll() {
+    let items = projection(&(0..20).collect::<Vec<_>>());
+    let mut selection = VirtualTableSelection::new();
+    let mut memory = UiMemory::new();
+    let row_config = config(None).selection_mode(VirtualTableSelectionMode::Row);
+
+    let _ = run_frame_with_selection(
+        &items,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+        wheel_input(-30.0, 0.0),
+        false,
+    );
+    let horizontally_scrolled = run_frame_with_selection(
+        &items,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(
+        horizontally_scrolled.output.window.offset.x.to_bits(),
+        30.0_f32.to_bits()
+    );
+
+    let clicked = click_body(
+        10.0,
+        50.0,
+        &items,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+    );
+    assert_eq!(selection.target(), Some(VirtualTableTarget::Row(id(1))));
+    assert!(clicked.output.selection_changed);
+    let selected_row = clicked
+        .frame
+        .semantics
+        .get(clicked.table_id.child(("virtual-table-row", 1_u64)))
+        .expect("selected row");
+    assert!(selected_row.focusable);
+    assert!(selected_row.state.selected);
+    assert!(selected_row.state.focused);
+    assert!(
+        !clicked
+            .frame
+            .semantics
+            .get(
+                clicked
+                    .table_id
+                    .child(("virtual-table-cell", 1_u64, 10_u64))
+            )
+            .expect("row-owned cell")
+            .focusable
+    );
+
+    let paged = run_frame_with_selection(
+        &items,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+        key_input(Key::PageDown),
+        false,
+    );
+    assert_eq!(selection.target(), Some(VirtualTableTarget::Row(id(4))));
+    assert!(paged.output.selection_changed);
+    assert_eq!(paged.output.window.offset.y.to_bits(), 0.0_f32.to_bits());
+
+    let revealed = run_frame_with_selection(
+        &items,
+        row_config,
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(
+        revealed.output.window.offset.x.to_bits(),
+        30.0_f32.to_bits()
+    );
+    assert_eq!(
+        revealed.output.window.offset.y.to_bits(),
+        40.0_f32.to_bits()
+    );
+    assert!(memory.is_focused(revealed.table_id.child(("virtual-table-row", 4_u64))));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn cell_selection_traverses_two_dimensions_and_reveals_both_axes() {
+    let items = projection(&(0..20).collect::<Vec<_>>());
+    let mut selection = VirtualTableSelection::new();
+    let mut memory = UiMemory::new();
+    let cell_config = config(None).selection_mode(VirtualTableSelectionMode::Cell);
+
+    let clicked = click_body(
+        40.0,
+        30.0,
+        &items,
+        cell_config.clone(),
+        &mut selection,
+        &mut memory,
+    );
+    assert_eq!(
+        selection.target(),
+        Some(VirtualTableTarget::Cell {
+            row: id(0),
+            column: id(10),
+        })
+    );
+    let cell = clicked
+        .frame
+        .semantics
+        .get(
+            clicked
+                .table_id
+                .child(("virtual-table-cell", 0_u64, 10_u64)),
+        )
+        .expect("selected cell");
+    assert!(cell.focusable);
+    assert!(cell.state.selected);
+    assert!(cell.state.focused);
+    assert!(
+        !clicked
+            .frame
+            .semantics
+            .get(clicked.table_id.child(("virtual-table-row", 0_u64)))
+            .expect("cell-owned row")
+            .focusable
+    );
+
+    let end = run_frame_with_selection(
+        &items,
+        cell_config.clone(),
+        &mut selection,
+        &mut memory,
+        key_input(Key::End),
+        false,
+    );
+    assert_eq!(
+        selection.target(),
+        Some(VirtualTableTarget::Cell {
+            row: id(0),
+            column: id(30),
+        })
+    );
+    assert_eq!(end.output.window.offset, Vec2::ZERO);
+    let horizontally_revealed = run_frame_with_selection(
+        &items,
+        cell_config.clone(),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(
+        horizontally_revealed.output.window.offset.x.to_bits(),
+        120.0_f32.to_bits()
+    );
+
+    let paged = run_frame_with_selection(
+        &items,
+        cell_config.clone(),
+        &mut selection,
+        &mut memory,
+        key_input(Key::PageDown),
+        false,
+    );
+    assert_eq!(
+        selection.target(),
+        Some(VirtualTableTarget::Cell {
+            row: id(3),
+            column: id(30),
+        })
+    );
+    assert_eq!(paged.output.window.offset.y.to_bits(), 0.0_f32.to_bits());
+    let vertically_revealed = run_frame_with_selection(
+        &items,
+        cell_config.clone(),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(
+        vertically_revealed.output.window.offset.y.to_bits(),
+        20.0_f32.to_bits()
+    );
+
+    let _ = run_frame_with_selection(
+        &items,
+        cell_config.clone(),
+        &mut selection,
+        &mut memory,
+        key_input(Key::Home),
+        false,
+    );
+    let first_column = run_frame_with_selection(
+        &items,
+        cell_config,
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(
+        selection.target(),
+        Some(VirtualTableTarget::Cell {
+            row: id(3),
+            column: id(10),
+        })
+    );
+    assert_eq!(
+        first_column.output.window.offset.x.to_bits(),
+        0.0_f32.to_bits()
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn stable_selection_survives_reorder_and_repairs_removed_rows_and_columns() {
+    let original = projection(&[1, 2, 3]);
+    let mut selection = VirtualTableSelection::new();
+    let mut memory = UiMemory::new();
+    let row_config = config(None).selection_mode(VirtualTableSelectionMode::Row);
+    let _ = click_body(
+        10.0,
+        50.0,
+        &original,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+    );
+    assert_eq!(selection.target(), Some(VirtualTableTarget::Row(id(2))));
+
+    let reordered = projection(&[3, 2, 1]);
+    let preserved = run_frame_with_selection(
+        &reordered,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert!(!preserved.output.selection_changed);
+    assert_eq!(selection.target(), Some(VirtualTableTarget::Row(id(2))));
+    assert_eq!(
+        preserved
+            .output
+            .cursor_target
+            .expect("preserved row")
+            .projected_row,
+        1
+    );
+
+    let removed = projection(&[3, 1]);
+    let repaired = run_frame_with_selection(
+        &removed,
+        row_config,
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert!(repaired.output.selection_changed);
+    assert_eq!(selection.target(), Some(VirtualTableTarget::Row(id(1))));
+
+    let mut cell_selection = VirtualTableSelection::new();
+    let mut cell_memory = UiMemory::new();
+    let cell_config = config(None).selection_mode(VirtualTableSelectionMode::Cell);
+    let _ = click_body(
+        100.0,
+        30.0,
+        &original,
+        cell_config,
+        &mut cell_selection,
+        &mut cell_memory,
+    );
+    assert_eq!(
+        cell_selection.target(),
+        Some(VirtualTableTarget::Cell {
+            row: id(1),
+            column: id(20),
+        })
+    );
+
+    let mut reordered_layout = layout(None);
+    reordered_layout.columns.swap(0, 2);
+    let reordered_columns = VirtualTableConfig::new(BOUNDS, reordered_layout)
+        .selection_mode(VirtualTableSelectionMode::Cell);
+    let preserved_cell = run_frame_with_selection(
+        &original,
+        reordered_columns,
+        &mut cell_selection,
+        &mut cell_memory,
+        UiInput::default(),
+        false,
+    );
+    assert!(!preserved_cell.output.selection_changed);
+    assert_eq!(
+        cell_selection.target(),
+        Some(VirtualTableTarget::Cell {
+            row: id(1),
+            column: id(20),
+        })
+    );
+
+    let mut removed_layout = layout(None);
+    removed_layout.columns.remove(1);
+    let removed_column = VirtualTableConfig::new(BOUNDS, removed_layout)
+        .selection_mode(VirtualTableSelectionMode::Cell);
+    let repaired_cell = run_frame_with_selection(
+        &original,
+        removed_column,
+        &mut cell_selection,
+        &mut cell_memory,
+        UiInput::default(),
+        false,
+    );
+    assert!(repaired_cell.output.selection_changed);
+    assert_eq!(
+        cell_selection.target(),
+        Some(VirtualTableTarget::Cell {
+            row: id(1),
+            column: id(30),
+        })
+    );
+
+    let cleared = run_frame_with_selection(
+        &projection(&[]),
+        config(None).selection_mode(VirtualTableSelectionMode::Cell),
+        &mut cell_selection,
+        &mut cell_memory,
+        UiInput::default(),
+        false,
+    );
+    assert!(cleared.output.selection_changed);
+    assert_eq!(cell_selection.target(), None);
+    assert_eq!(cell_memory.focused(), None);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn resize_handles_outrank_sort_and_emit_frozen_constrained_deltas() {
+    let items = projection(&[1, 2, 3]);
+    let constraints = BTreeMap::from([(id(10), TableColumnConstraints::new(60.0, 100.0))]);
+    let resize_config = config(None).column_constraints(constraints.clone());
+    let mut selection = VirtualTableSelection::new();
+    let mut memory = UiMemory::new();
+
+    let grown = drag_resize(
+        80.0,
+        39.0,
+        &items,
+        resize_config,
+        &mut selection,
+        &mut memory,
+    );
+    assert!(
+        grown.output.resize_requested.is_some(),
+        "header responses: {:#?}",
+        grown.output.headers
+    );
+    let request = grown.output.resize_requested.expect("resize request");
+    assert_eq!(request.column, id(10));
+    assert_eq!(request.delta.to_bits(), 20.0_f32.to_bits());
+    assert_eq!(grown.output.sort_requested, None);
+    assert_eq!(
+        grown.output.headers[0].response.rect.width.to_bits(),
+        80.0_f32.to_bits()
+    );
+
+    let mut grown_layout = layout(None);
+    assert!(grown_layout.resize_column_with_constraints(
+        request.column,
+        request.delta,
+        &constraints
+    ));
+    let next_config = VirtualTableConfig::new(BOUNDS, grown_layout.clone())
+        .column_constraints(constraints.clone());
+    let next = run_frame_with_selection(
+        &items,
+        next_config.clone(),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(
+        next.output.headers[0].response.rect.width.to_bits(),
+        100.0_f32.to_bits()
+    );
+
+    let shrunk = drag_resize(
+        100.0,
+        -80.0,
+        &items,
+        next_config,
+        &mut selection,
+        &mut memory,
+    );
+    assert_eq!(
+        shrunk
+            .output
+            .resize_requested
+            .expect("minimum clamp")
+            .delta
+            .to_bits(),
+        (-40.0_f32).to_bits()
+    );
+
+    let mut unconstrained_selection = VirtualTableSelection::new();
+    let mut unconstrained_memory = UiMemory::new();
+    let collapsed = drag_resize(
+        80.0,
+        -80.0,
+        &items,
+        config(None),
+        &mut unconstrained_selection,
+        &mut unconstrained_memory,
+    );
+    let positive_floor = collapsed
+        .output
+        .resize_requested
+        .expect("unconstrained positive floor");
+    assert_eq!(positive_floor.delta.to_bits(), (-79.0_f32).to_bits());
+    let mut floor_layout = layout(None);
+    assert!(floor_layout.resize_column(positive_floor.column, positive_floor.delta));
+    assert_eq!(
+        floor_layout
+            .column_width(id(10))
+            .expect("resized width")
+            .to_bits(),
+        1.0_f32.to_bits()
+    );
+    let valid_next_frame = run_frame_with_selection(
+        &items,
+        VirtualTableConfig::new(BOUNDS, floor_layout),
+        &mut unconstrained_selection,
+        &mut unconstrained_memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(
+        valid_next_frame.output.headers[0]
+            .response
+            .rect
+            .width
+            .to_bits(),
+        1.0_f32.to_bits()
+    );
+
+    let disabled = drag_resize(
+        80.0,
+        20.0,
+        &items,
+        config(None).column_constraints(constraints).disabled(true),
+        &mut selection,
+        &mut memory,
+    );
+    assert_eq!(disabled.output.resize_requested, None);
+    assert_eq!(disabled.output.sort_requested, None);
+}
+
+#[test]
+fn focused_idle_frames_do_not_repaint_or_undo_manual_table_scroll() {
+    let items = projection(&(0..20).collect::<Vec<_>>());
+    let mut selection = VirtualTableSelection::new();
+    let mut memory = UiMemory::new();
+    let row_config = config(None).selection_mode(VirtualTableSelectionMode::Row);
+    let _ = click_body(
+        10.0,
+        30.0,
+        &items,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+    );
+
+    let idle = run_frame_with_selection(
+        &items,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(idle.frame.repaint, RepaintRequest::None);
+
+    let wheel = run_frame_with_selection(
+        &items,
+        row_config.clone(),
+        &mut selection,
+        &mut memory,
+        wheel_input(0.0, -40.0),
+        false,
+    );
+    assert_eq!(wheel.frame.repaint, RepaintRequest::NextFrame);
+    let scrolled = run_frame_with_selection(
+        &items,
+        row_config,
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        false,
+    );
+    assert_eq!(
+        scrolled.output.window.offset.y.to_bits(),
+        40.0_f32.to_bits()
+    );
+    assert_eq!(scrolled.frame.repaint, RepaintRequest::None);
+    assert!(memory.is_focused(scrolled.table_id.child(("virtual-table-row", 0_u64))));
 }
