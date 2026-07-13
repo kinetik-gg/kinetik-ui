@@ -24,8 +24,8 @@ Campaign workflow policy: `create-if-available` issues, `create-if-gates-pass` p
 
 ## Stage 0: Plan And Baseline
 
-Status: Complete. This closed the documentation task only; Stages 1-5
-subsequently completed and Stage 6 is Current / Authorized with `DOCK-UI-01`
+Status: Complete. This closed the documentation task only; Stages 1-6
+subsequently completed and Stage 7 is Current / Authorized with `PERF-01`
 next under the recorded campaign authorization.
 
 ### Changed files
@@ -112,8 +112,8 @@ Experimental pending accepted behavioral evidence.
 
 No production catalogue entry is Stable by design. Promotion remains an
 evidence-backed curation decision. At the `ALPHA-00` checkpoint, all later audit
-packets remained open. Stages 1-5 subsequently passed; Stage 6 is Current /
-Authorized, while Stage 7 and final `API-01` curation remain open as documented.
+packets remained open. Stages 1-6 subsequently passed; Stage 7 and final
+`API-01` curation remain open as documented.
 
 ### Provisional `API-01`: alpha surface policy
 
@@ -342,8 +342,8 @@ than final output including diagnostics emitted afterward.
 
 Status: Complete / Accepted. `RT-01`, `RT-02`, and `RT-03` passed their bounded
 critics and complete gates. The integrated Stage 2 gate passed at `5cf07b8`;
-Stages 3-5 subsequently passed, and Stage 6 is Current / Authorized with
-`DOCK-UI-01` next.
+Stages 3-6 subsequently passed, and Stage 7 is Current / Authorized with
+`PERF-01` next.
 
 ### `RT-01`: scoped coordinates and clipping
 
@@ -524,8 +524,8 @@ The final Stage 3 matrix was
 [CI run 29140855335](https://github.com/kinetik-gg/kinetik-ui/actions/runs/29140855335);
 PR [#517](https://github.com/kinetik-gg/kinetik-ui/pull/517) passed checks in
 run 29141040177 and produced the accepted merge.
-Stages 4-5 subsequently passed, and Stage 6 is Current / Authorized with
-`DOCK-UI-01` next.
+Stages 4-6 subsequently passed, and Stage 7 is Current / Authorized with
+`PERF-01` next.
 
 ### `IN-01`: ordered platform input
 
@@ -1978,8 +1978,8 @@ validation path, and final GPU color/alpha pixels remain unproved.
 Zero-copy, arbitrary texture views, foreign/shared-device import, explicit
 native synchronization, a reusable offscreen presenter, general multi-window
 coordination, HDR/wide-gamut/ICC conversion in the UI renderer, and additional
-presenter backends remain deferred. Stage 5 composition subsequently passed;
-Stage 6 is Current / Authorized and Stage 7 remains queued. The repository
+presenter backends remain deferred. Stages 5-6 subsequently passed; Stage 7 is
+Current / Authorized. The repository
 remains foundation / developer preview, not alpha-ready; no tag, publish,
 deployment, or release is authorized.
 
@@ -1989,8 +1989,8 @@ Status: Complete / Accepted for the shared presenter foundation. Issue #574
 owns this bounded slice. At this checkpoint, `REND-03B` was next and still had
 to replace the Showcase-private presenter plus prove the independent offscreen
 negative path before integrated `REND-03` could close. Those presenter and
-Stage 5 composition checkpoints subsequently passed; Stage 6 is Current /
-Authorized, Stage 7 remains queued, and alpha readiness remains open.
+Stage 5 composition checkpoints subsequently passed; Stage 6 subsequently
+passed, Stage 7 is Current / Authorized, and alpha readiness remains open.
 
 #### Changed files
 
@@ -2137,8 +2137,8 @@ multi-window coordination, additional backends, and transparent production
 recovery remain deferred. The pre-existing root-lock `swash 0.2.8` warning
 remains a Stage 7 release risk.
 
-Stage 5 subsequently completed; Stage 6 is **Current / Authorized** and Stage 7
-remains **Authorized / Queued**. This packet does not declare alpha readiness,
+Stages 5-6 subsequently completed; Stage 7 is **Current / Authorized**. This
+packet does not declare alpha readiness,
 create a tag, publish packages, deploy, or release.
 
 ### Integrated `REND-04`: native texture presentation and evidence closure
@@ -2512,7 +2512,8 @@ release, or alpha-readiness claim occurred.
 
 Status: **Complete / Accepted**. Issues #616 and #618 closed through
 squash-merged PRs #617 and #619. This completes the Stage 5 implementation and
-acceptance gate; Stage 6 is Current / Authorized with `DOCK-UI-01` next.
+acceptance gate; Stage 6 subsequently passed, and Stage 7 is Current /
+Authorized with `PERF-01` next.
 
 #### Changed files
 
@@ -2582,8 +2583,8 @@ Multi/range table selection, editing/clipboard, grouped headers, multi-sort and
 filter execution, auto-fit, keyboard resizing, column reordering, drag/drop,
 custom cell bodies, and painted scrollbars remain explicit non-goals. The Stage
 5 gate does not tag, publish, deploy, release, or claim alpha readiness; the
-repository remains foundation / developer preview while Stage 6 is Current /
-Authorized and Stage 7 remains Authorized / Queued.
+repository remains foundation / developer preview while Stage 6 subsequently
+passed and Stage 7 is Current / Authorized.
 
 ## Stage 6: Public Editor Vertical Slice
 
