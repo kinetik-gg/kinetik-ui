@@ -1,8 +1,9 @@
 use std::hash::Hash;
 
 use kinetik_ui_core::{
-    Brush, ClipId, Color, Point, Primitive, Rect, RectPrimitive, RepaintRequest, SemanticNode,
-    SemanticRole, SemanticValue, Size, Stroke, TextPrimitive, TextRole, Vec2, scrollable,
+    Brush, ClipId, Color, InteractionState, Point, Primitive, Rect, RectPrimitive, RepaintRequest,
+    Response, ScrollResponse, SemanticNode, SemanticRole, SemanticValue, Size, Stroke,
+    TextPrimitive, TextRole, Vec2, WidgetId, scrollable,
 };
 
 use super::Ui;
@@ -11,7 +12,7 @@ use crate::inspector::{
     PropertyGridIntent, PropertyGridLayout, PropertyGridOutput, PropertyGridRow,
     PropertyGridRowKind, PropertyGridRowRect, PropertyGridStatusSeverity, PropertyGridValueOutput,
     property_grid_row_affordance_rects, property_grid_row_status_semantics,
-    property_grid_row_widget_id,
+    property_grid_row_widget_id, property_grid_value_widget_id,
 };
 
 impl Ui<'_> {
@@ -20,6 +21,11 @@ impl Ui<'_> {
     /// The callback composes the current application-owned value control for
     /// each visible property row. Reset and keyframe operations are returned
     /// as intents; this component never mutates domain state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PropertyGridError::DuplicateRowId`] when row identities are
+    /// not unique.
     pub fn property_grid<'rows, T>(
         &mut self,
         key: impl Hash,
@@ -29,8 +35,31 @@ impl Ui<'_> {
         mut value: impl FnMut(&mut Self, PropertyGridCell<'rows>) -> T,
     ) -> Result<PropertyGridOutput<T>, PropertyGridError> {
         PropertyGridLayout::validate_rows(rows)?;
-        let root = self.id(key);
-        let scroll_id = self.id(("property-grid-scroll", root.raw()));
+        let root = self.runtime.push_id_scope(key);
+        let output = self.property_grid_in_scope(root, bounds, rows, config, &mut value);
+        self.runtime.pop_id_scope();
+        Ok(output)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn property_grid_in_scope<'rows, T>(
+        &mut self,
+        root: WidgetId,
+        bounds: Rect,
+        rows: &'rows [PropertyGridRow],
+        config: PropertyGridConfig,
+        value: &mut impl FnMut(&mut Self, PropertyGridCell<'rows>) -> T,
+    ) -> PropertyGridOutput<T> {
+        let Some(bounds) = sanitize_property_grid_bounds(bounds) else {
+            return PropertyGridOutput {
+                root,
+                scroll: empty_property_grid_scroll(self.make_id("property-grid-scroll")),
+                visible_rows: Vec::new(),
+                values: Vec::new(),
+                intents: Vec::new(),
+            };
+        };
+        let scroll_id = self.id("property-grid-scroll");
         let content_size = Size::new(
             bounds.width.max(0.0),
             config
@@ -83,8 +112,10 @@ impl Ui<'_> {
         let mut intents = Vec::new();
         for geometry in &visible_rows {
             let row = &rows[geometry.index];
-            let row_id = property_grid_row_widget_id(root, row.id);
-            self.register_id(row_id);
+            let row_id = self
+                .runtime
+                .push_id_scope(("property-grid-row", row.id.raw()));
+            debug_assert_eq!(row_id, property_grid_row_widget_id(root, row.id));
             let access = effective_access(row, config.disabled);
             let effective_row = if config.disabled && !row.state.disabled {
                 row.clone().with_disabled(true)
@@ -96,22 +127,31 @@ impl Ui<'_> {
             self.push_property_grid_row_semantics(row_id, &effective_row, *geometry, access);
 
             if matches!(row.kind, PropertyGridRowKind::Section) {
+                self.runtime.pop_id_scope();
                 continue;
             }
             let affordance_rects = property_grid_row_affordance_rects(
                 &effective_row,
-                geometry.value_rect.inset(2.0),
+                geometry
+                    .value_rect
+                    .intersection(bounds)
+                    .unwrap_or(Rect::ZERO)
+                    .inset(2.0)
+                    .max_zero(),
                 config.affordances,
             );
             let cell =
                 PropertyGridCell::new(root, row, *geometry, affordance_rects.value_rect, access);
+            let value_id = self.runtime.push_id_scope("value");
+            debug_assert_eq!(value_id, property_grid_value_widget_id(root, row.id));
             values.push(PropertyGridValueOutput {
                 row: row.id,
                 value: value(self, cell),
             });
+            self.runtime.pop_id_scope();
 
             let affordance = self.property_grid_row_affordance_controls(
-                ("property-grid-affordances", root.raw(), row.id.raw()),
+                "affordances",
                 &effective_row,
                 affordance_rects,
             );
@@ -124,15 +164,17 @@ impl Ui<'_> {
                     keyed: affordance.requested_keyed,
                 });
             }
+            self.runtime.pop_id_scope();
         }
         self.primitive(Primitive::ClipEnd { id: clip });
 
-        Ok(PropertyGridOutput {
+        PropertyGridOutput {
+            root,
             scroll,
             visible_rows,
             values,
             intents,
-        })
+        }
     }
 
     fn paint_property_grid_row(
@@ -295,4 +337,34 @@ fn property_status_color(
 
 fn text_baseline(rect: Rect, size: f32) -> f32 {
     rect.y + (rect.height - size).max(0.0) * 0.5 + size
+}
+
+fn sanitize_property_grid_bounds(bounds: Rect) -> Option<Rect> {
+    if bounds.x.is_finite()
+        && bounds.y.is_finite()
+        && bounds.width.is_finite()
+        && bounds.height.is_finite()
+        && bounds.width > 0.0
+        && bounds.height > 0.0
+    {
+        Some(bounds)
+    } else {
+        None
+    }
+}
+
+fn empty_property_grid_scroll(id: WidgetId) -> ScrollResponse {
+    ScrollResponse {
+        response: Response::new(
+            id,
+            Rect::ZERO,
+            InteractionState {
+                disabled: true,
+                ..InteractionState::default()
+            },
+        ),
+        offset: Vec2::ZERO,
+        delta: Vec2::ZERO,
+        max_offset: Vec2::ZERO,
+    }
 }

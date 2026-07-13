@@ -162,6 +162,8 @@ pub struct PropertyGridValueOutput<T> {
 /// Output from one public property-grid evaluation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropertyGridOutput<T> {
+    /// Stable root widget ID for deriving row and value-cell identities.
+    pub root: WidgetId,
     /// Vertical scroll response and retained offset.
     pub scroll: ScrollResponse,
     /// Frozen materialized row geometry.
