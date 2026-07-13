@@ -9,7 +9,6 @@ Local Kinetik documents are authoritative, in this order:
 1. `AGENTS.md`
 2. `docs/specs.md`
 3. `docs/render-snapshots.md`
-4. Runway task files for the active run
 
 External references are subordinate. If an external observation conflicts with Kinetik terminology, crate boundaries, renderer strategy, semantic model, testing expectations, or component philosophy, Kinetik wins and the observation is rejected or rewritten as a Kinetik-owned invariant.
 
@@ -30,7 +29,8 @@ Blender, Godot, Roblox Studio, Adobe apps, Houdini, and other product applicatio
 - Do not copy external source code, tests, fixtures, snapshots, generated artifacts, or API shapes.
 - Do not visually clone another toolkit's component look, theme, spacing, icons, or examples.
 - Do not add dependencies because a reference toolkit uses them.
-- Do not use RUN-001 or first-wave policy work to implement harnesses, widgets, renderer code, source changes, or other behavior changes; implementation starts in later accepted Runway tasks.
+- Keep reference-policy work separate from harness, widget, renderer, and other
+  behavior changes.
 - Do not vendor external repositories or generated test data.
 - Do not make external references authoritative over Kinetik's spec.
 - Do not use a license-ambiguous reference as implementation material.
@@ -143,9 +143,9 @@ Required cautions:
 - If a proposed test would encourage copying another toolkit's API, rewrite it around Kinetik terminology: `WidgetId`, `UiInput`, `UiMemory`, `Response`, `Primitive`, `SemanticNode`, `Action`, `Dock`, `Frame`, `Panel`, and `ViewportSurface`.
 - If license status is unclear, stop and request legal/project-owner review before using the material.
 
-## Runway Task Shape
+## Reference-Derived Task Shape
 
-Future Runway tasks using this methodology should include:
+Future tasks using this methodology should include:
 
 - source observation, version/date, and short paraphrase
 - Kinetik invariant and authoritative spec section
