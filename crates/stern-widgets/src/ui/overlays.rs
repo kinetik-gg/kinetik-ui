@@ -1,6 +1,6 @@
 use stern_core::{
-    Brush, ClipId, ComponentState, Key, KeyState, MouseButton, Point, Primitive, Rect,
-    RectPrimitive, RepaintRequest, SemanticAction, SemanticActionKind, SemanticNode,
+    Brush, ClipId, ComponentState, ElevationLevel, Key, KeyState, MouseButton, Point, Primitive,
+    Rect, RectPrimitive, RepaintRequest, SemanticAction, SemanticActionKind, SemanticNode,
     TextInputEvent, TextPrimitive, TextRole, UiInput, UiInputEvent, WidgetId, pressable,
 };
 
@@ -164,7 +164,7 @@ impl Ui<'_> {
         }
         if let Some(shadow) = self
             .theme
-            .elevation_shadow(self.theme.elevation.overlay, self.theme.radii.md.top_left)
+            .elevation_shadow(overlay_elevation_level(entry), self.theme.radii.md.top_left)
         {
             self.primitive(Primitive::Shadow(shadow.primitive(entry.rect)));
         }
@@ -232,6 +232,21 @@ impl Ui<'_> {
             line_height: font.line_height,
             brush: Brush::Solid(foreground),
         }));
+    }
+}
+
+fn overlay_elevation_level(entry: &crate::overlays::OverlayEntry) -> ElevationLevel {
+    if entry.modal {
+        return ElevationLevel::High;
+    }
+
+    match entry.kind {
+        OverlayKind::Tooltip | OverlayKind::DragPreview => ElevationLevel::Low,
+        OverlayKind::Popover
+        | OverlayKind::Dropdown
+        | OverlayKind::ContextMenu
+        | OverlayKind::Menu => ElevationLevel::Medium,
+        OverlayKind::CommandPalette | OverlayKind::Modal => ElevationLevel::High,
     }
 }
 

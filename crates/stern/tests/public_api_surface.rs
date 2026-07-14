@@ -208,6 +208,29 @@ fn facade_supports_mutation_first_semantic_palette_customization() {
 }
 
 #[test]
+#[allow(clippy::float_cmp)]
+fn facade_exposes_typed_elevation_construction_and_resolution() {
+    use stern::core::{Color, ElevationLevel, ElevationScale, Vec2, default_dark_theme};
+
+    let scale = ElevationScale::new(10.0, 20.0, 30.0, 40.0);
+    let theme = default_dark_theme().with_elevation(scale);
+    assert_eq!(theme.elevation.get(ElevationLevel::None), 10.0);
+    assert_eq!(theme.elevation.get(ElevationLevel::Low), 20.0);
+    assert_eq!(theme.elevation.get(ElevationLevel::Medium), 30.0);
+    assert_eq!(theme.elevation.get(ElevationLevel::High), 40.0);
+
+    assert_eq!(theme.elevation_shadow(ElevationLevel::None, 4.0), None);
+    let medium = theme
+        .elevation_shadow(ElevationLevel::Medium, 4.0)
+        .expect("medium elevation recipe");
+    assert_eq!(medium.offset, Vec2::new(0.0, 6.0));
+    assert_eq!(medium.blur_radius, 18.0);
+    assert_eq!(medium.spread, 0.0);
+    assert_eq!(medium.radius, 4.0);
+    assert_eq!(medium.color, Color::rgba(0.0, 0.0, 0.0, 0.42));
+}
+
+#[test]
 fn facade_primary_recipe_consumes_custom_accent_state_roles() {
     let mut colors = stern::core::ThemeColors::default_dark();
     colors.accent.default = stern::core::Color::rgb8(1, 2, 3);

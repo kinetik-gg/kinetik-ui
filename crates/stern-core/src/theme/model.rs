@@ -1,8 +1,8 @@
 use super::{
     ButtonRecipe, ButtonVariant, CheckRecipe, ComponentState, ControlMetrics, DurationScale,
-    ElevationScale, FontToken, OpacityScale, PanelRecipe, RadiusScale, RowRecipe, SemanticColor,
-    SeparatorRecipe, ShadowRecipe, SliderRecipe, SpacingScale, TabRecipe, TextFieldRecipe,
-    TextRecipe, TextRole, ThemeColors, ToggleRecipe, TypographyScale,
+    ElevationLevel, ElevationScale, FontToken, OpacityScale, PanelRecipe, RadiusScale, RowRecipe,
+    SemanticColor, SeparatorRecipe, ShadowRecipe, SliderRecipe, SpacingScale, TabRecipe,
+    TextFieldRecipe, TextRecipe, TextRole, ThemeColors, ToggleRecipe, TypographyScale,
 };
 use crate::{Brush, Color, CornerRadius, Stroke, Vec2};
 
@@ -390,18 +390,21 @@ impl Theme {
         }
     }
 
-    /// Resolves a shadow recipe from an elevation token and radius.
+    /// Resolves the exact shadow recipe for a typed elevation level and radius.
     #[must_use]
-    pub fn elevation_shadow(&self, elevation: f32, radius: f32) -> Option<ShadowRecipe> {
-        if !elevation.is_finite() || elevation <= 0.0 {
-            return None;
-        }
+    pub fn elevation_shadow(&self, level: ElevationLevel, radius: f32) -> Option<ShadowRecipe> {
+        let (offset_y, blur_radius, alpha) = match level {
+            ElevationLevel::None => return None,
+            ElevationLevel::Low => (2.0, 6.0, 0.32),
+            ElevationLevel::Medium => (6.0, 18.0, 0.42),
+            ElevationLevel::High => (12.0, 36.0, 0.52),
+        };
         Some(ShadowRecipe {
-            offset: Vec2::new(0.0, elevation * 0.75),
-            blur_radius: (elevation * 4.0).max(1.0),
+            offset: Vec2::new(0.0, offset_y),
+            blur_radius,
             spread: 0.0,
             radius: radius.max(0.0),
-            color: Color::rgba(0.0, 0.0, 0.0, (0.18 + elevation * 0.018).min(0.34)),
+            color: Color::rgba(0.0, 0.0, 0.0, alpha),
         })
     }
 

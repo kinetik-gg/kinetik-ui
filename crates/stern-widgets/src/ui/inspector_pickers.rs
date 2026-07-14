@@ -295,10 +295,10 @@ impl Ui<'_> {
     }
 
     fn paint_color_picker_surface(&mut self, scene: &ColorPickerScene) {
-        if let Some(shadow) = self
-            .theme
-            .elevation_shadow(self.theme.elevation.overlay, self.theme.radii.md.top_left)
-        {
+        if let Some(shadow) = self.theme.elevation_shadow(
+            stern_core::ElevationLevel::Medium,
+            self.theme.radii.md.top_left,
+        ) {
             self.primitive(Primitive::Shadow(shadow.primitive(scene.bounds)));
         }
         self.primitive(Primitive::Rect(RectPrimitive {
@@ -417,10 +417,10 @@ impl Ui<'_> {
     }
 
     fn paint_picker_panel(&mut self, bounds: Rect) {
-        if let Some(shadow) = self
-            .theme
-            .elevation_shadow(self.theme.elevation.overlay, self.theme.radii.md.top_left)
-        {
+        if let Some(shadow) = self.theme.elevation_shadow(
+            stern_core::ElevationLevel::Medium,
+            self.theme.radii.md.top_left,
+        ) {
             self.primitive(Primitive::Shadow(shadow.primitive(bounds)));
         }
         self.primitive(Primitive::Rect(RectPrimitive {

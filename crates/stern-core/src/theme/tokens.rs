@@ -620,15 +620,54 @@ pub struct OpacityScale {
     pub overlay_scrim: f32,
 }
 
-/// Elevation tokens for surfaces that escape the base layout.
+/// Semantic elevation identity for surface layering and shadow selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ElevationLevel {
+    /// Docked panels and ordinary controls.
+    None,
+    /// Tooltips and small floating affordances.
+    Low,
+    /// Dropdowns, menus, and popovers.
+    Medium,
+    /// Dialogs, command palettes, and modal capture layers.
+    High,
+}
+
+/// Elevation values for the four semantic surface levels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ElevationScale {
-    /// Flat base layer.
-    pub flat: f32,
-    /// Raised panel or control layer.
-    pub raised: f32,
-    /// Overlay, menu, or popover layer.
-    pub overlay: f32,
+    /// Docked panels and ordinary controls.
+    pub none: f32,
+    /// Tooltips and small floating affordances.
+    pub low: f32,
+    /// Dropdowns, menus, and popovers.
+    pub medium: f32,
+    /// Dialogs, command palettes, and modal capture layers.
+    pub high: f32,
+}
+
+impl ElevationScale {
+    /// Creates an elevation scale in semantic level order.
+    #[must_use]
+    pub const fn new(none: f32, low: f32, medium: f32, high: f32) -> Self {
+        Self {
+            none,
+            low,
+            medium,
+            high,
+        }
+    }
+
+    /// Resolves the configured value for a typed elevation level.
+    #[must_use]
+    pub const fn get(self, level: ElevationLevel) -> f32 {
+        match level {
+            ElevationLevel::None => self.none,
+            ElevationLevel::Low => self.low,
+            ElevationLevel::Medium => self.medium,
+            ElevationLevel::High => self.high,
+        }
+    }
 }
 
 /// Renderer-neutral shadow style for an elevated surface.
