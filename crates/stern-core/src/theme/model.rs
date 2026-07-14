@@ -285,7 +285,7 @@ impl Theme {
                 self.colors.content.on_accent
             },
             border: Stroke::new(self.controls.border_width, Brush::Solid(border_color)),
-            radius: self.radii.xs,
+            radius: self.radii.sm,
             size: self.controls.check_size,
         }
     }
@@ -294,7 +294,7 @@ impl Theme {
     #[must_use]
     pub fn radio_button(&self, state: ComponentState) -> CheckRecipe {
         CheckRecipe {
-            radius: self.radii.pill,
+            radius: self.radii.full,
             ..self.checkbox(state)
         }
     }
@@ -346,7 +346,7 @@ impl Theme {
             track: Brush::Solid(self.colors.surface.sunken),
             fill: Brush::Solid(fill),
             border: Stroke::new(self.controls.border_width, Brush::Solid(border_color)),
-            radius: self.radii.pill,
+            radius: self.radii.full,
         }
     }
 

@@ -511,29 +511,26 @@ impl SpacingScale {
 pub struct RadiusScale {
     /// No rounding.
     pub none: CornerRadius,
-    /// Extra-small corner radius.
-    pub xs: CornerRadius,
-    /// Small corner radius.
+    /// Small corner radius for ordinary controls and compact selections.
     pub sm: CornerRadius,
-    /// Medium corner radius.
+    /// Medium corner radius for menus, dropdowns, nodes, and popovers.
     pub md: CornerRadius,
-    /// Large corner radius.
+    /// Large corner radius for dialogs and prominent floating surfaces.
     pub lg: CornerRadius,
-    /// Fully rounded pill radius for height-bound controls.
-    pub pill: CornerRadius,
+    /// Fully rounded radius for dots, circular handles, and deliberate pills.
+    pub full: CornerRadius,
 }
 
 impl RadiusScale {
-    /// Creates an equal-corner radius scale from scalar values.
+    /// Creates an equal-corner radius scale with `none` fixed at zero.
     #[must_use]
-    pub const fn from_values(xs: f32, sm: f32, md: f32, lg: f32, pill: f32) -> Self {
+    pub const fn from_values(sm: f32, md: f32, lg: f32, full: f32) -> Self {
         Self {
             none: CornerRadius::all(0.0),
-            xs: CornerRadius::all(xs),
             sm: CornerRadius::all(sm),
             md: CornerRadius::all(md),
             lg: CornerRadius::all(lg),
-            pill: CornerRadius::all(pill),
+            full: CornerRadius::all(full),
         }
     }
 }

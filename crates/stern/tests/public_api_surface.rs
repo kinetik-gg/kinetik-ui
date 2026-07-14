@@ -231,6 +231,34 @@ fn facade_exposes_typed_elevation_construction_and_resolution() {
 }
 
 #[test]
+fn facade_exposes_exact_radius_construction_and_qualified_fields() {
+    use stern::core::{ComponentState, CornerRadius, RadiusScale, default_dark_theme};
+
+    let radii = RadiusScale::from_values(4.0, 8.0, 16.0, 2048.0);
+    assert_eq!(radii.none, CornerRadius::all(0.0));
+    assert_eq!(radii.sm, CornerRadius::all(4.0));
+    assert_eq!(radii.md, CornerRadius::all(8.0));
+    assert_eq!(radii.lg, CornerRadius::all(16.0));
+    assert_eq!(radii.full, CornerRadius::all(2048.0));
+
+    let theme = default_dark_theme().with_radii(radii);
+    assert_eq!(theme.radii, radii);
+    assert_eq!(theme.radius, radii.sm);
+    assert_eq!(
+        theme.button(ComponentState::default()).radius,
+        theme.radii.sm
+    );
+    assert_eq!(
+        theme.tab(ComponentState::default()).radius,
+        theme.radii.none
+    );
+    assert_eq!(
+        theme.radio_button(ComponentState::default()).radius,
+        theme.radii.full
+    );
+}
+
+#[test]
 fn facade_primary_recipe_consumes_custom_accent_state_roles() {
     let mut colors = stern::core::ThemeColors::default_dark();
     colors.accent.default = stern::core::Color::rgb8(1, 2, 3);

@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use stern_core::{
     Brush, CursorShape, FrameContext, Modifiers, MouseButton, PhysicalSize, PlatformRequest, Point,
-    PointerInput, PointerOrder, Primitive, Rect, RepaintRequest, ScaleFactor, Size, TimeInfo,
-    UiInput, UiInputEvent, UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
+    PointerInput, PointerOrder, Primitive, RadiusScale, Rect, RepaintRequest, ScaleFactor,
+    SemanticRole, Size, Theme, TimeInfo, UiInput, UiInputEvent, UiMemory, Vec2, ViewportInfo,
+    WidgetId, default_dark_theme,
 };
 use stern_widgets::{
     PanZoom, Ui, ViewportSelectionTargetDescriptor, ViewportSelectionTargetId, ViewportSurface,
@@ -71,7 +72,30 @@ fn run_frame(
     scale_factor: ScaleFactor,
 ) -> Run {
     let theme = default_dark_theme();
-    let mut ui = Ui::begin_frame(context(input, scale_factor), memory, &theme);
+    run_frame_with_theme(
+        surface,
+        tool_config,
+        controller,
+        pan_zoom,
+        memory,
+        input,
+        scale_factor,
+        &theme,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_frame_with_theme(
+    surface: ViewportSurface,
+    tool_config: ViewportToolSceneConfig,
+    controller: &mut ViewportToolController,
+    pan_zoom: &mut PanZoom,
+    memory: &mut UiMemory,
+    input: UiInput,
+    scale_factor: ScaleFactor,
+    theme: &Theme,
+) -> Run {
+    let mut ui = Ui::begin_frame(context(input, scale_factor), memory, theme);
     let viewport = ui.prepare_viewport_widget(ViewportWidgetConfig::new(VIEWPORT, surface));
     let scene = ui.prepare_viewport_tool_scene(&viewport, tool_config);
     ui.resolve_pointer_targets(|plan| {
@@ -150,13 +174,15 @@ fn prepared_scene(
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn scene_uses_theme_clip_hides_move_paint_and_keeps_stable_handle_ids() {
     let target = target(11).with_label("Layer 11");
     let config = ViewportToolSceneConfig::new([target.clone()]);
     let mut controller = ViewportToolController::default();
     let mut pan_zoom = surface().pan_zoom;
     let mut memory = UiMemory::new();
-    let run = run_frame(
+    let theme = default_dark_theme().with_radii(RadiusScale::from_values(4.0, 11.0, 23.0, 777.0));
+    let run = run_frame_with_theme(
         surface(),
         config,
         &mut controller,
@@ -164,6 +190,7 @@ fn scene_uses_theme_clip_hides_move_paint_and_keeps_stable_handle_ids() {
         &mut memory,
         UiInput::default(),
         ScaleFactor::ONE,
+        &theme,
     );
 
     assert_eq!(run.scene.outlines().len(), 1);
@@ -200,7 +227,30 @@ fn scene_uses_theme_clip_hides_move_paint_and_keeps_stable_handle_ids() {
     assert!(!tool_primitives.iter().any(|primitive| {
         matches!(primitive, Primitive::Rect(rect) if rect.rect == move_rect && rect.fill.is_some())
     }));
-    let theme = default_dark_theme();
+    let painted_handle_rects = tool_primitives
+        .iter()
+        .filter_map(|primitive| match primitive {
+            Primitive::Rect(rect) if rect.fill.is_some() => Some(rect.rect),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let expected_handle_rects = run
+        .scene
+        .handles()
+        .iter()
+        .filter(|handle| handle.kind != ViewportTransformHandleKind::Move)
+        .map(|handle| handle.handle_screen_rect)
+        .collect::<Vec<_>>();
+    assert_eq!(painted_handle_rects, expected_handle_rects);
+    for handle in tool_primitives
+        .iter()
+        .filter_map(|primitive| match primitive {
+            Primitive::Rect(rect) if rect.fill.is_some() => Some(rect),
+            _ => None,
+        })
+    {
+        assert_eq!(handle.radius, theme.radii.sm);
+    }
     let outline = tool_primitives
         .iter()
         .find_map(|primitive| match primitive {
@@ -212,6 +262,13 @@ fn scene_uses_theme_clip_hides_move_paint_and_keeps_stable_handle_ids() {
         outline.stroke.as_ref().map(|stroke| &stroke.brush),
         Some(&Brush::Solid(theme.colors.accent.default))
     );
+    let viewport_semantics = run
+        .frame
+        .semantics
+        .get(VIEWPORT)
+        .expect("viewport semantics");
+    assert_eq!(viewport_semantics.role, SemanticRole::Viewport);
+    assert_eq!(viewport_semantics.bounds, BOUNDS);
 
     let resize =
         ViewportTransformHandleId::new(target.id, ViewportTransformHandleKind::ResizeRight);
