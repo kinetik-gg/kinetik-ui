@@ -5,8 +5,8 @@ use std::time::Duration;
 use stern_core::{
     Color, FrameContext, FrameOutput, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
     PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, PointerTarget, Primitive,
-    Rect, Response, ScaleFactor, SemanticRole, Size, TimeInfo, UiInput, UiMemory, Vec2,
-    ViewportInfo, WidgetId, default_dark_theme,
+    RadiusScale, Rect, Response, ScaleFactor, SemanticRole, Size, Theme, TimeInfo, UiInput,
+    UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_text::TextEditState;
 use stern_widgets::inspector::{
@@ -116,7 +116,17 @@ fn run_scene(
     lower: bool,
 ) -> SceneRun {
     let theme = default_dark_theme();
-    let mut ui = Ui::begin_frame(context(input), memory, &theme);
+    run_scene_with_theme(state, memory, input, lower, &theme)
+}
+
+fn run_scene_with_theme(
+    state: &mut InspectorPickerState,
+    memory: &mut UiMemory,
+    input: UiInput,
+    lower: bool,
+    theme: &Theme,
+) -> SceneRun {
+    let mut ui = Ui::begin_frame(context(input), memory, theme);
     let lower_id = ui.make_id("lower");
     let scene = state.scene().cloned();
     if let Some(scene) = scene.as_ref() {
@@ -315,8 +325,7 @@ fn semantic_bounds(frame: &FrameOutput, label: &str) -> Rect {
 }
 
 #[allow(clippy::float_cmp)]
-fn assert_exact_medium_surface_shadow(frame: &FrameOutput, bounds: Rect) {
-    let theme = default_dark_theme();
+fn assert_exact_medium_surface_shadow(frame: &FrameOutput, bounds: Rect, theme: &Theme) {
     let matching_shadows = frame
         .primitives
         .iter()
@@ -333,8 +342,13 @@ fn assert_exact_medium_surface_shadow(frame: &FrameOutput, bounds: Rect) {
         .iter()
         .position(|primitive| matches!(primitive, Primitive::Rect(rect) if rect.rect == bounds))
         .expect("picker surface");
+    let Primitive::Rect(surface) = &frame.primitives[surface_position] else {
+        panic!("picker surface primitive");
+    };
 
     assert!(shadow_position < surface_position);
+    assert_eq!(surface.radius, theme.radii.md);
+    assert_ne!(surface.radius, theme.radii.lg);
     assert_eq!(shadow.offset, Vec2::new(0.0, 6.0));
     assert_eq!(shadow.blur_radius, 18.0);
     assert_eq!(shadow.spread, 0.0);
@@ -344,6 +358,7 @@ fn assert_exact_medium_surface_shadow(frame: &FrameOutput, bounds: Rect) {
 
 #[test]
 fn select_asset_and_color_picker_surfaces_use_exact_medium_elevation() {
+    let theme = default_dark_theme().with_radii(RadiusScale::from_values(4.0, 11.0, 23.0, 777.0));
     let model = choices();
     let select_field = requested_select(&model, SelectFieldConfig::default());
     let mut select_state = InspectorPickerState::new();
@@ -353,39 +368,42 @@ fn select_asset_and_color_picker_surfaces_use_exact_medium_elevation() {
         &model,
         OVERLAY
     ));
-    let select_frame = run_scene(
+    let select_frame = run_scene_with_theme(
         &mut select_state,
         &mut UiMemory::new(),
         UiInput::default(),
         false,
+        &theme,
     )
     .frame;
-    assert_exact_medium_surface_shadow(&select_frame, OVERLAY);
+    assert_exact_medium_surface_shadow(&select_frame, OVERLAY, &theme);
 
     let asset_field = requested_asset(AssetSlotConfig::default());
     let items = [AssetPickerItem::new(item(10), "asset-a", "Material A")];
     let mut asset_state = InspectorPickerState::new();
     assert!(open_asset(&mut asset_state, &asset_field, &items));
-    let asset_frame = run_scene(
+    let asset_frame = run_scene_with_theme(
         &mut asset_state,
         &mut UiMemory::new(),
         UiInput::default(),
         false,
+        &theme,
     )
     .frame;
-    assert_exact_medium_surface_shadow(&asset_frame, OVERLAY);
+    assert_exact_medium_surface_shadow(&asset_frame, OVERLAY, &theme);
 
     let color_field = requested_color(Color::rgb8(10, 20, 30), ColorFieldConfig::default());
     let mut color_state = InspectorPickerState::new();
     assert!(open_color(&mut color_state, &color_field, OVERLAY));
-    let color_frame = run_scene(
+    let color_frame = run_scene_with_theme(
         &mut color_state,
         &mut UiMemory::new(),
         UiInput::default(),
         false,
+        &theme,
     )
     .frame;
-    assert_exact_medium_surface_shadow(&color_frame, OVERLAY);
+    assert_exact_medium_surface_shadow(&color_frame, OVERLAY, &theme);
 }
 
 #[test]

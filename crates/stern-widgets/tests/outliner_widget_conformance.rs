@@ -5,9 +5,9 @@ use std::time::Duration;
 use stern_core::{
     ActionContext, ActionDescriptor, ActionId, ActionSource, FrameContext, FrameOutput, Key,
     KeyEvent, KeyState, KeyboardInput, Modifiers, PhysicalSize, Point, PointerButtonState,
-    PointerInput, PointerOrder, PointerTarget, Primitive, Rect, RepaintRequest, Response,
-    ScaleFactor, SemanticRole, Size, TimeInfo, UiInput, UiMemory, Vec2, ViewportInfo, WidgetId,
-    default_dark_theme,
+    PointerInput, PointerOrder, PointerTarget, Primitive, RadiusScale, Rect, RepaintRequest,
+    Response, ScaleFactor, SemanticRole, Size, Theme, TimeInfo, UiInput, UiMemory, Vec2,
+    ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_widgets::outliner::{
     OutlinerConfig, OutlinerOutput, OutlinerRequest, OutlinerSelectionMode, OutlinerState,
@@ -156,7 +156,20 @@ fn run_frame(
     lower: bool,
 ) -> Run {
     let theme = default_dark_theme();
-    let mut ui = Ui::begin_frame(context(input), memory, &theme);
+    run_frame_with_theme(model, config, state, memory, input, lower, &theme)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_frame_with_theme(
+    model: &OutlinerModel,
+    config: OutlinerConfig,
+    state: &mut OutlinerState,
+    memory: &mut UiMemory,
+    input: UiInput,
+    lower: bool,
+    theme: &Theme,
+) -> Run {
+    let mut ui = Ui::begin_frame(context(input), memory, theme);
     let scene = ui
         .prepare_outliner("scene-outliner", config, model, state)
         .expect("valid outliner scene");
@@ -514,15 +527,65 @@ fn visibility_and_lock_controls_emit_typed_requests_without_mutating_app_flags()
     let model = roots([10]);
     let mut state = OutlinerState::new();
     let mut memory = UiMemory::new();
-    let idle = run_frame(
+    let theme = default_dark_theme().with_radii(RadiusScale::from_values(4.0, 11.0, 23.0, 777.0));
+    let idle = run_frame_with_theme(
         &model,
         config(),
         &mut state,
         &mut memory,
         UiInput::default(),
         false,
+        &theme,
     );
     let zones = idle.rows[0].clone();
+    let visibility_inset = zones
+        .visibility_toggle_rect
+        .width
+        .min(zones.visibility_toggle_rect.height)
+        * 0.25;
+    let visibility_icon = Rect::new(
+        zones.visibility_toggle_rect.x + visibility_inset,
+        zones.visibility_toggle_rect.y + visibility_inset,
+        (zones.visibility_toggle_rect.width - visibility_inset * 2.0).max(0.0),
+        (zones.visibility_toggle_rect.height - visibility_inset * 2.0).max(0.0),
+    );
+    let visibility_paint = idle
+        .frame
+        .primitives
+        .iter()
+        .find_map(|primitive| match primitive {
+            Primitive::Rect(rect) if rect.rect == visibility_icon => Some(rect),
+            _ => None,
+        })
+        .expect("visibility icon paint");
+    assert_eq!(visibility_paint.radius, theme.radii.full);
+
+    let lock_width = zones.lock_toggle_rect.width * 0.42;
+    let lock_height = zones.lock_toggle_rect.height * 0.34;
+    let lock_body = Rect::new(
+        zones.lock_toggle_rect.center().x - lock_width * 0.5,
+        zones.lock_toggle_rect.center().y,
+        lock_width,
+        lock_height,
+    );
+    let lock_paint = idle
+        .frame
+        .primitives
+        .iter()
+        .find_map(|primitive| match primitive {
+            Primitive::Rect(rect) if rect.rect == lock_body => Some(rect),
+            _ => None,
+        })
+        .expect("lock body paint");
+    assert_eq!(lock_paint.radius, theme.radii.sm);
+    let row_semantics = idle
+        .frame
+        .semantics
+        .nodes()
+        .iter()
+        .find(|node| node.label.as_deref() == Some("Item 10"))
+        .expect("row semantics");
+    assert_eq!(row_semantics.bounds, zones.rect);
 
     let visibility = click(
         zones.visibility_toggle_rect.center(),

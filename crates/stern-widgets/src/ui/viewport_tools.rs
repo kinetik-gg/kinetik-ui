@@ -316,7 +316,7 @@ impl Ui<'_> {
                     self.theme.controls.border_width,
                     Brush::Solid(border),
                 )),
-                radius: self.theme.radii.xs,
+                radius: self.theme.radii.sm,
             }));
         }
         self.primitive(Primitive::ClipEnd { id: clip });

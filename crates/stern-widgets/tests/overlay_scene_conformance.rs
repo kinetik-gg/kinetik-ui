@@ -5,7 +5,7 @@ use std::time::Duration;
 use stern_core::{
     ActionContext, ActionDescriptor, ActionId, ActionSource, Brush, Color, FrameContext, Key,
     KeyEvent, KeyState, KeyboardInput, Modifiers, PhysicalSize, Point, PointerButtonState,
-    PointerInput, PointerOrder, PointerTarget, Primitive, Rect, Response, ScaleFactor,
+    PointerInput, PointerOrder, PointerTarget, Primitive, RadiusScale, Rect, Response, ScaleFactor,
     SemanticActionKind, SemanticRole, ShadowPrimitive, Size, Theme, TimeInfo, UiInput, UiMemory,
     Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
@@ -679,7 +679,8 @@ fn every_overlay_kind_paints_an_ordered_themed_surface_and_children() {
         .map(|surface| surface.entry().clone())
         .collect::<Vec<_>>();
     let mut memory = UiMemory::new();
-    let mut theme = default_dark_theme();
+    let mut theme =
+        default_dark_theme().with_radii(RadiusScale::from_values(4.0, 11.0, 23.0, 777.0));
     theme.colors.surface.overlay = Color::rgb8(1, 2, 3);
     theme.colors.overlay.scrim = Color::rgb8(4, 5, 6);
     let (_, _, frame) =
@@ -696,6 +697,11 @@ fn every_overlay_kind_paints_an_ordered_themed_surface_and_children() {
                         && rect.fill == Some(Brush::Solid(theme.colors.surface.overlay)))
             })
             .expect("themed overlay surface");
+        let Primitive::Rect(surface_primitive) = &frame.primitives[position] else {
+            panic!("overlay surface primitive");
+        };
+        assert_eq!(surface_primitive.radius, theme.radii.md);
+        assert_ne!(surface_primitive.radius, theme.radii.lg);
         let matching_shadows = frame
             .primitives
             .iter()
