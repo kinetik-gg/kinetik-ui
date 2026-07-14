@@ -33,10 +33,29 @@ impl Color {
         Self { r, g, b, a }
     }
 
+    /// Creates a straight (unpremultiplied) sRGB color from 8-bit RGBA channels.
+    /// Each channel is normalized independently into `0.0..=1.0`.
+    #[must_use]
+    #[allow(clippy::cast_lossless)]
+    pub const fn rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self::rgba(
+            r as f32 / 255.0,
+            g as f32 / 255.0,
+            b as f32 / 255.0,
+            a as f32 / 255.0,
+        )
+    }
+
     /// Creates an opaque color from RGB channels.
     #[must_use]
     pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
         Self::rgba(r, g, b, 1.0)
+    }
+
+    /// Creates an opaque sRGB color from 8-bit RGB channels.
+    #[must_use]
+    pub const fn rgb8(r: u8, g: u8, b: u8) -> Self {
+        Self::rgba8(r, g, b, u8::MAX)
     }
 
     /// Returns this color with a replaced alpha channel.
