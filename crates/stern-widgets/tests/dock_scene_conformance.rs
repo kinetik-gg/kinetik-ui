@@ -171,7 +171,7 @@ fn customized_two_frame_dock_panels_use_exact_flat_recipe_without_changing_owner
         })
         .with_radii(RadiusScale::from_values(1.0, 5.5, 7.0, 9.0, 99.0))
         .with_elevation(ElevationScale {
-            raised: 37.0,
+            low: 37.0,
             ..base.elevation
         });
     let recipe = theme.panel();

@@ -6,8 +6,8 @@ use stern_core::{
     ActionContext, ActionDescriptor, ActionId, ActionSource, Brush, Color, FrameContext, Key,
     KeyEvent, KeyState, KeyboardInput, Modifiers, PhysicalSize, Point, PointerButtonState,
     PointerInput, PointerOrder, PointerTarget, Primitive, Rect, Response, ScaleFactor,
-    SemanticActionKind, SemanticRole, Size, Theme, TimeInfo, UiInput, UiMemory, ViewportInfo,
-    WidgetId, default_dark_theme,
+    SemanticActionKind, SemanticRole, ShadowPrimitive, Size, Theme, TimeInfo, UiInput, UiMemory,
+    Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_widgets::overlays::OverlayNavigationInput;
 use stern_widgets::{
@@ -87,6 +87,25 @@ fn context(input: UiInput) -> FrameContext {
         input,
         TimeInfo::new(Duration::from_millis(500), Duration::from_millis(16), 1),
     )
+}
+
+#[allow(clippy::float_cmp)]
+fn assert_exact_overlay_shadow(shadow: &ShadowPrimitive, entry: &OverlayEntry, radius: f32) {
+    let (offset_y, blur_radius, alpha) =
+        if entry.modal || matches!(entry.kind, OverlayKind::Modal | OverlayKind::CommandPalette) {
+            (12.0, 36.0, 0.52)
+        } else if matches!(entry.kind, OverlayKind::Tooltip | OverlayKind::DragPreview) {
+            (2.0, 6.0, 0.32)
+        } else {
+            (6.0, 18.0, 0.42)
+        };
+
+    assert_eq!(shadow.rect, entry.rect);
+    assert_eq!(shadow.offset, Vec2::new(0.0, offset_y));
+    assert_eq!(shadow.blur_radius, blur_radius);
+    assert_eq!(shadow.spread, 0.0);
+    assert_eq!(shadow.radius, radius);
+    assert_eq!(shadow.color, Color::rgba(0.0, 0.0, 0.0, alpha));
 }
 
 fn run_frame(
@@ -637,6 +656,23 @@ fn every_overlay_kind_paints_an_ordered_themed_surface_and_children() {
             label,
         ));
     }
+    scene.push(OverlaySceneSurface::passive(
+        entry(
+            18,
+            OverlayKind::Tooltip,
+            Rect::new(400.0, 240.0, 150.0, 60.0),
+        )
+        .modal(true),
+        "Modal tooltip override",
+        "Modal tooltip override",
+    ));
+    let non_flagged_modal = entry(19, OverlayKind::Modal, Rect::new(220.0, 240.0, 150.0, 60.0));
+    assert!(!non_flagged_modal.modal);
+    scene.push(OverlaySceneSurface::passive(
+        non_flagged_modal,
+        "Modal kind without flag",
+        "Modal kind without flag",
+    ));
     let entries = scene
         .surfaces()
         .iter()
@@ -660,6 +696,22 @@ fn every_overlay_kind_paints_an_ordered_themed_surface_and_children() {
                         && rect.fill == Some(Brush::Solid(theme.colors.surface.overlay)))
             })
             .expect("themed overlay surface");
+        let matching_shadows = frame
+            .primitives
+            .iter()
+            .enumerate()
+            .filter_map(|(index, primitive)| match primitive {
+                Primitive::Shadow(shadow) if shadow.rect == entry.rect => Some((index, shadow)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(matching_shadows.len(), 1, "one shadow per overlay surface");
+        let (shadow_position, shadow) = matching_shadows[0];
+        assert!(
+            shadow_position < position,
+            "shadow paints before its surface"
+        );
+        assert_exact_overlay_shadow(shadow, entry, theme.radii.md.top_left);
         if let Some(previous) = previous {
             assert!(position > previous, "surfaces remain bottom-to-top");
         }
@@ -671,13 +723,17 @@ fn every_overlay_kind_paints_an_ordered_themed_surface_and_children() {
             .expect("surface semantics");
         assert!(!surface.children.is_empty());
         assert_eq!(surface.bounds, entry.rect);
+        for child in &surface.children {
+            let child = frame
+                .semantics
+                .get(*child)
+                .expect("owned overlay child semantics");
+            assert!(
+                child.bounds.intersection(entry.rect).is_some(),
+                "owned child remains within its overlay surface"
+            );
+        }
     }
-    assert!(
-        frame
-            .primitives
-            .iter()
-            .any(|primitive| matches!(primitive, Primitive::Shadow(_)))
-    );
     assert!(frame.primitives.iter().any(|primitive| {
         matches!(primitive, Primitive::Rect(rect)
         if rect.rect == Rect::new(0.0, 0.0, 640.0, 480.0)

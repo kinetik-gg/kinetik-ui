@@ -25,11 +25,7 @@ pub const fn default_dark_theme() -> Theme {
             selection: 0.35,
             overlay_scrim: 0.55,
         },
-        elevation: ElevationScale {
-            flat: 0.0,
-            raised: 1.0,
-            overlay: 8.0,
-        },
+        elevation: ElevationScale::new(0.0, 1.0, 2.0, 3.0),
         duration: DurationScale {
             instant: 0.0,
             fast: 80.0,

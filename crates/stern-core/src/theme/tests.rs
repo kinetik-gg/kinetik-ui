@@ -1,7 +1,7 @@
 #![allow(clippy::float_cmp)]
 use super::{
-    ButtonVariant, ComponentState, ControlMetrics, DurationScale, ElevationScale, OpacityScale,
-    RadiusScale, SemanticColor, SpacingScale, TextRole, ThemeColors, TypographyScale,
+    ButtonVariant, ComponentState, ControlMetrics, DurationScale, ElevationLevel, ElevationScale,
+    OpacityScale, RadiusScale, SemanticColor, SpacingScale, TextRole, ThemeColors, TypographyScale,
     default_dark_theme,
 };
 use crate::{Brush, Color, CornerRadius};
@@ -60,7 +60,7 @@ fn token_overrides_are_structural_and_predictable() {
             ..default_dark_theme().opacity
         })
         .with_elevation(ElevationScale {
-            raised: 3.0,
+            low: 3.0,
             ..default_dark_theme().elevation
         })
         .with_duration(DurationScale {
@@ -75,11 +75,31 @@ fn token_overrides_are_structural_and_predictable() {
     assert_eq!(theme.radius, CornerRadius::all(2.0));
     assert_eq!(theme.text_size, 13.0);
     assert_eq!(theme.opacity.hover, 0.2);
-    assert_eq!(theme.elevation.raised, 3.0);
+    assert_eq!(theme.elevation.low, 3.0);
     assert_eq!(theme.duration.normal, 180.0);
     assert_eq!(theme.controls.border_width, 2.0);
     assert_eq!(theme.border_width, 2.0);
     assert_eq!(theme.colors, default_dark_theme().colors);
+}
+
+#[test]
+fn elevation_scale_defaults_and_typed_lookup_are_exact() {
+    let theme = default_dark_theme();
+
+    assert_eq!(theme.elevation.none, 0.0);
+    assert_eq!(theme.elevation.low, 1.0);
+    assert_eq!(theme.elevation.medium, 2.0);
+    assert_eq!(theme.elevation.high, 3.0);
+    assert_eq!(theme.elevation.get(ElevationLevel::None), 0.0);
+    assert_eq!(theme.elevation.get(ElevationLevel::Low), 1.0);
+    assert_eq!(theme.elevation.get(ElevationLevel::Medium), 2.0);
+    assert_eq!(theme.elevation.get(ElevationLevel::High), 3.0);
+
+    let customized = theme.with_elevation(ElevationScale::new(10.0, 20.0, 30.0, 40.0));
+    assert_eq!(customized.elevation.get(ElevationLevel::None), 10.0);
+    assert_eq!(customized.elevation.get(ElevationLevel::Low), 20.0);
+    assert_eq!(customized.elevation.get(ElevationLevel::Medium), 30.0);
+    assert_eq!(customized.elevation.get(ElevationLevel::High), 40.0);
 }
 
 #[test]
@@ -519,7 +539,7 @@ fn component_recipes_cover_common_states() {
 }
 
 #[test]
-fn passive_panel_recipe_stays_flat_under_nonzero_raised_elevation() {
+fn passive_panel_recipe_stays_flat_under_nonzero_elevation() {
     let background = Color::rgb8(1, 2, 3);
     let border = Color::rgb8(4, 5, 6);
     let border_width = 2.75;
@@ -536,7 +556,7 @@ fn passive_panel_recipe_stays_flat_under_nonzero_raised_elevation() {
         })
         .with_radii(RadiusScale::from_values(1.0, 5.5, 7.0, 9.0, 99.0))
         .with_elevation(ElevationScale {
-            raised: 37.0,
+            low: 37.0,
             ..base.elevation
         });
 
@@ -549,7 +569,7 @@ fn passive_panel_recipe_stays_flat_under_nonzero_raised_elevation() {
     assert_eq!(recipe.shadow, None);
     assert!(
         theme
-            .elevation_shadow(theme.elevation.raised, radius.top_left)
+            .elevation_shadow(ElevationLevel::Low, radius.top_left)
             .is_some(),
         "positive elevation tokens must still resolve shadows for elevated consumers"
     );
@@ -647,16 +667,42 @@ fn recipe_lookups_follow_independently_overridden_semantic_paths() {
 }
 
 #[test]
-fn elevation_shadow_materializes_shadow_primitives() {
+fn elevation_shadow_recipes_are_exact_and_preserve_shape_radius() {
     let theme = default_dark_theme();
-    let shadow = theme
-        .elevation_shadow(theme.elevation.overlay, theme.radii.md.top_left)
-        .expect("overlay elevation casts a shadow");
-    let primitive = shadow.primitive(crate::Rect::new(0.0, 0.0, 20.0, 10.0));
+    let rect = crate::Rect::new(0.0, 0.0, 20.0, 10.0);
 
-    assert_eq!(primitive.rect, crate::Rect::new(0.0, 0.0, 20.0, 10.0));
-    assert!(primitive.blur_radius > theme.elevation.overlay);
-    assert_eq!(primitive.radius, theme.radii.md.top_left);
+    assert_eq!(theme.elevation_shadow(ElevationLevel::None, 7.0), None);
+    for (level, offset_y, blur_radius, alpha) in [
+        (ElevationLevel::Low, 2.0, 6.0, 0.32),
+        (ElevationLevel::Medium, 6.0, 18.0, 0.42),
+        (ElevationLevel::High, 12.0, 36.0, 0.52),
+    ] {
+        let shadow = theme
+            .elevation_shadow(level, 7.0)
+            .expect("visible elevation casts a shadow");
+        assert_eq!(shadow.offset, crate::Vec2::new(0.0, offset_y));
+        assert_eq!(shadow.blur_radius, blur_radius);
+        assert_eq!(shadow.spread, 0.0);
+        assert_eq!(shadow.radius, 7.0);
+        assert_eq!(shadow.color, Color::rgba(0.0, 0.0, 0.0, alpha));
+
+        let primitive = shadow.primitive(rect);
+        assert_eq!(primitive.rect, rect);
+        assert_eq!(primitive.offset, crate::Vec2::new(0.0, offset_y));
+        assert_eq!(primitive.blur_radius, blur_radius);
+        assert_eq!(primitive.spread, 0.0);
+        assert_eq!(primitive.radius, 7.0);
+        assert_eq!(primitive.color, Color::rgba(0.0, 0.0, 0.0, alpha));
+    }
+
+    let clamped = theme
+        .elevation_shadow(ElevationLevel::Medium, -7.0)
+        .expect("visible elevation casts a shadow");
+    assert_eq!(clamped.offset, crate::Vec2::new(0.0, 6.0));
+    assert_eq!(clamped.blur_radius, 18.0);
+    assert_eq!(clamped.spread, 0.0);
+    assert_eq!(clamped.radius, 0.0);
+    assert_eq!(clamped.color, Color::rgba(0.0, 0.0, 0.0, 0.42));
 }
 
 #[test]
