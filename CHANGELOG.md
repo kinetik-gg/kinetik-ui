@@ -10,6 +10,12 @@ published, or accepted as an alpha release.
 
 ### Changed
 
+- **Breaking:** Replaced `ElevationScale::{flat, raised, overlay}` with the
+  exact four-level `none`, `low`, `medium`, and `high` scale and changed
+  `Theme::elevation_shadow` to accept `ElevationLevel` instead of an arbitrary
+  `f32`. Overlay callers must now choose the semantic level that matches their
+  real layering and input behavior. No legacy aliases remain. See
+  `docs/elevation-migration.md`.
 - **Breaking:** Replaced the provisional 19-field flat `ThemeColors` palette
   and broad `SemanticColor` variants with eight non-exhaustive grouped color
   families, 53 exact role keys, `SemanticColor::ALL`, and the explicit

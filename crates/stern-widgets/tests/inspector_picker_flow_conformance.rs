@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use stern_core::{
     Color, FrameContext, FrameOutput, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
-    PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, PointerTarget, Rect,
-    Response, ScaleFactor, SemanticRole, Size, TimeInfo, UiInput, UiMemory, ViewportInfo, WidgetId,
-    default_dark_theme,
+    PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, PointerTarget, Primitive,
+    Rect, Response, ScaleFactor, SemanticRole, Size, TimeInfo, UiInput, UiMemory, Vec2,
+    ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_text::TextEditState;
 use stern_widgets::inspector::{
@@ -312,6 +312,80 @@ fn semantic_bounds(frame: &FrameOutput, label: &str) -> Rect {
         .find(|node| node.label.as_deref() == Some(label))
         .unwrap_or_else(|| panic!("missing semantic node {label}"))
         .bounds
+}
+
+#[allow(clippy::float_cmp)]
+fn assert_exact_medium_surface_shadow(frame: &FrameOutput, bounds: Rect) {
+    let theme = default_dark_theme();
+    let matching_shadows = frame
+        .primitives
+        .iter()
+        .enumerate()
+        .filter_map(|(index, primitive)| match primitive {
+            Primitive::Shadow(shadow) if shadow.rect == bounds => Some((index, shadow)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching_shadows.len(), 1, "one picker surface shadow");
+    let (shadow_position, shadow) = matching_shadows[0];
+    let surface_position = frame
+        .primitives
+        .iter()
+        .position(|primitive| matches!(primitive, Primitive::Rect(rect) if rect.rect == bounds))
+        .expect("picker surface");
+
+    assert!(shadow_position < surface_position);
+    assert_eq!(shadow.offset, Vec2::new(0.0, 6.0));
+    assert_eq!(shadow.blur_radius, 18.0);
+    assert_eq!(shadow.spread, 0.0);
+    assert_eq!(shadow.radius, theme.radii.md.top_left);
+    assert_eq!(shadow.color, Color::rgba(0.0, 0.0, 0.0, 0.42));
+}
+
+#[test]
+fn select_asset_and_color_picker_surfaces_use_exact_medium_elevation() {
+    let model = choices();
+    let select_field = requested_select(&model, SelectFieldConfig::default());
+    let mut select_state = InspectorPickerState::new();
+    assert!(open_select(
+        &mut select_state,
+        &select_field,
+        &model,
+        OVERLAY
+    ));
+    let select_frame = run_scene(
+        &mut select_state,
+        &mut UiMemory::new(),
+        UiInput::default(),
+        false,
+    )
+    .frame;
+    assert_exact_medium_surface_shadow(&select_frame, OVERLAY);
+
+    let asset_field = requested_asset(AssetSlotConfig::default());
+    let items = [AssetPickerItem::new(item(10), "asset-a", "Material A")];
+    let mut asset_state = InspectorPickerState::new();
+    assert!(open_asset(&mut asset_state, &asset_field, &items));
+    let asset_frame = run_scene(
+        &mut asset_state,
+        &mut UiMemory::new(),
+        UiInput::default(),
+        false,
+    )
+    .frame;
+    assert_exact_medium_surface_shadow(&asset_frame, OVERLAY);
+
+    let color_field = requested_color(Color::rgb8(10, 20, 30), ColorFieldConfig::default());
+    let mut color_state = InspectorPickerState::new();
+    assert!(open_color(&mut color_state, &color_field, OVERLAY));
+    let color_frame = run_scene(
+        &mut color_state,
+        &mut UiMemory::new(),
+        UiInput::default(),
+        false,
+    )
+    .frame;
+    assert_exact_medium_surface_shadow(&color_frame, OVERLAY);
 }
 
 #[test]
