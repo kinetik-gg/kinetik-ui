@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use stern_core::{
-    Brush, Color, CornerRadius, ImageId, Primitive, Rect, RectPrimitive, default_dark_theme,
+    Brush, Color, CornerRadius, ImageId, PhysicalSize, Primitive, Rect, RectPrimitive, ScaleFactor,
+    Size, ViewportInfo, default_dark_theme,
 };
 use stern_render::{
     RenderDiagnostic, RenderImage, RenderImageAlpha, RenderImageFormat, RenderResources,
@@ -14,7 +15,7 @@ use vello::peniko::{
 };
 
 use crate::{
-    RenderCommandKind,
+    RenderCommandKind, RenderFrameInput, VelloRenderer,
     geometry::{vello_color, vello_gradient},
     image::{
         ImageDataCache, PackedTint, image_data_from_render_image, multiply_premultiplied_channel,
@@ -71,8 +72,9 @@ fn sanitize_color_covers_range_nonfinite_and_negative_zero() {
 }
 
 #[test]
-fn default_theme_color_reaches_commands_and_peniko_unchanged() {
+fn default_theme_accent_reaches_production_vello_encoding_exactly() {
     let accent = default_dark_theme().colors.accent;
+    assert_eq!(accent, Color::rgb8(0x0C, 0x8C, 0xE9));
     let primitives = [Primitive::Rect(RectPrimitive {
         rect: Rect::new(0.0, 0.0, 4.0, 4.0),
         fill: Some(Brush::Solid(accent)),
@@ -93,6 +95,28 @@ fn default_theme_color_reaches_commands_and_peniko_unchanged() {
     assert_eq!(
         vello_color(command_color).components,
         [accent.r, accent.g, accent.b, accent.a]
+    );
+
+    let resources = RenderResources::new();
+    let mut renderer = VelloRenderer::new();
+    let output = renderer.submit_frame(RenderFrameInput {
+        viewport: ViewportInfo::new(
+            Size::new(8.0, 8.0),
+            PhysicalSize::new(8, 8),
+            ScaleFactor::ONE,
+        ),
+        primitives: &primitives,
+        resources: &resources,
+    });
+
+    assert!(output.diagnostics.is_empty());
+    let encoding = renderer.scene().encoding();
+    assert_eq!(encoding.n_paths, 1);
+    assert_eq!(encoding.draw_tags.len(), 1);
+    assert_eq!(encoding.draw_tags[0].0, 0x44);
+    assert_eq!(
+        encoding.draw_data.as_slice(),
+        &[u32::from_le_bytes([0x0C, 0x8C, 0xE9, 0xFF])]
     );
 }
 

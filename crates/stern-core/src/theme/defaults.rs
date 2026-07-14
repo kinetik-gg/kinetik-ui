@@ -4,6 +4,8 @@ use super::{
 };
 use crate::{Color, CornerRadius};
 
+const ACCENT_DEFAULT: Color = Color::rgb8(0x0C, 0x8C, 0xE9);
+
 /// Returns the default dark editor theme.
 #[must_use]
 pub const fn default_dark_theme() -> Theme {
@@ -17,14 +19,14 @@ pub const fn default_dark_theme() -> Theme {
             text: Color::rgb(0.86, 0.86, 0.86),
             text_muted: Color::rgb(0.52, 0.52, 0.52),
             text_disabled: Color::rgb(0.30, 0.30, 0.30),
-            accent: Color::rgb(0.13, 0.40, 0.96),
+            accent: ACCENT_DEFAULT,
             danger: Color::rgb(0.86, 0.22, 0.22),
             warning: Color::rgb(0.90, 0.62, 0.18),
             success: Color::rgb(0.26, 0.70, 0.38),
             border: Color::rgb(0.21, 0.21, 0.21),
             border_subtle: Color::rgb(0.14, 0.14, 0.14),
             focus_ring: Color::rgb(0.25, 0.55, 1.0),
-            selection: Color::rgb(0.13, 0.40, 0.96),
+            selection: ACCENT_DEFAULT,
             disabled: Color::rgb(0.075, 0.075, 0.075),
             overlay: Color::rgb(0.105, 0.105, 0.105),
             viewport_background: Color::rgb(0.02, 0.02, 0.02),
