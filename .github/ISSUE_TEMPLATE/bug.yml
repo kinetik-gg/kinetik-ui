@@ -32,7 +32,7 @@ body:
     attributes:
       label: Reproduction
       description: Include commands, tests, input events, or minimal code where possible.
-      placeholder: "cargo test -p kinetik-ui-core widget_id"
+      placeholder: "cargo test -p stern-core widget_id"
     validations:
       required: true
 

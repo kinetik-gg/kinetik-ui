@@ -1,10 +1,10 @@
-# Kinetik UI
+# Stern
 
-Kinetik UI is a Rust UI toolkit for editor-style desktop applications.
+Stern is a Rust UI toolkit for editor-style desktop applications.
 
-> **Project status:** Kinetik UI is pre-alpha and has not been published to a
+> **Project status:** Stern is pre-alpha and has not been published to a
 > package registry. The workspace is preparing a planned
-> `0.1.0-alpha.1` package baseline; that version string does not mean a tag,
+> `1.0.0-rc.2.dev` package baseline; that version string does not mean a tag,
 > publication, or accepted alpha release exists.
 
 It is designed for dense, tool-oriented interfaces: docked frames, passive panels, inspectors, property grids, tables, media viewports, timelines, menus, command palettes, and action-driven controls.
@@ -20,13 +20,13 @@ metadata-only evidence proves no capability axis. There are currently no
 
 ## Architecture
 
-Kinetik UI separates the system into small, explicit layers:
+Stern separates the system into small, explicit layers:
 
 ```text
 Application
   Business state, documents, domain rendering, jobs, and action handling.
 
-Kinetik UI Runtime
+Stern Runtime
   Frame lifecycle, layout, widget identity, UI memory, interaction state,
   action dispatch, semantic nodes, and draw-list generation.
 
@@ -81,60 +81,60 @@ Slider    = draggable + value mapping + track/thumb style recipe
 The intended workspace layout is:
 
 ```text
-kinetik-ui-core
+stern-core
   Platform-independent runtime types and core behavior.
 
-kinetik-ui-widgets
+stern-widgets
   Components and editor patterns built on core primitives.
 
-kinetik-ui-render
+stern-render
   Renderer backend traits, frame contracts, diagnostics, resource payloads, and handles.
 
-kinetik-ui-text
+stern-text
   Text shaping, layout, editing state, and bundled font assets.
 
-kinetik-ui-vello
+stern-vello
   Vello renderer backend.
 
-kinetik-ui-winit
+stern-winit
   winit platform adapter.
 
-kinetik-ui-vello-winit
+stern-vello-winit
   Concrete Vello/winit window presenter, surface lifecycle, and recovery policy.
 
-kinetik-ui
+stern
   Facade crate.
 
-kinetik-ui-showcase
+stern-demo
   Component gallery, editor-layout examples, and visual regression surface.
 ```
 
-`kinetik-ui-core` must remain independent of renderer, windowing, and operating-system APIs.
+`stern-core` must remain independent of renderer, windowing, and operating-system APIs.
 
 ### Using the current source tree
 
-The crates are currently unpublished. From an application next to a Kinetik UI
+The crates are currently unpublished. From an application next to a Stern
 checkout, depend on the facade with a local path:
 
 ```toml
 [dependencies]
-kinetik-ui = { path = "../kinetik-ui/crates/kinetik-ui", features = ["vello-winit"] }
+stern = { path = "../stern/crates/stern", features = ["vello-winit"] }
 ```
 
 Then start from the prelude:
 
 ```rust
-use kinetik_ui::prelude::*;
+use stern::prelude::*;
 ```
 
 Use checkout-relative paths for lower-level integration boundaries as well:
 
 ```toml
 [dependencies]
-kinetik-ui-render = { path = "../kinetik-ui/crates/kinetik-ui-render" } # custom renderer contracts
-kinetik-ui-vello = { path = "../kinetik-ui/crates/kinetik-ui-vello" }   # Vello backend
-kinetik-ui-winit = { path = "../kinetik-ui/crates/kinetik-ui-winit" }   # winit platform adapter
-kinetik-ui-vello-winit = { path = "../kinetik-ui/crates/kinetik-ui-vello-winit" } # live presenter
+stern-render = { path = "../stern/crates/stern-render" } # custom renderer contracts
+stern-vello = { path = "../stern/crates/stern-vello" }   # Vello backend
+stern-winit = { path = "../stern/crates/stern-winit" }   # winit platform adapter
+stern-vello-winit = { path = "../stern/crates/stern-vello-winit" } # live presenter
 ```
 
 ### Future registry use
@@ -144,32 +144,32 @@ with exact prerelease requirements:
 
 ```toml
 [dependencies]
-kinetik-ui = { version = "=0.1.0-alpha.1", features = ["vello-winit"] }
+stern = { version = "=1.0.0-rc.2.dev", features = ["vello-winit"] }
 ```
 
 Lower-level registry dependencies would likewise use
-`=0.1.0-alpha.1`. Package dry-runs and generated-archive checks establish
+`=1.0.0-rc.2.dev`. Package dry-runs and generated-archive checks establish
 packageability only; they do not create a tag, publish a crate, or constitute
 alpha acceptance.
 
 The default facade stack includes the composite `vello-winit` feature. Its
-presenter remains qualified at `kinetik_ui::vello_winit` and is deliberately
+presenter remains qualified at `stern::vello_winit` and is deliberately
 absent from the prelude. The complete application-owned event-loop example at
-`kinetik-ui-vello-winit/examples/one_window.rs` creates a texture on the
+`stern-vello-winit/examples/one_window.rs` creates a texture on the
 presenter's device, updates it through GPU queue submissions, and composites it
 without a CPU snapshot or readback:
 
 ```text
-cargo run -p kinetik-ui-vello-winit --example one_window
+cargo run -p stern-vello-winit --example one_window
 ```
 
 The example recreates and re-registers its producer texture when the presenter
 reports a new device scope. This demonstrates GPU-copy interoperability; it is
 not a zero-copy claim.
 
-The `ef7c2f9` crate consolidation renamed the old `kinetik-ui-render-vello`
-crate to `kinetik-ui-vello` and the old `kinetik-ui-platform-winit` crate to
-`kinetik-ui-winit`. See [crate migration notes](docs/crate-migration.md).
+The `ef7c2f9` crate consolidation renamed the old `stern-render-vello`
+crate to `stern-vello` and the old `stern-platform-winit` crate to
+`stern-winit`. See [crate migration notes](docs/crate-migration.md).
 
 ## Documentation
 
@@ -201,8 +201,8 @@ GitHub Actions runs these checks on pull requests and pushes to `main`.
 
 ## License
 
-Kinetik UI is licensed under the [MIT License](LICENSE).
+Stern is licensed under the [MIT License](LICENSE).
 
-Bundled font assets in `crates/kinetik-ui-text/assets/fonts/` are licensed
+Bundled font assets in `crates/stern-text/assets/fonts/` are licensed
 separately under the SIL Open Font License 1.1; see
-`crates/kinetik-ui-text/assets/THIRD_PARTY.md`.
+`crates/stern-text/assets/THIRD_PARTY.md`.

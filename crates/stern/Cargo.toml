@@ -1,0 +1,29 @@
+[package]
+name = "stern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Application-facing facade for the Stern desktop toolkit"
+
+[features]
+default = ["platform-winit", "render-vello", "vello-winit"]
+platform-winit = ["dep:stern-winit"]
+render-vello = ["dep:stern-vello"]
+vello-winit = ["platform-winit", "render-vello", "dep:stern-vello-winit"]
+
+[dependencies]
+stern-core = { version = "=1.0.0-rc.2.dev", path = "../stern-core" }
+stern-render = { version = "=1.0.0-rc.2.dev", path = "../stern-render" }
+stern-text = { version = "=1.0.0-rc.2.dev", path = "../stern-text" }
+stern-widgets = { version = "=1.0.0-rc.2.dev", path = "../stern-widgets" }
+stern-winit = { version = "=1.0.0-rc.2.dev", path = "../stern-winit", optional = true }
+stern-vello = { version = "=1.0.0-rc.2.dev", path = "../stern-vello", optional = true }
+stern-vello-winit = { version = "=1.0.0-rc.2.dev", path = "../stern-vello-winit", optional = true }
+
+[lints]
+workspace = true

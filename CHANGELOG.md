@@ -1,11 +1,11 @@
 # Changelog
 
-All notable changes to Kinetik UI will be documented in this file. Categories
+All notable changes to Stern will be documented in this file. Categories
 follow the repository release policy.
 
 ## [Unreleased]
 
-`0.1.0-alpha.1` is the planned first prerelease. It has not been dated, tagged,
+`1.0.0-rc.2.dev` is the planned first prerelease. It has not been dated, tagged,
 published, or accepted as an alpha release.
 
 ### Changed
@@ -47,7 +47,7 @@ published, or accepted as an alpha release.
 - Added real-DX12 native-texture evidence for color/alpha, producer-handle
   lifetime, update/replace/remove, foreign-device validation, and recovery
   rebind, plus a runnable GPU producer and extracted package-consumer proof.
-- Added the Experimental `kinetik-ui-vello-winit` presenter boundary with a
+- Added the Experimental `stern-vello-winit` presenter boundary with a
   qualified facade feature, exact one-window acquire/render/blit/notify/present
   policy, zero-size handling, generation-scoped device borrowing, typed surface
   and device recovery, deterministic lifecycle evidence, and a runnable public

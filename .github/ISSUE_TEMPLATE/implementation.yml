@@ -1,5 +1,5 @@
 name: Implementation
-description: Implement a bounded area from the Kinetik UI specification.
+description: Implement a bounded area from the Stern specification.
 title: "feat(scope): "
 labels: ["implementation"]
 body:
@@ -60,7 +60,7 @@ body:
     attributes:
       label: Acceptance Criteria
       description: Define what must be true for the PR to be accepted.
-      placeholder: "- API is documented\n- Tests pass\n- No renderer/platform dependency is introduced into kinetik-ui-core"
+      placeholder: "- API is documented\n- Tests pass\n- No renderer/platform dependency is introduced into stern-core"
     validations:
       required: true
 

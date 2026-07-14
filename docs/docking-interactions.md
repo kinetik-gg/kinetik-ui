@@ -1,6 +1,6 @@
 # Docking Interactions
 
-Docking interactions are deterministic model operations in `kinetik-ui-widgets`.
+Docking interactions are deterministic model operations in `stern-widgets`.
 `Dock` owns frame arrangement, split ratios, tab merges, and split insertion.
 `Panel` remains passive content metadata.
 
@@ -10,8 +10,8 @@ Use solved splitter hit rectangles with the neutral draggable primitive. Feed th
 drag delta back into the dock model:
 
 ```rust
-use kinetik_ui_core::{Rect, Vec2};
-use kinetik_ui_widgets::{Dock, solve_dock_splitters};
+use stern_core::{Rect, Vec2};
+use stern_widgets::{Dock, solve_dock_splitters};
 
 fn drag_splitter(area: &mut Dock, bounds: Rect, drag_delta: Vec2) {
     let splitters = solve_dock_splitters(area, bounds, 6.0);
@@ -29,12 +29,12 @@ serializable dock tree used by `Dock::snapshot`.
 Frame chrome starts tab drags; panels do not own drag behavior:
 
 ```rust
-use kinetik_ui_core::Point;
-use kinetik_ui_widgets::{
+use stern_core::Point;
+use stern_widgets::{
     Dock, FrameId, PanelId, resolve_dock_drop_target, solve_dock_layout,
 };
 
-fn drop_tab(area: &mut Dock, bounds: kinetik_ui_core::Rect, pointer: Point) {
+fn drop_tab(area: &mut Dock, bounds: stern_core::Rect, pointer: Point) {
     let Some(drag) = area.begin_tab_drag(FrameId::from_raw(2), PanelId::from_raw(3)) else {
         return;
     };

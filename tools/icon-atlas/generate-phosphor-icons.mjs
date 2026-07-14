@@ -223,7 +223,7 @@ function writeRustMetadata({ outputRoot, atlases }) {
   ]);
 
   const typeLines = [];
-  typeLines.push("use kinetik_ui::core::{ImageId, Rect};");
+  typeLines.push("use stern::core::{ImageId, Rect};");
   typeLines.push("");
   typeLines.push("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
   typeLines.push("pub(crate) enum PhosphorIcon {");
@@ -335,10 +335,10 @@ function writeRustMetadata({ outputRoot, atlases }) {
 
 const args = parseArgs(process.argv);
 const sourceRoot = resolve(args.get("source") ?? join(TOOL_ROOT, "node_modules", "@phosphor-icons", "core"));
-const outputRoot = resolve(args.get("output") ?? "apps/kinetik-ui-showcase/assets/icons/phosphor");
+const outputRoot = resolve(args.get("output") ?? "apps/stern-demo/assets/icons/phosphor");
 const packageJson = JSON.parse(readFileSync(join(sourceRoot, "package.json"), "utf8"));
 mkdirSync(outputRoot, { recursive: true });
-const tmpRoot = join(tmpdir(), `kinetik-phosphor-${Date.now()}`);
+const tmpRoot = join(tmpdir(), `stern-phosphor-${Date.now()}`);
 mkdirSync(tmpRoot, { recursive: true });
 try {
   const atlases = [];
@@ -348,7 +348,7 @@ try {
     const atlasPath = join(outputRoot, `atlas-${physicalSize}.rgba`);
     const atlasPngPath = join(outputRoot, `atlas-${physicalSize}.png`);
     writeFileSync(atlasPath, atlas);
-    execFileSync("magick", ["-size", `${width}x${height}`, "-depth", "8", `rgba:${atlasPath}`, atlasPngPath], {
+    execFileSync("magick", ["-size", `${width}x${height}`, "-depth", "8", `rgba:${atlasPath}`, "-strip", atlasPngPath], {
       stdio: "inherit",
     });
     atlases.push({ physicalSize, width, height, rows });
@@ -359,4 +359,3 @@ try {
 } finally {
   rmSync(tmpRoot, { recursive: true, force: true });
 }
-

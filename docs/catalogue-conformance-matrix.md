@@ -2,7 +2,7 @@
 
 This matrix is the S14 review surface for restarted editor-toolkit S10-S13
 coverage. It summarizes the live data-only registry in
-`kinetik-ui-widgets::COMPONENT_CONFORMANCE_MATRIX` and points reviewers at the
+`stern-widgets::COMPONENT_CONFORMANCE_MATRIX` and points reviewers at the
 existing showcase fixtures that make the coverage inspectable.
 
 Conformance uses three statuses: `Stable` requires accepted behavioral evidence
@@ -61,11 +61,11 @@ Generate disposable CPU raster artifacts when a reviewer wants inspectable
 showcase output for this matrix:
 
 ```text
-cargo run -p kinetik-ui-showcase -- --dump-review-artifacts s14-s10-s13-matrix --width 1440 --height 900
+cargo run -p stern-demo -- --dump-review-artifacts s14-s10-s13-matrix --width 1440 --height 900
 ```
 
 The dump writes a `manifest.txt`, CPU raster BMP frames, and per-page
 `*-pixel-smoke.txt` summaries under
-`target/kinetik-ui-artifacts/kinetik-ui-showcase/review-dumps/`. These files are
+`target/stern-artifacts/stern-demo/review-dumps/`. These files are
 manual review artifacts only. Do not commit them as raster baselines, and do not
 add a bless/update workflow for this matrix.

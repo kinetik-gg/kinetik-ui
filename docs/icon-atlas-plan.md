@@ -12,7 +12,7 @@ categories, tags, versions, aliases, and codepoints. The package is MIT
 licensed.
 
 Phosphor is suitable as an asset source, not as a runtime renderer dependency.
-The Kinetik runtime should continue to consume backend-independent image
+The Stern runtime should continue to consume backend-independent image
 resources and atlas regions.
 
 ## Recommended Pipeline
@@ -40,7 +40,7 @@ guaranteed single draw call.
 
 - Do not render Phosphor SVG paths through Vello in normal UI frames.
 - Do not put SVG parsing, rasterization, or package-manager access in
-  `kinetik-ui-core`.
+  `stern-core`.
 - Do not start with duotone icons; they require layered color handling and can
   be a later extension.
 - Do not replace the renderer resource contract with Phosphor-specific types.

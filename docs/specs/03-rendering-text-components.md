@@ -1,6 +1,6 @@
-# Kinetik UI Specification: Rendering, Text, Components, And Surfaces
+# Stern Specification: Rendering, Text, Components, And Surfaces
 
-This file is part of the Kinetik UI architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
+This file is part of the Stern architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
 
 Contained sections: 15-22.
 

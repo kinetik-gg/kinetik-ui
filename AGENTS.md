@@ -1,13 +1,13 @@
 # AGENTS.md
 
-This file gives coding agents project-specific guidance for working on Kinetik UI.
+This file gives coding agents project-specific guidance for working on Stern.
 
 Follow [docs/specs.md](docs/specs.md) as the source of truth for architecture, terminology, and implementation sequencing.
 
 ## Operating Rules
 
 - Preserve the separation between core runtime, widgets, rendering, platform integration, and application/domain logic.
-- Keep `kinetik-ui-core` free of `winit`, `wgpu`, `vello`, OS APIs, and renderer-specific types.
+- Keep `stern-core` free of `winit`, `wgpu`, `vello`, OS APIs, and renderer-specific types.
 - Do not make components the lowest-level abstraction. Extract reusable behavior primitives first.
 - Do not hardcode visual behavior into interaction primitives.
 - Do not put application/domain behavior inside UI widgets.
@@ -289,7 +289,7 @@ A PR is review-ready when:
 - architecture boundaries from the spec are preserved
 - no unrelated files were reformatted or refactored
 - no heavy work is introduced into UI widget calls
-- no renderer/platform dependencies are introduced into `kinetik-ui-core`
+- no renderer/platform dependencies are introduced into `stern-core`
 
 Do not mark a PR review-ready if it knowingly violates these conditions.
 

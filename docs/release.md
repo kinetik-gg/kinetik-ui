@@ -1,6 +1,6 @@
 # Release Policy
 
-Kinetik UI uses SemVer and Conventional Commits.
+Stern uses SemVer and Conventional Commits.
 
 ## Versioning
 
@@ -13,7 +13,7 @@ MAJOR.MINOR.PATCH[-PRERELEASE]
 Examples:
 
 ```text
-0.1.0-alpha.1
+1.0.0-rc.2.dev
 0.2.0
 1.0.0
 1.1.3
@@ -22,11 +22,11 @@ Examples:
 Tags use a leading `v`:
 
 ```text
-v0.1.0-alpha.1
+v1.0.0-rc.2.dev
 v1.0.0
 ```
 
-The planned first package baseline is `0.1.0-alpha.1`. Alpha increments use
+The planned first package baseline is `1.0.0-rc.2.dev`. Alpha increments use
 `0.1.0-alpha.N`. A version in a manifest is package metadata, not evidence that
 the corresponding tag, registry release, or accepted alpha exists.
 
@@ -156,14 +156,14 @@ The showcase application is never published. The eight library crates must be
 packaged and, if separately authorized, published in this exact dependency
 order:
 
-1. `kinetik-ui-core`
-2. `kinetik-ui-text`
-3. `kinetik-ui-render`
-4. `kinetik-ui-widgets`
-5. `kinetik-ui-winit`
-6. `kinetik-ui-vello`
-7. `kinetik-ui-vello-winit`
-8. `kinetik-ui`
+1. `stern-core`
+2. `stern-text`
+3. `stern-render`
+4. `stern-widgets`
+5. `stern-winit`
+6. `stern-vello`
+7. `stern-vello-winit`
+8. `stern`
 
 Every internal dependency must contain both its local development `path` and
 the exact registry requirement for the shared prerelease version. The path is
@@ -175,7 +175,7 @@ generated archive and retains the exact version requirement.
 Generate archives in publish order from a clean release candidate. During a
 local audit, `--allow-dirty` may be used so the candidate diff itself can be
 validated; it is not appropriate evidence for the final clean release commit.
-Because downstream Kinetik UI prereleases do not yet exist on crates.io,
+Because downstream Stern prereleases do not yet exist on crates.io,
 archive generation uses `--no-verify` and is followed by a stronger explicit
 archive build:
 
@@ -187,21 +187,21 @@ dependency of the package being assembled. Supply those overrides with
 adds:
 
 ```text
---config patch.crates-io.kinetik-ui-core.path="crates/kinetik-ui-core"
+--config patch.crates-io.stern-core.path="crates/stern-core"
 ```
 
 Apply the same rule transitively to the remaining packages. With those local
 verification overrides in place, run the logical package sequence:
 
 ```text
-cargo package -p kinetik-ui-core --no-verify
-cargo package -p kinetik-ui-text --no-verify
-cargo package -p kinetik-ui-render --no-verify
-cargo package -p kinetik-ui-widgets --no-verify
-cargo package -p kinetik-ui-winit --no-verify
-cargo package -p kinetik-ui-vello --no-verify
-cargo package -p kinetik-ui-vello-winit --no-verify
-cargo package -p kinetik-ui --no-verify
+cargo package -p stern-core --no-verify
+cargo package -p stern-text --no-verify
+cargo package -p stern-render --no-verify
+cargo package -p stern-widgets --no-verify
+cargo package -p stern-winit --no-verify
+cargo package -p stern-vello --no-verify
+cargo package -p stern-vello-winit --no-verify
+cargo package -p stern --no-verify
 ```
 
 For every generated `.crate` archive:
@@ -214,7 +214,7 @@ For every generated `.crate` archive:
   paths;
 - build every extracted crate with all targets and features from a disposable
   verification workspace whose `[patch.crates-io]` entries point to the
-  extracted Kinetik UI packages.
+  extracted Stern packages.
 
 The temporary patch table simulates dependency availability without claiming
 that the crates are published. Remove or ignore all extracted files and target

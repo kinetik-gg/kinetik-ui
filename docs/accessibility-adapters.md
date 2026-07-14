@@ -1,6 +1,6 @@
 # Accessibility Adapter Boundary
 
-Kinetik UI exports accessibility data as a validated semantic snapshot. The
+Stern exports accessibility data as a validated semantic snapshot. The
 snapshot is backend-neutral: it contains roles, labels, descriptions, logical
 bounds, state, values, actions, parent links, child order, focus order, and the
 currently focused widget when that widget is focusable.
@@ -14,7 +14,7 @@ Applications build semantic nodes during a frame and export a snapshot after the
 frame is finalized:
 
 ```rust
-use kinetik_ui_core::{
+use stern_core::{
     AccessibilityAdapter, FrameOutput, SemanticTreeError, UiMemory,
 };
 
@@ -44,18 +44,18 @@ Invalid semantic trees remain core runtime diagnostics. `Ui::end_frame()` adds a
 
 ## Winit Boundary
 
-`kinetik-ui-winit` provides `WinitAccessibilityUpdate` as the first platform
+`stern-winit` provides `WinitAccessibilityUpdate` as the first platform
 handoff type:
 
 ```rust
-use kinetik_ui_winit::WinitAccessibilityUpdate;
+use stern_winit::WinitAccessibilityUpdate;
 
 let update = WinitAccessibilityUpdate::from_frame_output(&output, memory.focused())?;
 ```
 
 The update is still OS-service-free. A Windows, macOS, Linux, or test adapter can
 translate `update.snapshot` into native accessibility objects without pulling OS
-accessibility crates into `kinetik-ui-core`.
+accessibility crates into `stern-core`.
 
 ## Adapter Rules
 

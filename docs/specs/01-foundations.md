@@ -1,12 +1,12 @@
-# Kinetik UI Specification: Foundations
+# Stern Specification: Foundations
 
-This file is part of the Kinetik UI architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
+This file is part of the Stern architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
 
 Contained sections: 1-10.
 
 ## 1. Purpose
 
-Kinetik UI is a reusable Rust UI toolkit for building fast, consistent, editor-style desktop applications.
+Stern is a reusable Rust UI toolkit for building fast, consistent, editor-style desktop applications.
 
 The toolkit is designed for applications with dense tool surfaces, panels, media viewports, inspectors, tables, timelines, property grids, action bars, command palettes, and docked editor regions.
 
@@ -80,7 +80,7 @@ The system is divided into layers:
 Application
   Owns business state, documents, tools, commands, processing jobs, and domain renderers.
 
-Kinetik UI Runtime
+Stern Runtime
   Owns frame lifecycle, input normalization, layout, widget identity,
   UI memory, hit testing, focus, active/hover state, action dispatch,
   semantic nodes, and draw list generation.
@@ -110,7 +110,7 @@ The intended high-level frame flow is:
 OS/window events
   -> platform adapter
   -> normalized UI input
-  -> Kinetik UI frame
+  -> Stern frame
   -> application builds UI top-down
   -> layout + interaction + draw primitives + semantic nodes
   -> consume one owned platform batch and execute ordered shell work once
@@ -126,62 +126,62 @@ input is cleared so they become ordered input for exactly the next frame.
 
 ## 4. Crate Layout
 
-The crate graph should derive from the `kinetik-ui` name and preserve clean dependency boundaries.
+The crate graph should derive from the `stern` name and preserve clean dependency boundaries.
 
 Recommended crates:
 
 ```text
-kinetik-ui-core
+stern-core
   Pure core types and runtime concepts.
   No winit, no wgpu, no vello, no platform-specific dependencies.
 
-kinetik-ui-widgets
-  Core components and editor patterns built from kinetik-ui-core.
+stern-widgets
+  Core components and editor patterns built from stern-core.
 
-kinetik-ui-render
+stern-render
   Renderer traits, render primitive types, resource handles,
   and backend-independent rendering contracts.
 
-kinetik-ui-vello
+stern-vello
   First 2D renderer backend using Vello.
 
-kinetik-ui-winit
+stern-winit
   winit platform adapter, event normalization, window integration,
   cursor mapping, redraw scheduling, and DPI handling.
 
-kinetik-ui-vello-winit
+stern-vello-winit
   Concrete one-window integration owning the Vello/wgpu surface, current
   device/queue, presentation order, and recovery policy. It does not own the
   event loop, input, shell requests, or application state.
 
-kinetik-ui
+stern
   Facade crate that re-exports the common application stack.
 
-kinetik-ui-showcase
+stern-demo
   Showcase application and visual regression target.
 ```
 
 Dependency direction:
 
 ```text
-kinetik-ui-core <- kinetik-ui-widgets
-kinetik-ui-core <- kinetik-ui-render <- kinetik-ui-vello
-kinetik-ui-core <- kinetik-ui-winit
-(kinetik-ui-core, kinetik-ui-render, kinetik-ui-vello)
-  <- kinetik-ui-vello-winit
-(all public library layers) <- kinetik-ui
+stern-core <- stern-widgets
+stern-core <- stern-render <- stern-vello
+stern-core <- stern-winit
+(stern-core, stern-render, stern-vello)
+  <- stern-vello-winit
+(all public library layers) <- stern
 ```
 
-`kinetik-ui-core` must remain platform-independent.
+`stern-core` must remain platform-independent.
 
 The UI runtime must not depend directly on Vello, wgpu, winit, or OS APIs.
 
 Renderer backends must not know about component types such as `Button`, `Tabs`, or `PropertyGrid`. They should only consume render primitives and resources.
 
-Application code should normally depend on the `kinetik-ui` facade crate. Custom
-renderers should depend on `kinetik-ui-render`, Vello integrations on
-`kinetik-ui-vello`, winit shells on `kinetik-ui-winit`, and the accepted live
-Vello window path on `kinetik-ui-vello-winit`. The concrete presenter uses
+Application code should normally depend on the `stern` facade crate. Custom
+renderers should depend on `stern-render`, Vello integrations on
+`stern-vello`, winit shells on `stern-winit`, and the accepted live
+Vello window path on `stern-vello-winit`. The concrete presenter uses
 Winit directly but does not depend on the input/shell adapter merely to share a
 windowing library. Breaking crate graph changes require migration notes; the
 `ef7c2f9` consolidation and later presenter addition are documented in
@@ -247,7 +247,7 @@ Avoid interchangeable synonyms unless a distinction is intentionally specified.
 
 ## 6. Frame Lifecycle
 
-Kinetik UI uses an immediate-style API with retained UI memory.
+Stern uses an immediate-style API with retained UI memory.
 
 The application builds the UI top-down each frame. Widgets are called during this pass. Stateful widgets use stable IDs to retrieve and update retained UI memory.
 
@@ -598,7 +598,7 @@ Debug policy:
 
 Application state belongs to the application.
 
-UI memory belongs to Kinetik UI.
+UI memory belongs to Stern.
 
 Application state examples:
 
