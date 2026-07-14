@@ -34,7 +34,7 @@ body:
     attributes:
       label: Impacted Areas
       description: List crates, APIs, tests, or examples likely affected.
-      placeholder: "kinetik-ui-core action types; shortcut routing tests; command palette examples."
+      placeholder: "stern-core action types; shortcut routing tests; command palette examples."
     validations:
       required: true
 

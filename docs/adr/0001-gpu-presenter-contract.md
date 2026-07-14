@@ -19,7 +19,7 @@ path binds a domain-owned GPU resource to that ID.
 
 The alpha path must let video, 3D, and image-processing renderers keep content
 GPU-resident without putting Winit, wgpu, Vello, or operating-system objects in
-`kinetik-ui-core` or `kinetik-ui-render`. It must also preserve the accepted
+`stern-core` or `stern-render`. It must also preserve the accepted
 one-frame platform-request contract: presentation recovery may request another
 frame, but it may not execute or replay shell work.
 
@@ -44,12 +44,12 @@ Pinned Vello 0.9 constrains the first implementation:
 ### Layer and crate boundary
 
 The supported live integration will be implemented in a new concrete
-`kinetik-ui-vello-winit` crate. It may depend on `kinetik-ui-vello`,
-`kinetik-ui-winit`, Winit, Vello, and wgpu. No lower layer depends back on it.
+`stern-vello-winit` crate. It may depend on `stern-vello`,
+`stern-winit`, Winit, Vello, and wgpu. No lower layer depends back on it.
 We will not introduce a backend-neutral presenter trait until a second live
 renderer backend demonstrates the common contract.
 
-`kinetik-ui-vello::VelloRenderer` remains the scene translator/encoder. It does
+`stern-vello::VelloRenderer` remains the scene translator/encoder. It does
 not own windows, devices, queues, surfaces, or an event loop. The application
 continues to own `ApplicationHandler`, UI/domain state, frame construction,
 input normalization, shell request execution, and repaint scheduling.
@@ -61,7 +61,7 @@ input normalization, shell request execution, and repaint scheduling.
 | `VelloRenderer` scene backend | Backend-local scene translation, encoding, CPU image compatibility cache | Window, surface, device, queue, event loop |
 | Domain renderer | Video/image/3D processing and producer resources created on the presenter's current device | UI placement, hit routing, overlays, presenter recovery |
 | Core and neutral render crates | Stable IDs, primitives, metadata, CPU snapshots, diagnostics | Winit, wgpu, Vello, OS handles, native synchronization objects |
-| `kinetik-ui-winit` | Event normalization and platform/shell/repaint adapters | Vello or GPU presentation |
+| `stern-winit` | Event normalization and platform/shell/repaint adapters | Vello or GPU presentation |
 
 ### Presenter and device ownership
 
@@ -148,7 +148,7 @@ replace or removal.
 ### Format, color, and alpha
 
 Vello directly documents `Rgba8Unorm`, `COPY_SRC`, same-renderer use, atlas
-copy, and straight alpha. Kinetik deliberately narrows the alpha contract to a
+copy, and straight alpha. Stern deliberately narrows the alpha contract to a
 full two-dimensional base-mip/base-layer texture with one sample and one mip.
 
 RGB texel values carry the toolkit's sRGB-encoded numeric payload and alpha is

@@ -1,7 +1,7 @@
 # Provisional Public API Policy
 
 This document freezes an inventory, not the final alpha API. The current
-`kinetik-ui` facade and default prelude are **provisional Experimental** during
+`stern` facade and default prelude are **provisional Experimental** during
 pre-alpha development. Prelude inclusion is a convenience decision and
 never implies Stable conformance. Candidate-for-alpha-stable is a separate
 product decision from conformance status.
@@ -11,22 +11,22 @@ inspector, outliner, asset browser, and system-feedback surfaces. Final facade
 and prelude curation remains open; no tag, package publication, deployment,
 release, or alpha-readiness claim follows from the current implementation.
 
-The application-facing native texture API is qualified-only; none of its symbols are exported by `kinetik_ui::prelude`.
+The application-facing native texture API is qualified-only; none of its symbols are exported by `stern::prelude`.
 
-- `kinetik_ui::vello_winit::VelloNativeTextureRegistration`
-- `kinetik_ui::vello_winit::VelloNativeTextureUpdateOutcome`
-- `kinetik_ui::vello_winit::VelloNativeTextureValidationError`
-- `kinetik_ui::vello_winit::VelloWindowPresenter::register_native_texture`
-- `kinetik_ui::vello_winit::VelloWindowPresenter::update_native_texture`
-- `kinetik_ui::vello_winit::VelloWindowPresenter::replace_native_texture`
-- `kinetik_ui::vello_winit::VelloWindowPresenter::remove_native_texture`
-- `kinetik_ui::vello_winit::VelloPresenterError::{NativeTextureAlreadyRegistered, NativeTextureNotRegistered, StaleNativeTextureRegistration, NativeTextureRevisionRegressed, InvalidNativeTexture, NativeTextureGenerationExhausted}`
-- `kinetik_ui::vello_winit::VelloNativeTextureValidationError::{ResourceIdMismatch, ZeroExtent, NonIntegralResourceExtent, ResourceExtentMismatch, UnsupportedFormat, MissingCopySourceUsage, UnsupportedDimension, UnsupportedArrayLayers, UnsupportedMipLevels, UnsupportedSampleCount}`
-- `kinetik_ui::render_vello::VelloNativeTextureRegistry`
-- `kinetik_ui::render_vello::VelloNativeTextureScope`
-- `kinetik_ui::render_vello::VelloNativeTextureScope::new`
-- `kinetik_ui::render_vello::VelloNativeTextureRegistry::{new, begin_native_texture_update, stage_native_texture, dirty_native_texture, replace_native_texture_image, retire_native_texture, commit_native_texture, clear_native_textures}`
-- `kinetik_ui::render_vello::VelloRenderer::submit_frame_with_native_textures`
+- `stern::vello_winit::VelloNativeTextureRegistration`
+- `stern::vello_winit::VelloNativeTextureUpdateOutcome`
+- `stern::vello_winit::VelloNativeTextureValidationError`
+- `stern::vello_winit::VelloWindowPresenter::register_native_texture`
+- `stern::vello_winit::VelloWindowPresenter::update_native_texture`
+- `stern::vello_winit::VelloWindowPresenter::replace_native_texture`
+- `stern::vello_winit::VelloWindowPresenter::remove_native_texture`
+- `stern::vello_winit::VelloPresenterError::{NativeTextureAlreadyRegistered, NativeTextureNotRegistered, StaleNativeTextureRegistration, NativeTextureRevisionRegressed, InvalidNativeTexture, NativeTextureGenerationExhausted}`
+- `stern::vello_winit::VelloNativeTextureValidationError::{ResourceIdMismatch, ZeroExtent, NonIntegralResourceExtent, ResourceExtentMismatch, UnsupportedFormat, MissingCopySourceUsage, UnsupportedDimension, UnsupportedArrayLayers, UnsupportedMipLevels, UnsupportedSampleCount}`
+- `stern::render_vello::VelloNativeTextureRegistry`
+- `stern::render_vello::VelloNativeTextureScope`
+- `stern::render_vello::VelloNativeTextureScope::new`
+- `stern::render_vello::VelloNativeTextureRegistry::{new, begin_native_texture_update, stage_native_texture, dirty_native_texture, replace_native_texture_image, retire_native_texture, commit_native_texture, clear_native_textures}`
+- `stern::render_vello::VelloRenderer::submit_frame_with_native_textures`
 
 An API may be classified Stable only after accepted behavioral evidence proves
 every capability axis required by that API: Model, Paint, Input,
@@ -53,21 +53,21 @@ public vertical slice.
 
 ## Exact Default Prelude
 
-Every symbol currently re-exported from `kinetik_ui::prelude` appears below.
+Every symbol currently re-exported from `stern::prelude` appears below.
 The classification and promotion decisions apply to the whole named group;
 individual members may require narrower or additional evidence at final
 curation.
 
 | Group | Current classification | Canonical path for new code | Public workflow use | Promotion prerequisite |
 | --- | --- | --- | --- | --- |
-| Facade state | Provisional Experimental | `kinetik_ui::UiState` or `kinetik_ui::prelude::UiState` | Yes: retained application state | Public frame lifecycle, shaped-text resource registration, and presenter workflow proof |
-| Core | Provisional Experimental | `kinetik_ui::core`; current common subset is also in `kinetik_ui::prelude` | Yes: runtime, input, actions, semantics, theme, and primitives | Accepted behavioral evidence for every required axis, including action/input and semantic-output proof |
-| Text | Provisional Experimental | `kinetik_ui::text`; current common subset is also in `kinetik_ui::prelude` | Yes: desktop text editing and shaped layout storage | Text editing, shaping, clipboard/IME, lifecycle, and public workflow proof required by the selected types |
-| Render | Provisional Experimental | `kinetik_ui::render`; current common subset is also in `kinetik_ui::prelude` | Yes: backend-independent frame and resource contract | Presenter, resource-lifetime, diagnostic, and external-texture workflow proof |
-| Winit | Provisional Experimental, feature-gated | `kinetik_ui::platform_winit` | Yes: supported window and platform loop | Winit input, IME/clipboard/cursor/platform-request, accessibility boundary, and redraw-loop proof; no new prelude exports before presenter proof |
-| Vello | Provisional Experimental, feature-gated | `kinetik_ui::render_vello` | Yes: supported 2D backend and presenter | Surface acquisition/recovery, resize/scale, presentation, diagnostics, and Vello-backed workflow proof; no new prelude exports before presenter proof |
-| Vello/Winit presenter | Provisional Experimental, feature-gated, qualified only | `kinetik_ui::vello_winit` | Yes: supported one-window live presenter | Real-GPU and packaged-example evidence exists; access remains qualified only, and no presenter item enters the prelude |
-| Widgets | Provisional Experimental | Common composition path: `kinetik_ui::widgets`; advanced APIs use the qualified modules listed below | Yes: controls and viewport surface; exact final subset deferred | Measured containers and qualified painted overlay, chrome, and collection seams are implemented; no prelude promotion, and public live-workflow evidence remains required |
+| Facade state | Provisional Experimental | `stern::UiState` or `stern::prelude::UiState` | Yes: retained application state | Public frame lifecycle, shaped-text resource registration, and presenter workflow proof |
+| Core | Provisional Experimental | `stern::core`; current common subset is also in `stern::prelude` | Yes: runtime, input, actions, semantics, theme, and primitives | Accepted behavioral evidence for every required axis, including action/input and semantic-output proof |
+| Text | Provisional Experimental | `stern::text`; current common subset is also in `stern::prelude` | Yes: desktop text editing and shaped layout storage | Text editing, shaping, clipboard/IME, lifecycle, and public workflow proof required by the selected types |
+| Render | Provisional Experimental | `stern::render`; current common subset is also in `stern::prelude` | Yes: backend-independent frame and resource contract | Presenter, resource-lifetime, diagnostic, and external-texture workflow proof |
+| Winit | Provisional Experimental, feature-gated | `stern::platform_winit` | Yes: supported window and platform loop | Winit input, IME/clipboard/cursor/platform-request, accessibility boundary, and redraw-loop proof; no new prelude exports before presenter proof |
+| Vello | Provisional Experimental, feature-gated | `stern::render_vello` | Yes: supported 2D backend and presenter | Surface acquisition/recovery, resize/scale, presentation, diagnostics, and Vello-backed workflow proof; no new prelude exports before presenter proof |
+| Vello/Winit presenter | Provisional Experimental, feature-gated, qualified only | `stern::vello_winit` | Yes: supported one-window live presenter | Real-GPU and packaged-example evidence exists; access remains qualified only, and no presenter item enters the prelude |
+| Widgets | Provisional Experimental | Common composition path: `stern::widgets`; advanced APIs use the qualified modules listed below | Yes: controls and viewport surface; exact final subset deferred | Measured containers and qualified painted overlay, chrome, and collection seams are implemented; no prelude promotion, and public live-workflow evidence remains required |
 
 ### Facade state inventory
 
@@ -161,7 +161,7 @@ These exports are present when the `render-vello` feature is enabled:
 
 ### Vello/Winit presenter inventory
 
-These qualified exports are present at `kinetik_ui::vello_winit` when the
+These qualified exports are present at `stern::vello_winit` when the
 `vello-winit` feature is enabled. None is re-exported from the prelude:
 
 - `VelloWindowPresenter`
@@ -198,23 +198,23 @@ These qualified exports are present at `kinetik_ui::vello_winit` when the
 New documentation and examples use these qualified modules:
 
 ```rust
-use kinetik_ui::widgets::{
+use stern::widgets::{
     asset_browser, chrome, collection_actions, collections, dock, inline_edit,
     inspector, node_graph, outliner, overlays, taxonomy, timeline, viewport,
 };
 ```
 
-Existing root compatibility items under `kinetik_ui::widgets`, such as
-`kinetik_ui::widgets::Dock`, remain source-compatible but are
+Existing root compatibility items under `stern::widgets`, such as
+`stern::widgets::Dock`, remain source-compatible but are
 noncanonical for new documentation and examples. Their canonical advanced
-form is `kinetik_ui::widgets::dock::Dock`, and the same module-qualified rule
+form is `stern::widgets::dock::Dock`, and the same module-qualified rule
 applies to every module above. `node_graph` and `timeline` remain Experimental
 and deferred from the supported alpha vertical slice unless later behavioral
 evidence changes that decision.
 
 Platform and renderer implementations stay qualified under
-`kinetik_ui::platform_winit`, `kinetik_ui::render_vello`, and
-`kinetik_ui::vello_winit`. Existing platform/Vello prelude compatibility
+`stern::platform_winit`, `stern::render_vello`, and
+`stern::vello_winit`. Existing platform/Vello prelude compatibility
 exports remain intact, while the presenter stays qualified-only until the
 final API review.
 
@@ -222,16 +222,16 @@ Future changes may add new qualified APIs when a subsystem needs them. Any
 prelude expansion requires an explicit policy decision plus accepted evidence;
 final narrowing waits for the complete public-workflow and release evidence.
 
-The qualified `kinetik_ui::widgets::overlays` API provides scene,
+The qualified `stern::widgets::overlays` API provides scene,
 navigation, paint, input, action-intent, and semantic contract. It does not add
 overlay symbols to the default prelude. Menu-bar trigger/overflow painting was
 delivered by the public editor chrome and is exercised by the Showcase.
 
-The qualified `kinetik_ui::widgets::chrome` API provides overflow and
+The qualified `stern::widgets::chrome` API provides overflow and
 scene contracts plus their public `Ui` paint/input/semantic integration. It
 does not add chrome symbols to the default prelude.
 
-The qualified `kinetik_ui::widgets::collections` API provides navigation,
+The qualified `stern::widgets::collections` API provides navigation,
 virtual-list, virtual-tree, and virtual-table contracts plus public `Ui`
 paint/input/semantic integration. These symbols remain outside the default
 prelude pending final API review.

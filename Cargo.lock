@@ -1011,92 +1011,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
-name = "kinetik-ui"
-version = "0.1.0-alpha.1"
-dependencies = [
- "kinetik-ui-core",
- "kinetik-ui-render",
- "kinetik-ui-text",
- "kinetik-ui-vello",
- "kinetik-ui-vello-winit",
- "kinetik-ui-widgets",
- "kinetik-ui-winit",
-]
-
-[[package]]
-name = "kinetik-ui-core"
-version = "0.1.0-alpha.1"
-
-[[package]]
-name = "kinetik-ui-render"
-version = "0.1.0-alpha.1"
-dependencies = [
- "kinetik-ui-core",
- "kinetik-ui-text",
-]
-
-[[package]]
-name = "kinetik-ui-showcase"
-version = "0.1.0-alpha.1"
-dependencies = [
- "ab_glyph",
- "kinetik-ui",
- "pollster",
- "vello",
- "winit",
-]
-
-[[package]]
-name = "kinetik-ui-text"
-version = "0.1.0-alpha.1"
-dependencies = [
- "cosmic-text",
- "kinetik-ui-core",
- "unicode-segmentation",
-]
-
-[[package]]
-name = "kinetik-ui-vello"
-version = "0.1.0-alpha.1"
-dependencies = [
- "kinetik-ui-core",
- "kinetik-ui-render",
- "kinetik-ui-text",
- "vello",
-]
-
-[[package]]
-name = "kinetik-ui-vello-winit"
-version = "0.1.0-alpha.1"
-dependencies = [
- "kinetik-ui-core",
- "kinetik-ui-render",
- "kinetik-ui-vello",
- "pollster",
- "vello",
- "winit",
-]
-
-[[package]]
-name = "kinetik-ui-widgets"
-version = "0.1.0-alpha.1"
-dependencies = [
- "kinetik-ui-core",
- "kinetik-ui-text",
-]
-
-[[package]]
-name = "kinetik-ui-winit"
-version = "0.1.0-alpha.1"
-dependencies = [
- "arboard",
- "kinetik-ui-core",
- "url",
- "webbrowser",
- "winit",
-]
-
-[[package]]
 name = "kurbo"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2200,6 +2114,88 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "stern"
+version = "1.0.0-rc.2.dev"
+dependencies = [
+ "stern-core",
+ "stern-render",
+ "stern-text",
+ "stern-vello",
+ "stern-vello-winit",
+ "stern-widgets",
+ "stern-winit",
+]
+
+[[package]]
+name = "stern-core"
+version = "1.0.0-rc.2.dev"
+
+[[package]]
+name = "stern-demo"
+version = "1.0.0-rc.2.dev"
+dependencies = [
+ "stern",
+]
+
+[[package]]
+name = "stern-render"
+version = "1.0.0-rc.2.dev"
+dependencies = [
+ "stern-core",
+ "stern-text",
+]
+
+[[package]]
+name = "stern-text"
+version = "1.0.0-rc.2.dev"
+dependencies = [
+ "cosmic-text",
+ "stern-core",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "stern-vello"
+version = "1.0.0-rc.2.dev"
+dependencies = [
+ "stern-core",
+ "stern-render",
+ "stern-text",
+ "vello",
+]
+
+[[package]]
+name = "stern-vello-winit"
+version = "1.0.0-rc.2.dev"
+dependencies = [
+ "pollster",
+ "stern-core",
+ "stern-render",
+ "stern-vello",
+ "vello",
+ "winit",
+]
+
+[[package]]
+name = "stern-widgets"
+version = "1.0.0-rc.2.dev"
+dependencies = [
+ "stern-core",
+ "stern-text",
+]
+
+[[package]]
+name = "stern-winit"
+version = "1.0.0-rc.2.dev"
+dependencies = [
+ "arboard",
+ "stern-core",
+ "url",
+ "webbrowser",
+ "winit",
+]
 
 [[package]]
 name = "strict-num"

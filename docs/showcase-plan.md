@@ -1,6 +1,6 @@
 # Showcase App Plan
 
-The showcase app is the proof surface for Kinetik UI. It should feel like a
+The showcase app is the proof surface for Stern. It should feel like a
 small editor workbench built from the toolkit, not a marketing page and not a
 bag of decorative primitives.
 
@@ -31,7 +31,7 @@ explicit non-goals. Fixture reachability alone remains metadata-only evidence.
 
 ## Implementation Rules
 
-- Use `kinetik-ui` as the app dependency and import toolkit layers through the
+- Use `stern` as the app dependency and import toolkit layers through the
   facade.
 - Keep custom drawing helpers limited to shell chrome, labels, and diagnostic
   visuals that do not exist as widgets yet.
@@ -66,7 +66,7 @@ Required local checks before showcase changes are review-ready:
 
 ```text
 cargo fmt --all -- --check
-cargo test -p kinetik-ui-showcase --all-features
+cargo test -p stern-demo --all-features
 cargo test --workspace --all-features
 cargo build --workspace --all-features
 cargo check --workspace --examples --all-features
@@ -79,11 +79,11 @@ For review packages that need inspectable CPU raster artifacts without invoking 
 GPU renderer, generate an explicit review dump:
 
 ```text
-cargo run -p kinetik-ui-showcase -- --dump-review-artifacts review-label --page components --width 1440 --height 900
+cargo run -p stern-demo -- --dump-review-artifacts review-label --page components --width 1440 --height 900
 ```
 
 Review dumps are written under
-`target/kinetik-ui-artifacts/kinetik-ui-showcase/review-dumps/` and include a
+`target/stern-artifacts/stern-demo/review-dumps/` and include a
 `manifest.txt`, CPU raster BMP frames, and `<page>-pixel-smoke.txt` summaries for
 the selected page, or all showcase pages when `--page` is omitted. Pixel-smoke
 summaries record dimensions, total pixels, visible variation, non-first-pixel

@@ -1,0 +1,21 @@
+[package]
+name = "stern-winit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Winit platform adapter for Stern"
+
+[dependencies]
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+stern-core = { version = "=1.0.0-rc.2.dev", path = "../stern-core" }
+url = "2.5.8"
+webbrowser = { version = "1.2.1", default-features = false, features = ["hardened"] }
+winit = "0.30.12"
+
+[lints]
+workspace = true

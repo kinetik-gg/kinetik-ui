@@ -1,23 +1,23 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/kinetik-ui",
-    "crates/kinetik-ui-core",
-    "crates/kinetik-ui-render",
-    "crates/kinetik-ui-text",
-    "crates/kinetik-ui-vello",
-    "crates/kinetik-ui-vello-winit",
-    "crates/kinetik-ui-widgets",
-    "crates/kinetik-ui-winit",
-    "apps/kinetik-ui-showcase",
+    "crates/stern",
+    "crates/stern-core",
+    "crates/stern-render",
+    "crates/stern-text",
+    "crates/stern-vello",
+    "crates/stern-vello-winit",
+    "crates/stern-widgets",
+    "crates/stern-winit",
+    "apps/stern-demo",
 ]
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "1.0.0-rc.2.dev"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
-repository = "https://github.com/kinetik-gg/kinetik-ui"
+repository = "https://github.com/kinetik-gg/stern"
 readme = "README.md"
 keywords = ["ui", "gui", "desktop", "editor", "graphics"]
 categories = ["gui", "graphics", "rendering"]

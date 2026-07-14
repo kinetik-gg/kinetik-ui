@@ -1,16 +1,16 @@
 # Rust UI Conformance Methodology
 
-This policy defines how Kinetik UI may use external Rust UI toolkits as references for future tests, harness APIs, and renderer contracts.
+This policy defines how Stern may use external Rust UI toolkits as references for future tests, harness APIs, and renderer contracts.
 
 ## Authority
 
-Local Kinetik documents are authoritative, in this order:
+Local Stern documents are authoritative, in this order:
 
 1. `AGENTS.md`
 2. `docs/specs.md`
 3. `docs/render-snapshots.md`
 
-External references are subordinate. If an external observation conflicts with Kinetik terminology, crate boundaries, renderer strategy, semantic model, testing expectations, or component philosophy, Kinetik wins and the observation is rejected or rewritten as a Kinetik-owned invariant.
+External references are subordinate. If an external observation conflicts with Stern terminology, crate boundaries, renderer strategy, semantic model, testing expectations, or component philosophy, Stern wins and the observation is rejected or rewritten as a Stern-owned invariant.
 
 ## Scope
 
@@ -32,7 +32,7 @@ Blender, Godot, Roblox Studio, Adobe apps, Houdini, and other product applicatio
 - Keep reference-policy work separate from harness, widget, renderer, and other
   behavior changes.
 - Do not vendor external repositories or generated test data.
-- Do not make external references authoritative over Kinetik's spec.
+- Do not make external references authoritative over Stern's spec.
 - Do not use a license-ambiguous reference as implementation material.
 - Do not turn first-wave conformance work into Blender or product-app UI research.
 
@@ -42,7 +42,7 @@ Every reference-derived task must use this chain:
 
 ```text
 reference observation
--> Kinetik invariant
+-> Stern invariant
 -> target subsystem
 -> likely test/harness form
 -> acceptance signal
@@ -65,11 +65,11 @@ Rejected observations:
 - Source snippets.
 - Exact API signatures to reproduce.
 - Visual recipes or component styling.
-- Behavior that exists only because of another toolkit's architecture and has no Kinetik invariant.
+- Behavior that exists only because of another toolkit's architecture and has no Stern invariant.
 
-### 2. Kinetik Invariant
+### 2. Stern Invariant
 
-Rewrite the observation as a Kinetik-owned rule anchored in `docs/specs.md`.
+Rewrite the observation as a Stern-owned rule anchored in `docs/specs.md`.
 
 Examples:
 
@@ -84,12 +84,12 @@ Choose one subsystem. Do not mix unrelated layers in one task.
 
 Common targets:
 
-- `kinetik-ui-core`: geometry, DPI, input, IDs, memory, layout, interaction, actions, semantics, redraw scheduling.
-- `kinetik-ui-widgets`: components composed from Kinetik behavior primitives, theme recipes, render primitives, and semantic nodes.
-- `kinetik-ui-render`: backend-neutral primitives, resources, renderer contracts, deterministic resource snapshots.
-- `kinetik-ui-vello`: Vello translation snapshots and backend diagnostics.
-- `kinetik-ui-winit`: event normalization, platform requests, accessibility handoff, redraw scheduling.
-- `apps/kinetik-ui-showcase`: later visual smoke coverage only, using ordinary public APIs.
+- `stern-core`: geometry, DPI, input, IDs, memory, layout, interaction, actions, semantics, redraw scheduling.
+- `stern-widgets`: components composed from Stern behavior primitives, theme recipes, render primitives, and semantic nodes.
+- `stern-render`: backend-neutral primitives, resources, renderer contracts, deterministic resource snapshots.
+- `stern-vello`: Vello translation snapshots and backend diagnostics.
+- `stern-winit`: event normalization, platform requests, accessibility handoff, redraw scheduling.
+- `apps/stern-demo`: later visual smoke coverage only, using ordinary public APIs.
 
 ### 4. Test Or Harness Form
 
@@ -99,10 +99,10 @@ Use these forms before pixel tests:
 
 - Unit tests for finite geometry, DPI, layout, IDs, hit testing, interaction transitions, action dispatch, shortcut routing, virtualization, text editing state, viewport conversion, and redraw scheduling.
 - Harness event simulation for pointer, keyboard, text, time, focus, and accessibility-like inputs.
-- Semantic queries over Kinetik `SemanticTree` or `AccessibilitySnapshot`.
+- Semantic queries over Stern `SemanticTree` or `AccessibilitySnapshot`.
 - Primitive snapshots for generated backend-independent draw lists.
 - `RenderResources::snapshot()` for deterministic resource inventories.
-- `kinetik-ui-vello::render_translation_snapshot` for Vello command streams.
+- `stern-vello::render_translation_snapshot` for Vello command streams.
 - Structured renderer assertions when a command snapshot cannot prove the contract.
 
 Pixel snapshots are last-resort showcase smoke coverage. They must not become the default conformance signal.
@@ -130,17 +130,17 @@ Every reference-derived task must say what is not being adopted.
 Required cautions:
 
 - egui / egui_kittest: use harness ergonomics as inspiration only; do not mirror egui immediate-mode API shape, visuals, or snapshot storage layout.
-- kittest: use semantic-query goals as inspiration only; Kinetik queries must target Kinetik semantic snapshots and must not require adopting AccessKit in core.
+- kittest: use semantic-query goals as inspiration only; Stern queries must target Stern semantic snapshots and must not require adopting AccessKit in core.
 - Masonry / Xilem: use headless harness and controlled-event ideas only; do not adopt retained-tree architecture, pass scheduling, or renderer internals.
-- Iced: use state/message/update separation as an action-boundary reference only; do not force Kinetik widgets into Iced's application architecture.
+- Iced: use state/message/update separation as an action-boundary reference only; do not force Stern widgets into Iced's application architecture.
 - Slint: use only public test taxonomy or scenario ideas after license review. Slint's licensing includes GPLv3, royalty-free, and commercial options with platform-specific constraints; do not copy code, examples, generated artifacts, visual design, or license-dependent assets.
 
 ## Conflict Handling
 
-- If a reference conflicts with `AGENTS.md`, `docs/specs.md`, or `docs/render-snapshots.md`, reject the reference or rewrite it into a compatible Kinetik invariant.
+- If a reference conflicts with `AGENTS.md`, `docs/specs.md`, or `docs/render-snapshots.md`, reject the reference or rewrite it into a compatible Stern invariant.
 - If a behavior requires a window, GPU, platform service, or OS accessibility daemon, reduce it to a core invariant first. If reduction is impossible, mark it as a later platform or showcase smoke test.
 - If a reference is visual style, reject it for first-wave conformance.
-- If a proposed test would encourage copying another toolkit's API, rewrite it around Kinetik terminology: `WidgetId`, `UiInput`, `UiMemory`, `Response`, `Primitive`, `SemanticNode`, `Action`, `Dock`, `Frame`, `Panel`, and `ViewportSurface`.
+- If a proposed test would encourage copying another toolkit's API, rewrite it around Stern terminology: `WidgetId`, `UiInput`, `UiMemory`, `Response`, `Primitive`, `SemanticNode`, `Action`, `Dock`, `Frame`, `Panel`, and `ViewportSurface`.
 - If license status is unclear, stop and request legal/project-owner review before using the material.
 
 ## Reference-Derived Task Shape
@@ -148,7 +148,7 @@ Required cautions:
 Future tasks using this methodology should include:
 
 - source observation, version/date, and short paraphrase
-- Kinetik invariant and authoritative spec section
+- Stern invariant and authoritative spec section
 - one target subsystem
 - non-goals and explicit non-adoption
 - exact test or harness form
@@ -156,4 +156,4 @@ Future tasks using this methodology should include:
 - verification commands
 - license note when the source is not clearly permissive for the intended use
 
-Documentation and test tasks may cite external URLs, but implementation tasks must remain Kinetik-native and must not require network access to pass.
+Documentation and test tasks may cite external URLs, but implementation tasks must remain Stern-native and must not require network access to pass.
