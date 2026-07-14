@@ -1,6 +1,6 @@
-# Kinetik UI Specification: Runtime, Platform, Accessibility, And Resources
+# Stern Specification: Runtime, Platform, Accessibility, And Resources
 
-This file is part of the Kinetik UI architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
+This file is part of the Stern architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
 
 Contained sections: 23-28.
 
@@ -269,7 +269,7 @@ focus order, focused widget identity, roles, labels, descriptions, values,
 states, bounds, and action affordances. It is independent from render
 primitives, renderer resources, and OS accessibility APIs.
 
-`kinetik-ui-winit` exposes `WinitAccessibilityUpdate` as the platform handoff
+`stern-winit` exposes `WinitAccessibilityUpdate` as the platform handoff
 point for future native accessibility backends. The handoff remains free of OS
 accessibility services so tests can prove semantic preservation without a
 window, GPU, or platform accessibility daemon.

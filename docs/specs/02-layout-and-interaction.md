@@ -1,6 +1,6 @@
-# Kinetik UI Specification: Layout And Interaction
+# Stern Specification: Layout And Interaction
 
-This file is part of the Kinetik UI architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
+This file is part of the Stern architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
 
 Contained sections: 11-14.
 
@@ -360,7 +360,7 @@ if response.dragged {
 
 ## 14. Action System
 
-Kinetik UI should include an action presentation, shortcut routing, and dispatch system.
+Stern should include an action presentation, shortcut routing, and dispatch system.
 
 Actions are context-aware user-invokable commands.
 

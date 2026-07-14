@@ -1,6 +1,6 @@
 # Renderer Snapshot Strategy
 
-Kinetik UI renderer tests should prefer deterministic command and resource
+Stern renderer tests should prefer deterministic command and resource
 snapshots over pixel images. Pixel tests are useful for showcase-level smoke
 coverage, but they are brittle across platforms, fonts, GPU drivers, and backend
 encoders.
@@ -10,7 +10,7 @@ encoders.
 Use the narrowest stable layer that proves the behavior:
 
 1. Backend-neutral resource snapshots from `RenderResources::snapshot()`.
-2. Backend command snapshots from `kinetik-ui-vello::render_translation_snapshot`.
+2. Backend command snapshots from `stern-vello::render_translation_snapshot`.
 3. Structured assertions for backend scene side effects when command snapshots do
    not prove encoding happened.
 4. Pixel/raster tests only for deliberately stable showcase smoke coverage.
@@ -39,7 +39,7 @@ inline literal is the source of truth; tests do not bless, update, or rewrite
 source files. Matching comparisons do not write artifacts.
 
 When a backend-neutral resource snapshot mismatch occurs, the test helper writes
-review artifacts under `target/kinetik-ui-artifacts/kinetik-ui-render/resource-snapshots/`:
+review artifacts under `target/stern-artifacts/stern-render/resource-snapshots/`:
 
 - `expected.txt`
 - `actual.txt`
@@ -67,15 +67,15 @@ the corresponding stop color, and every invalid color-bearing occurrence emits
 one contextual diagnostic.
 
 Add or update a command snapshot when a primitive translation contract changes.
-Keep backend-neutral tests in `kinetik-ui-render` and Vello-specific snapshots in
-`kinetik-ui-vello`.
+Keep backend-neutral tests in `stern-render` and Vello-specific snapshots in
+`stern-vello`.
 
 Command conformance tests keep expected text inline in the test source. The
 inline literal or inline constant is the source of truth; tests do not bless,
 update, or rewrite source files. Matching comparisons do not write artifacts.
 
 When a Vello command snapshot mismatch occurs, the test helper writes review
-artifacts under `target/kinetik-ui-artifacts/kinetik-ui-vello/command-snapshots/`:
+artifacts under `target/stern-artifacts/stern-vello/command-snapshots/`:
 
 - `expected.txt`
 - `actual.txt`
@@ -105,11 +105,11 @@ baselines. Generate them explicitly with the showcase CLI when a human needs CPU
 raster BMP frames, compact pixel-smoke summaries, and a manifest for review:
 
 ```text
-cargo run -p kinetik-ui-showcase -- --dump-review-artifacts s8-12c --page components --width 1440 --height 900
+cargo run -p stern-demo -- --dump-review-artifacts s8-12c --page components --width 1440 --height 900
 ```
 
 The dump helper writes below
-`target/kinetik-ui-artifacts/kinetik-ui-showcase/review-dumps/`. It records the
+`target/stern-artifacts/stern-demo/review-dumps/`. It records the
 selected page, logical and raster dimensions, primitive count, warning count, and
 written BMP and pixel-smoke artifact paths in `manifest.txt`. Each
 `<page>-pixel-smoke.txt` file records the frame dimensions, total pixels, visible

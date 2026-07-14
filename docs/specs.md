@@ -1,6 +1,6 @@
-# Kinetik UI Specification
+# Stern Specification
 
-This file is the canonical entrypoint for the Kinetik UI architecture specification. The architecture content is split into focused parts so each Markdown file stays small enough to review and maintain.
+This file is the canonical entrypoint for the Stern architecture specification. The architecture content is split into focused parts so each Markdown file stays small enough to review and maintain.
 
 ## Specification Parts
 

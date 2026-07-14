@@ -39,7 +39,7 @@ Additional validation:
 
 - [ ] The PR is limited to one spec-defined area or bounded issue slice.
 - [ ] Architecture boundaries from `docs/specs.md` are preserved.
-- [ ] `kinetik-ui-core` remains free of renderer, windowing, and OS dependencies.
+- [ ] `stern-core` remains free of renderer, windowing, and OS dependencies.
 - [ ] Components are built from lower-level primitives where applicable.
 - [ ] Behavior primitives remain visually neutral.
 - [ ] Heavy work is not introduced into UI widget calls.

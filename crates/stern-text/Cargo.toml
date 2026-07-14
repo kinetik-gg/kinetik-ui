@@ -1,0 +1,19 @@
+[package]
+name = "stern-text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Text shaping, layout, editing state, and font assets for Stern"
+
+[dependencies]
+cosmic-text = { version = "0.19.0", default-features = false, features = ["std", "swash", "peniko"] }
+stern-core = { version = "=1.0.0-rc.2.dev", path = "../stern-core" }
+unicode-segmentation = "1.13.3"
+
+[lints]
+workspace = true

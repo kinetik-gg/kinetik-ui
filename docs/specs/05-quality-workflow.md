@@ -1,6 +1,6 @@
-# Kinetik UI Specification: Testing, CI, Showcase, Performance, And Workflow
+# Stern Specification: Testing, CI, Showcase, Performance, And Workflow
 
-This file is part of the Kinetik UI architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
+This file is part of the Stern architecture specification. The canonical entrypoint is [../specs.md](../specs.md).
 
 Contained sections: 29-34.
 
@@ -50,8 +50,8 @@ assert_snapshot!(output.primitives);
 
 Renderer snapshot tests should prefer deterministic resource inventories and
 backend command streams over pixel images. Backend-neutral resource snapshots
-belong in `kinetik-ui-render`; Vello command snapshots belong in
-`kinetik-ui-vello`. See [render-snapshots.md](../render-snapshots.md).
+belong in `stern-render`; Vello command snapshots belong in
+`stern-vello`. See [render-snapshots.md](../render-snapshots.md).
 
 Interaction tests may simulate input:
 
