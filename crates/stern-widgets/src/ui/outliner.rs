@@ -904,7 +904,7 @@ impl Ui<'_> {
             rect: icon,
             fill: None,
             stroke: Some(stroke),
-            radius: self.theme.radii.pill,
+            radius: self.theme.radii.full,
         }));
         if !visible {
             self.primitive(Primitive::Line(LinePrimitive {
@@ -940,7 +940,7 @@ impl Ui<'_> {
                 None
             },
             stroke: Some(stroke),
-            radius: self.theme.radii.xs,
+            radius: self.theme.radii.sm,
         }));
         let shackle_y = body.y - height * 0.55;
         let shackle_x = if locked {

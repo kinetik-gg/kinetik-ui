@@ -10,6 +10,11 @@ published, or accepted as an alpha release.
 
 ### Changed
 
+- **Breaking:** Replaced `RadiusScale::{xs, pill}` and the provisional radius
+  defaults with the exact `none`, `sm`, `md`, `lg`, and `full` ladder. The
+  four-argument `RadiusScale::from_values(sm, md, lg, full)` now fixes `none`
+  at zero, and direct consumers select the new roles by shape intent. No legacy
+  aliases remain. See `docs/radius-migration.md`.
 - **Breaking:** Replaced `ElevationScale::{flat, raised, overlay}` with the
   exact four-level `none`, `low`, `medium`, and `high` scale and changed
   `Theme::elevation_shadow` to accept `ElevationLevel` instead of an arbitrary

@@ -2,15 +2,15 @@ use super::{
     ControlMetrics, DurationScale, ElevationScale, FontToken, OpacityScale, RadiusScale,
     SpacingScale, Theme, ThemeColors, TypographyScale,
 };
-use crate::CornerRadius;
 
 /// Returns the default dark editor theme.
 #[must_use]
 pub const fn default_dark_theme() -> Theme {
+    let radii = RadiusScale::from_values(3.0, 6.0, 12.0, 9999.0);
     Theme {
         colors: ThemeColors::default_dark(),
         spacing: SpacingScale::new(2.0, 4.0, 8.0, 12.0, 16.0),
-        radii: RadiusScale::from_values(2.0, 3.0, 5.0, 8.0, 999.0),
+        radii,
         typography: TypographyScale {
             body: FontToken::new("Inter", 12.0, 17.0),
             label: FontToken::new("Inter", 12.0, 16.0),
@@ -43,7 +43,7 @@ pub const fn default_dark_theme() -> Theme {
             focus_width: 1.0,
             separator_width: 1.0,
         },
-        radius: CornerRadius::all(3.0),
+        radius: radii.sm,
         border_width: 1.0,
         text_size: 12.0,
     }

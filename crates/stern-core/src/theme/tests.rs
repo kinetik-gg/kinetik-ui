@@ -42,6 +42,71 @@ fn default_theme_has_dense_editor_spacing() {
 }
 
 #[test]
+fn radius_scale_defaults_and_customization_are_exact() {
+    let theme = default_dark_theme();
+
+    assert_eq!(theme.radii.none, CornerRadius::all(0.0));
+    assert_eq!(theme.radii.sm, CornerRadius::all(3.0));
+    assert_eq!(theme.radii.md, CornerRadius::all(6.0));
+    assert_eq!(theme.radii.lg, CornerRadius::all(12.0));
+    assert_eq!(theme.radii.full, CornerRadius::all(9999.0));
+    assert_eq!(theme.radius, theme.radii.sm);
+
+    let radii = RadiusScale::from_values(4.0, 8.0, 16.0, 2048.0);
+    assert_eq!(radii.none, CornerRadius::all(0.0));
+    assert_eq!(radii.sm, CornerRadius::all(4.0));
+    assert_eq!(radii.md, CornerRadius::all(8.0));
+    assert_eq!(radii.lg, CornerRadius::all(16.0));
+    assert_eq!(radii.full, CornerRadius::all(2048.0));
+
+    let customized = theme.with_radii(radii);
+    assert_eq!(customized.radii, radii);
+    assert_eq!(customized.radius, radii.sm);
+}
+
+#[test]
+fn canonical_component_recipes_use_radius_roles_by_intent() {
+    let theme = default_dark_theme().with_radii(RadiusScale::from_values(4.0, 11.0, 23.0, 777.0));
+    let states = [
+        ComponentState::default(),
+        ComponentState {
+            hovered: true,
+            ..ComponentState::default()
+        },
+        ComponentState {
+            selected: true,
+            focused: true,
+            ..ComponentState::default()
+        },
+        ComponentState {
+            disabled: true,
+            ..ComponentState::default()
+        },
+    ];
+
+    for state in states {
+        for variant in [
+            ButtonVariant::Standard,
+            ButtonVariant::Primary,
+            ButtonVariant::Ghost,
+            ButtonVariant::Danger,
+        ] {
+            let radius = theme.button_variant(variant, state).radius;
+            assert_eq!(radius, theme.radii.sm);
+            assert_ne!(radius, theme.radii.full);
+        }
+        assert_eq!(theme.tab(state).radius, theme.radii.none);
+        assert_ne!(theme.tab(state).radius, theme.radii.full);
+        assert_eq!(theme.row(state).radius, theme.radii.none);
+        assert_eq!(theme.text_field(state).radius, theme.radii.sm);
+        assert_ne!(theme.text_field(state).radius, theme.radii.full);
+        assert_eq!(theme.checkbox(state).radius, theme.radii.sm);
+        assert_eq!(theme.radio_button(state).radius, theme.radii.full);
+        assert_eq!(theme.slider(state).radius, theme.radii.full);
+    }
+}
+
+#[test]
 fn token_overrides_are_structural_and_predictable() {
     let typography = TypographyScale {
         body: super::FontToken::new("sans-serif", 13.0, 18.0),
@@ -53,7 +118,7 @@ fn token_overrides_are_structural_and_predictable() {
     };
     let theme = default_dark_theme()
         .with_spacing(SpacingScale::new(1.0, 3.0, 6.0, 9.0, 12.0))
-        .with_radii(RadiusScale::from_values(1.0, 2.0, 3.0, 4.0, 999.0))
+        .with_radii(RadiusScale::from_values(2.0, 3.0, 4.0, 999.0))
         .with_typography(typography)
         .with_opacity(OpacityScale {
             hover: 0.2,
@@ -554,7 +619,7 @@ fn passive_panel_recipe_stays_flat_under_nonzero_elevation() {
             border_width,
             ..base.controls
         })
-        .with_radii(RadiusScale::from_values(1.0, 5.5, 7.0, 9.0, 99.0))
+        .with_radii(RadiusScale::from_values(5.5, 7.0, 9.0, 99.0))
         .with_elevation(ElevationScale {
             low: 37.0,
             ..base.elevation
