@@ -225,7 +225,7 @@ fn legacy_generic_field_audit_is_scoped_to_spacing_scale() {
 
         pub struct SpacingScale {
             pub zero: f32,
-            pub xs : f32,
+            pub xs : core::primitive::f32,
             pub sm: f32,
             pub md: f32,
             pub lg: f32,
@@ -310,7 +310,7 @@ fn legacy_generic_spacing_fields(source: &str) -> Vec<&'static str> {
         .collect();
     LEGACY_GENERIC_FIELD_NAMES
         .into_iter()
-        .filter(|field| compact_body.contains(&format!("pub{field}:f32")))
+        .filter(|field| compact_body.contains(&format!("pub{field}:")))
         .collect()
 }
 
