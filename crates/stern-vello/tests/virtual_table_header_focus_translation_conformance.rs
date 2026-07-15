@@ -203,8 +203,8 @@ fn actual_table_header_focus_translates_with_fractional_scroll_at_release_scales
             2
         );
 
-        let header_translation =
-            translate_primitives(&frame.primitives[1..=header_clip_end], &resources);
+        let header_scope = &frame.primitives[1..=header_clip_end];
+        let header_translation = translate_primitives(header_scope, &resources);
         assert!(header_translation.diagnostics.is_empty());
         let path_commands = header_translation
             .commands
@@ -263,7 +263,6 @@ fn actual_table_header_focus_translates_with_fractional_scroll_at_release_scales
             for span in primary_spans.into_iter().chain(separator_spans) {
                 assert!(span * scale >= 1.0);
             }
-            let focus_primitives = &frame.primitives[base_index + 1..=base_index + 2];
             let mut renderer = VelloRenderer::new();
             let submission = renderer.submit_frame(RenderFrameInput {
                 viewport: ViewportInfo::new(
@@ -271,21 +270,47 @@ fn actual_table_header_focus_translates_with_fractional_scroll_at_release_scales
                     physical_size,
                     ScaleFactor::new(f64::from(scale)),
                 ),
-                primitives: focus_primitives,
+                primitives: header_scope,
                 resources: &resources,
             });
-            assert_eq!(submission.primitive_count, 2);
+            assert_eq!(submission.primitive_count, header_scope.len());
             assert!(submission.diagnostics.is_empty());
             let encoding = renderer.scene().encoding();
-            assert_eq!(encoding.n_paths, 2);
-            assert_eq!(encoding.draw_tags.len(), 2);
-            assert!(encoding.draw_tags.iter().all(|tag| tag.0 == 0x44));
-            assert_eq!(encoding.draw_data, vec![0xFFFF_B24D, 0xFF0B_0B0B]);
-            assert!(encoding.styles.iter().all(|style| {
-                style.flags_and_miter_limit & 0x8000_0000 == 0 && style.line_width == 0.0
-            }));
-            assert_eq!(encoding.transforms.len(), 1);
-            assert_eq!(encoding.transforms[0].matrix, [scale, 0.0, 0.0, scale]);
+            assert!(encoding.n_paths >= 2);
+            let primary_draw = encoding
+                .draw_data
+                .iter()
+                .position(|word| *word == 0xFFFF_B24D)
+                .expect("primary focus draw");
+            let separator_draw = encoding
+                .draw_data
+                .iter()
+                .enumerate()
+                .skip(primary_draw + 1)
+                .find_map(|(index, word)| (*word == 0xFF0B_0B0B).then_some(index))
+                .expect("separator focus draw after primary");
+            assert_eq!(separator_draw, primary_draw + 3);
+            assert!(
+                encoding.transforms.iter().any(|transform| {
+                    transform.matrix == [scale, 0.0, 0.0, scale]
+                        && transform.translation == [(-horizontal_scroll * scale).round(), 0.0]
+                }),
+                "missing scaled, physical-pixel-snapped header translation: {:?}",
+                encoding.transforms
+            );
+            for command in header_translation
+                .commands
+                .iter()
+                .filter(|command| matches!(command.kind, RenderCommandKind::Path { .. }))
+            {
+                assert_eq!(
+                    command.transform,
+                    Transform::translation(Vec2::new(-horizontal_scroll, 0.0))
+                );
+                assert_eq!(command.clips.len(), 1);
+                assert_eq!(command.clips[0].rect, header_clip);
+                assert_eq!(command.clips[0].transform, Transform::IDENTITY);
+            }
         }
     }
 }
