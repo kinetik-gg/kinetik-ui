@@ -290,6 +290,21 @@ fn item_rect(run: &Run, target: ItemId) -> &AssetBrowserItemRect {
         .unwrap_or_else(|| panic!("missing geometry for item {}", target.raw()))
 }
 
+fn item_geometry(run: &Run) -> Vec<(ItemId, Rect, Rect, Rect, Rect)> {
+    run.items
+        .iter()
+        .map(|item| {
+            (
+                item.item.id,
+                item.rect,
+                item.preview_rect,
+                item.name_rect,
+                item.kind_rect,
+            )
+        })
+        .collect()
+}
+
 fn assert_item_focus(run: &Run, target: ItemId) -> [Primitive; 2] {
     let theme = default_dark_theme();
     let item = item_rect(run, target);
@@ -843,108 +858,219 @@ fn fractional_scroll_clips_first_middle_last_and_overscan_annuli_without_transfo
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn retained_disabled_focus_is_suppressed_while_read_only_focus_remains_visible_and_inert() {
     let model = AssetBrowserModel::new(vec![
         asset(1, "Enabled", "mesh"),
         asset(2, "Item disabled", "mesh").disabled(true),
         asset(3, "Read only", "mesh").read_only(true),
     ]);
-    let seed = run_frame(
-        &model,
-        config(AssetBrowserViewMode::List),
-        &mut AssetBrowserState::new(),
-        &mut UiMemory::new(),
-        UiInput::default(),
-    );
 
-    for (target, globally_disabled) in [(id(1), true), (id(2), false)] {
+    for view_mode in [AssetBrowserViewMode::Grid, AssetBrowserViewMode::List] {
+        let cfg = config(view_mode);
+        let mut state = AssetBrowserState::new();
         let mut memory = UiMemory::new();
-        memory.focus(seed.root.child(("asset-browser-item", target.raw())));
-        let disabled = run_frame(
+        let seed = run_frame(
             &model,
-            config(AssetBrowserViewMode::List).disabled(globally_disabled),
-            &mut AssetBrowserState::new(),
+            cfg.clone(),
+            &mut state,
             &mut memory,
             UiInput::default(),
         );
-        let response = item_response(&disabled, target);
-        assert!(response.state.focused);
-        assert!(response.state.disabled);
+        let enabled = click(
+            item_rect(&seed, id(1)).rect.center(),
+            &model,
+            cfg.clone(),
+            &mut state,
+            &mut memory,
+        );
+        assert_eq!(state.cursor.active(), Some(id(1)));
+        assert_eq!(state.selection.selected(), vec![id(1)]);
+        assert_item_focus(&enabled, id(1));
+
+        let expected_cursor = state.cursor.clone();
+        let expected_selection = state.selection.clone();
+        let mut expected_semantics = enabled.frame.semantics.nodes().to_vec();
+        expected_semantics[0].state.disabled = true;
+        for semantic in expected_semantics.iter_mut().skip(1) {
+            semantic.state.disabled = true;
+            semantic.focusable = false;
+            semantic.actions.clear();
+        }
+        let expected_text = enabled
+            .frame
+            .primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Text(text) => Some(text.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let globally_disabled = run_frame(
+            &model,
+            cfg.clone().disabled(true),
+            &mut state,
+            &mut memory,
+            UiInput::default(),
+        );
+        assert_eq!(state.cursor, expected_cursor);
+        assert_eq!(state.selection, expected_selection);
+        assert_eq!(item_geometry(&globally_disabled), item_geometry(&enabled));
+        assert_eq!(globally_disabled.projected, enabled.projected);
         assert_eq!(
-            disabled
+            globally_disabled.frame.semantics.nodes(),
+            expected_semantics
+        );
+        assert_eq!(
+            globally_disabled.output.visible_range,
+            enabled.output.visible_range
+        );
+        assert_eq!(
+            globally_disabled.output.materialized_range,
+            enabled.output.materialized_range
+        );
+        assert!(globally_disabled.output.requests.is_empty());
+        assert_eq!(
+            globally_disabled
                 .frame
                 .primitives
                 .iter()
-                .filter(|primitive| matches!(primitive, Primitive::Path(_)))
-                .count(),
-            0
+                .filter_map(|primitive| match primitive {
+                    Primitive::Text(text) => Some(text.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            expected_text
         );
-        let semantic = disabled
+        assert!(
+            globally_disabled
+                .output
+                .responses
+                .iter()
+                .all(|response| response.response.state.disabled)
+        );
+        assert!(item_response(&globally_disabled, id(1)).state.focused);
+        assert_no_item_annuli(&globally_disabled);
+        for item in &globally_disabled.items {
+            let semantic = globally_disabled
+                .frame
+                .semantics
+                .get(seed.root.child(("asset-browser-item", item.item.id.raw())))
+                .expect("global-disabled item semantic");
+            assert!(semantic.state.disabled);
+            assert!(!semantic.focusable);
+            assert!(semantic.actions.is_empty());
+            assert_eq!(semantic.bounds, item.rect);
+        }
+
+        let mut item_disabled_state = AssetBrowserState::new();
+        item_disabled_state.selection.replace(id(2));
+        let expected_item_selection = item_disabled_state.selection.clone();
+        let expected_item_cursor = item_disabled_state.cursor.clone();
+        let mut item_disabled_memory = UiMemory::new();
+        item_disabled_memory.focus(seed.root.child(("asset-browser-item", 2_u64)));
+        let item_disabled = run_frame(
+            &model,
+            cfg.clone(),
+            &mut item_disabled_state,
+            &mut item_disabled_memory,
+            UiInput::default(),
+        );
+        let response = item_response(&item_disabled, id(2));
+        assert!(response.state.focused);
+        assert!(response.state.selected);
+        assert!(response.state.disabled);
+        assert_eq!(item_disabled_state.cursor, expected_item_cursor);
+        assert_eq!(item_disabled_state.selection, expected_item_selection);
+        assert_eq!(item_geometry(&item_disabled), item_geometry(&seed));
+        assert_eq!(item_disabled.projected, seed.projected);
+        assert!(item_disabled.output.requests.is_empty());
+        assert_no_item_annuli(&item_disabled);
+        let semantic = item_disabled
             .frame
             .semantics
-            .get(seed.root.child(("asset-browser-item", target.raw())))
-            .expect("disabled item semantic");
+            .get(seed.root.child(("asset-browser-item", 2_u64)))
+            .expect("item-disabled semantic");
         assert!(semantic.state.focused);
-        assert_eq!(semantic.state.disabled, target == id(2));
-        if target == id(2) {
-            assert!(
-                semantic
-                    .actions
-                    .iter()
-                    .all(|action| action.kind != SemanticActionKind::Invoke)
-            );
-        }
-    }
+        assert!(semantic.state.selected);
+        assert!(semantic.state.disabled);
+        assert!(!semantic.focusable);
+        assert!(semantic.actions.is_empty());
+        assert_eq!(semantic.bounds, item_rect(&item_disabled, id(2)).rect);
 
-    let mut read_only_state = AssetBrowserState::new();
-    read_only_state.selection.replace(id(3));
-    let mut read_only_memory = UiMemory::new();
-    read_only_memory.focus(seed.root.child(("asset-browser-item", 3_u64)));
-    let read_only = run_frame(
-        &model,
-        config(AssetBrowserViewMode::List),
-        &mut read_only_state,
-        &mut read_only_memory,
-        UiInput::default(),
-    );
-    let response = item_response(&read_only, id(3));
-    assert!(response.state.focused);
-    assert!(response.state.selected);
-    assert!(!response.state.disabled);
-    assert_item_focus(&read_only, id(3));
-    let semantic = read_only
-        .frame
-        .semantics
-        .get(seed.root.child(("asset-browser-item", 3_u64)))
-        .expect("read-only semantic");
-    assert!(semantic.state.focused);
-    assert!(semantic.state.selected);
-    assert!(
-        semantic
-            .actions
-            .iter()
-            .any(|action| action.kind == SemanticActionKind::Invoke)
-    );
-    assert!(
-        semantic
-            .actions
-            .iter()
-            .all(|action| action.kind != SemanticActionKind::Custom("rename".to_owned()))
-    );
-    let resolved = item_rect(&read_only, id(3));
-    assert!(
-        resolved
-            .item
-            .inline_rename_begin_request(seed.root)
-            .is_none()
-    );
-    assert!(
-        resolved
-            .item
-            .drag_source(&read_only_state.selection)
-            .is_none()
-    );
-    assert!(read_only.output.requests.is_empty());
+        let mut read_only_state = AssetBrowserState::new();
+        let mut read_only_memory = UiMemory::new();
+        let read_only = click(
+            item_rect(&seed, id(3)).rect.center(),
+            &model,
+            cfg.clone(),
+            &mut read_only_state,
+            &mut read_only_memory,
+        );
+        assert_eq!(read_only_state.cursor.active(), Some(id(3)));
+        assert_eq!(read_only_state.selection.selected(), vec![id(3)]);
+        let response = item_response(&read_only, id(3));
+        assert!(response.state.focused);
+        assert!(response.state.selected);
+        assert!(!response.state.disabled);
+        assert_item_focus(&read_only, id(3));
+        let semantic = read_only
+            .frame
+            .semantics
+            .get(seed.root.child(("asset-browser-item", 3_u64)))
+            .expect("read-only semantic");
+        assert!(semantic.state.focused);
+        assert!(semantic.state.selected);
+        assert!(!semantic.state.disabled);
+        assert!(semantic.focusable);
+        assert_eq!(
+            semantic
+                .actions
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        action.kind,
+                        SemanticActionKind::Focus | SemanticActionKind::Invoke
+                    )
+                })
+                .count(),
+            2
+        );
+        assert_eq!(semantic.actions.len(), 2);
+        assert!(semantic.actions.iter().all(|action| !matches!(
+            &action.kind,
+            SemanticActionKind::Custom(action) if action == "rename"
+        )));
+        let resolved = item_rect(&read_only, id(3));
+        assert!(
+            resolved
+                .item
+                .inline_rename_begin_request(seed.root)
+                .is_none()
+        );
+        assert!(
+            resolved
+                .item
+                .drag_source(&read_only_state.selection)
+                .is_none()
+        );
+        assert!(read_only.output.requests.is_empty());
+
+        let read_only_f2 = run_frame(
+            &model,
+            cfg,
+            &mut read_only_state,
+            &mut read_only_memory,
+            key_input(Key::Function(2)),
+        );
+        assert_eq!(read_only_state.cursor.active(), Some(id(3)));
+        assert_eq!(read_only_state.selection.selected(), vec![id(3)]);
+        assert!(item_response(&read_only_f2, id(3)).state.focused);
+        assert_item_focus(&read_only_f2, id(3));
+        assert!(read_only_f2.output.requests.is_empty());
+        assert!(read_only_memory.drag_source().is_none());
+    }
 }
 
 #[test]

@@ -327,6 +327,12 @@ impl Ui<'_> {
             if prepared_rename == Some(item_rect.item.id) {
                 continue;
             }
+            let disabled = config.disabled || item_rect.item.state.disabled;
+            semantic.state.disabled = disabled;
+            if disabled {
+                semantic.focusable = false;
+                semantic.actions.clear();
+            }
             if let Some(item_response) = output
                 .responses
                 .iter()
