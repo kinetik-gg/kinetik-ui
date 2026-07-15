@@ -7,12 +7,15 @@ use stern_core::{
 };
 
 use super::Ui;
-use crate::collections::{
-    CollectionProjectedItem, CollectionProjection, ItemId, SortDirection, TableColumn,
-    TableColumnResizeRequest, TableSort, VirtualTable, VirtualTableConfig, VirtualTableCursorMove,
-    VirtualTableCursorTarget, VirtualTableHeaderResponse, VirtualTableMaterializedRow,
-    VirtualTableOutput, VirtualTableRow, VirtualTableSelection, VirtualTableSelectionMode,
-    VirtualTableSelectionResponse, VirtualTableTarget,
+use crate::{
+    collections::{
+        CollectionProjectedItem, CollectionProjection, ItemId, SortDirection, TableColumn,
+        TableColumnResizeRequest, TableSort, VirtualTable, VirtualTableConfig,
+        VirtualTableCursorMove, VirtualTableCursorTarget, VirtualTableHeaderResponse,
+        VirtualTableMaterializedRow, VirtualTableOutput, VirtualTableRow, VirtualTableSelection,
+        VirtualTableSelectionMode, VirtualTableSelectionResponse, VirtualTableTarget,
+    },
+    components::{RowFocusPlacement, row_surface_primitives},
 };
 
 impl Ui<'_> {
@@ -480,19 +483,24 @@ impl Ui<'_> {
         sort: Option<TableSort>,
     ) {
         let selected = sort.is_some_and(|sort| sort.column == column.id);
-        let recipe = self.theme.row(ComponentState {
+        let state = ComponentState {
             hovered: response.state.hovered,
             pressed: response.state.pressed,
             focused: response.state.focused,
             disabled: response.state.disabled,
             selected,
-        });
-        self.primitive(Primitive::Rect(RectPrimitive {
+        };
+        let recipe = self.theme.row(state);
+        for primitive in row_surface_primitives(
+            self.theme,
+            &recipe,
+            state,
             rect,
-            fill: Some(recipe.background),
-            stroke: Some(recipe.border),
-            radius: recipe.radius,
-        }));
+            recipe.radius,
+            RowFocusPlacement::Inward,
+        ) {
+            self.primitive(primitive);
+        }
         let label = table_header_label(column, sort);
         self.paint_virtual_table_text(rect, &label, recipe.foreground);
     }
