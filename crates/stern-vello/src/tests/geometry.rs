@@ -1,10 +1,11 @@
 use super::common::{assert_approx, assert_approx64};
 use crate::{
-    RenderImageSampling, crisp_rect_border_segments, quantize_stroke_width_to_device,
-    root_transform, snap_axis_aligned_translation, snap_filled_path_elements_to_device,
-    snap_image_rect_to_device, snap_point_to_device, snap_radius_to_device, snap_rect_to_device,
-    snap_stroke_center_to_device, snap_stroked_line_to_device,
-    snap_stroked_path_elements_to_device, snap_stroked_rect_to_device, viewport_device_scale,
+    RenderFrameInput, RenderImageSampling, RenderResources, VelloRenderer,
+    crisp_rect_border_segments, quantize_stroke_width_to_device, root_transform,
+    snap_axis_aligned_translation, snap_filled_path_elements_to_device, snap_image_rect_to_device,
+    snap_point_to_device, snap_radius_to_device, snap_rect_to_device, snap_stroke_center_to_device,
+    snap_stroked_line_to_device, snap_stroked_path_elements_to_device, snap_stroked_rect_to_device,
+    viewport_device_scale,
 };
 use stern_core::{
     CornerRadius, PathElement, PhysicalSize, Point, Primitive, Rect, ScaleFactor, Size,
@@ -268,6 +269,85 @@ fn nested_focus_contours_snap_contiguously_at_release_scales() {
                     physical_width >= 1.0 - 0.000_01,
                     "{band} band must cover at least one physical pixel at {scale}x"
                 );
+            }
+        }
+    }
+}
+
+#[test]
+fn nested_focus_annuli_encode_as_two_hollow_fill_only_paths_at_release_scales() {
+    let recipe = default_dark_theme()
+        .focus_ring(true)
+        .expect("visible focus ring");
+    let resources = RenderResources::new();
+
+    for origin in [Point::new(3.125, 7.375), Point::new(10.2, 20.6)] {
+        let rect = Rect::new(origin.x, origin.y, 36.5, 22.25);
+        let radius = CornerRadius {
+            top_left: 3.0,
+            top_right: 4.0,
+            bottom_right: 5.0,
+            bottom_left: 6.0,
+        };
+        for primitives in [
+            recipe.outward_annulus_primitives(rect, radius),
+            recipe.inward_annulus_primitives(rect, radius, 1.0),
+        ] {
+            for primitive in &primitives {
+                let Primitive::Path(path) = primitive else {
+                    panic!("focus annulus must remain a path primitive");
+                };
+                assert_eq!(path.elements.len(), 20);
+                assert_eq!(
+                    path.elements
+                        .iter()
+                        .filter(|element| matches!(element, PathElement::Close))
+                        .count(),
+                    2
+                );
+                assert!(path.fill.is_some());
+                assert_eq!(path.stroke, None);
+            }
+
+            for (scale, physical_size) in [
+                (1.0_f32, PhysicalSize::new(96, 64)),
+                (1.25, PhysicalSize::new(120, 80)),
+                (1.5, PhysicalSize::new(144, 96)),
+                (2.0, PhysicalSize::new(192, 128)),
+            ] {
+                let mut renderer = VelloRenderer::new();
+                let output = renderer.submit_frame(RenderFrameInput {
+                    viewport: ViewportInfo::new(
+                        Size::new(96.0, 64.0),
+                        physical_size,
+                        ScaleFactor::new(f64::from(scale)),
+                    ),
+                    primitives: &primitives,
+                    resources: &resources,
+                });
+
+                assert!(output.diagnostics.is_empty());
+                assert_eq!(output.primitive_count, 2);
+                let encoding = renderer.scene().encoding();
+                assert_eq!(encoding.n_paths, 2);
+                assert_eq!(encoding.draw_tags.len(), 2);
+                assert!(encoding.draw_tags.iter().all(|tag| tag.0 == 0x44));
+                assert_eq!(encoding.draw_data, vec![0xFFFF_B24D, 0xFF0B_0B0B]);
+                assert!(encoding.styles.iter().all(|style| {
+                    style.flags_and_miter_limit & 0x8000_0000 == 0 && style.line_width == 0.0
+                }));
+                assert_eq!(encoding.transforms.len(), 1);
+                for (actual, expected) in encoding.transforms[0]
+                    .matrix
+                    .into_iter()
+                    .zip([scale, 0.0, 0.0, scale])
+                {
+                    assert_approx(actual, expected);
+                }
+                for width in [recipe.primary.width, recipe.separator.width] {
+                    assert_approx(width * scale, scale);
+                    assert!(width * scale >= 1.0);
+                }
             }
         }
     }
