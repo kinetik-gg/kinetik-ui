@@ -4,7 +4,11 @@
 
 use std::{fs, path::Path};
 
-use stern_core::{SpacingRole, SpacingScale, SpacingStep, default_dark_theme};
+use stern_core::{
+    Color, ControlMetrics, CornerRadius, DurationScale, ElevationScale, FontToken, OpacityScale,
+    RadiusScale, SpacingRole, SpacingScale, SpacingStep, StrokeScale, TypographyScale,
+    default_dark_theme,
+};
 
 const EXPECTED_STEPS: [SpacingStep; 9] = [
     SpacingStep::Zero,
@@ -114,7 +118,62 @@ fn every_semantic_role_resolves_through_its_configured_step() {
 
 #[test]
 fn spacing_replacement_preserves_every_non_spacing_theme_field() {
-    let base = default_dark_theme();
+    let defaults = default_dark_theme();
+    let mut base = defaults;
+    base.colors.surface.application = Color::rgb8(1, 2, 3);
+    base.radii = RadiusScale {
+        none: CornerRadius::all(201.0),
+        sm: CornerRadius::all(202.0),
+        md: CornerRadius::all(203.0),
+        lg: CornerRadius::all(204.0),
+        full: CornerRadius::all(205.0),
+    };
+    base.strokes = StrokeScale::from_values(301.0, 302.0, 303.0, 304.0, 305.0);
+    base.typography = TypographyScale {
+        body: FontToken::new("spacing-isolation-body", 401.0, 402.0),
+        label: FontToken::new("spacing-isolation-label", 403.0, 404.0),
+        caption: FontToken::new("spacing-isolation-caption", 405.0, 406.0),
+        title: FontToken::new("spacing-isolation-title", 407.0, 408.0),
+        monospace: FontToken::new("spacing-isolation-monospace", 409.0, 410.0),
+    };
+    base.opacity = OpacityScale {
+        disabled: 0.11,
+        hover: 0.12,
+        pressed: 0.13,
+        selection: 0.14,
+        overlay_scrim: 0.15,
+    };
+    base.elevation = ElevationScale::new(501.0, 502.0, 503.0, 504.0);
+    base.duration = DurationScale {
+        instant: 601.0,
+        fast: 602.0,
+        normal: 603.0,
+        slow: 604.0,
+    };
+    base.controls = ControlMetrics {
+        control_height: 701.0,
+        compact_control_height: 702.0,
+        icon_size: 703.0,
+        check_size: 704.0,
+        padding_x: 705.0,
+        padding_y: 706.0,
+    };
+    base.radius = CornerRadius::all(801.0);
+    base.border_width = 802.0;
+    base.text_size = 803.0;
+
+    assert_ne!(base.colors, defaults.colors);
+    assert_ne!(base.radii, defaults.radii);
+    assert_ne!(base.strokes, defaults.strokes);
+    assert_ne!(base.typography, defaults.typography);
+    assert_ne!(base.opacity, defaults.opacity);
+    assert_ne!(base.elevation, defaults.elevation);
+    assert_ne!(base.duration, defaults.duration);
+    assert_ne!(base.controls, defaults.controls);
+    assert_ne!(base.radius, defaults.radius);
+    assert_ne!(base.border_width, defaults.border_width);
+    assert_ne!(base.text_size, defaults.text_size);
+
     let customized = base.with_spacing(SENTINELS);
 
     assert_eq!(customized.spacing, SENTINELS);
@@ -141,9 +200,27 @@ fn spacing_replacement_preserves_every_non_spacing_theme_field() {
 
 #[test]
 fn production_source_contains_no_legacy_fields_or_five_value_constructors() {
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("stern-core must live under the workspace crates directory");
     let mut sources = Vec::new();
-    collect_rust_sources(&source_root, &mut sources);
+    for production_root in [workspace_root.join("crates"), workspace_root.join("apps")] {
+        collect_production_rust_sources(&production_root, &mut sources);
+    }
+    assert!(
+        sources
+            .iter()
+            .any(|path| path.starts_with(workspace_root.join("crates"))),
+        "workspace crate production sources must be audited"
+    );
+    assert!(
+        sources
+            .iter()
+            .any(|path| path.starts_with(workspace_root.join("apps"))),
+        "workspace application production sources must be audited"
+    );
 
     let legacy_accesses = [
         ".spacing.xs",
@@ -183,15 +260,48 @@ fn production_source_contains_no_legacy_fields_or_five_value_constructors() {
     }
 }
 
-fn collect_rust_sources(directory: &Path, output: &mut Vec<std::path::PathBuf>) {
+fn collect_production_rust_sources(directory: &Path, output: &mut Vec<std::path::PathBuf>) {
     for entry in fs::read_dir(directory).expect("production source directory must be readable") {
         let path = entry.expect("source entry must be readable").path();
         if path.is_dir() {
-            collect_rust_sources(&path, output);
-        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            if !is_nonproduction_directory(&path) {
+                collect_production_rust_sources(&path, output);
+            }
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+            && !is_nonproduction_rust_file(&path)
+        {
             output.push(path);
         }
     }
+}
+
+fn is_nonproduction_directory(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(
+            "tests"
+                | "test"
+                | "testdata"
+                | "test-data"
+                | "test_data"
+                | "benches"
+                | "benchmarks"
+                | "examples"
+                | "fixtures"
+                | "snapshots"
+                | "goldens"
+                | "generated"
+                | "target"
+                | ".runway"
+        )
+    )
+}
+
+fn is_nonproduction_rust_file(path: &Path) -> bool {
+    matches!(
+        path.file_stem().and_then(|name| name.to_str()),
+        Some("test" | "tests" | "generated")
+    )
 }
 
 fn spacing_constructor_argument_counts(source: &str) -> Vec<usize> {
