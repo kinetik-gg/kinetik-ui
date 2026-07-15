@@ -5,14 +5,16 @@
 use std::time::Duration;
 
 use stern_core::{
-    ComponentState, FrameContext, Key, KeyEvent, KeyState, KeyboardInput, Modifiers, PathElement,
-    PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, Primitive, Rect,
-    ScaleFactor, SemanticNode, Size, TimeInfo, UiInput, UiMemory, Vec2, ViewportInfo, WidgetId,
+    Brush, Color, ComponentState, FrameContext, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
+    MouseButton, PathElement, PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder,
+    Primitive, Rect, RepaintRequest, ScaleFactor, SemanticActionKind, SemanticNode, SemanticRole,
+    Size, TimeInfo, Transform, UiInput, UiInputEvent, UiMemory, Vec2, ViewportInfo, WidgetId,
     default_dark_theme,
 };
 use stern_widgets::{
     CollectionProjection, ItemId, SortDirection, TableColumn, TableLayout, TableSort, Ui,
     VirtualTableConfig, VirtualTableOutput, VirtualTableRow, VirtualTableSelection,
+    VirtualTableSelectionMode,
 };
 
 const BOUNDS: Rect = Rect::new(3.25, 7.75, 240.0, 84.0);
@@ -41,10 +43,14 @@ fn columns(order: [u64; 3]) -> Vec<TableColumn> {
 }
 
 fn config(sort: Option<TableSort>) -> VirtualTableConfig {
+    config_with(BOUNDS, sort, [10, 20, 30])
+}
+
+fn config_with(bounds: Rect, sort: Option<TableSort>, order: [u64; 3]) -> VirtualTableConfig {
     VirtualTableConfig::new(
-        BOUNDS,
+        bounds,
         TableLayout {
-            columns: columns([10, 20, 30]),
+            columns: columns(order),
             header_height: 20.25,
             row_height: 20.0,
             sort,
@@ -75,6 +81,45 @@ fn pointer_input(point: Point, pressed: bool) -> UiInput {
         },
         ..UiInput::default()
     }
+}
+
+fn release_input(point: Point) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(point),
+            primary: PointerButtonState::new(false, false, true),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
+}
+
+fn drag_input(point: Point, down: bool, pressed: bool, released: bool, delta_x: f32) -> UiInput {
+    let mut input = UiInput::default();
+    if pressed {
+        input.push_event(UiInputEvent::PointerButton {
+            button: MouseButton::Primary,
+            down: true,
+            click_count: 1,
+            position: Some(point),
+        });
+    } else if released {
+        input.pointer.position = Some(point);
+        input.pointer.primary = PointerButtonState::new(true, false, false);
+        input.push_event(UiInputEvent::PointerButton {
+            button: MouseButton::Primary,
+            down: false,
+            click_count: 1,
+            position: Some(point),
+        });
+    } else {
+        input.pointer.primary = PointerButtonState::new(down, false, false);
+        input.push_event(UiInputEvent::PointerMoved {
+            position: point,
+            delta: Vec2::new(delta_x, 0.0),
+        });
+    }
+    input
 }
 
 fn key_input(key: Key, modifiers: Modifiers, repeat: bool) -> UiInput {
@@ -476,4 +521,545 @@ fn modifier_and_repeat_inputs_do_not_change_idle_focus_geometry() {
         assert_eq!(assert_header_focus(&run, column, false), expected);
     }
     assert_eq!(memory.scroll_offset(seed.root), Vec2::ZERO);
+}
+
+#[test]
+fn pointer_and_keyboard_sorting_emit_one_exact_descriptor_without_pointer_focus_transfer() {
+    let items = projection(2);
+    let table_config = config(None);
+    let seed = run_frame(
+        &items,
+        table_config.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let column = id(10);
+    let point = header_response(&seed, column).rect.center();
+
+    let mut pointer_memory = UiMemory::new();
+    let pressed = run_frame(
+        &items,
+        table_config.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut pointer_memory,
+        pointer_input(point, true),
+    );
+    assert!(header_response(&pressed, column).state.pressed);
+    let pointer = run_frame(
+        &items,
+        table_config.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut pointer_memory,
+        release_input(point),
+    );
+    assert_eq!(
+        pointer.output.sort_requested,
+        Some(TableSort {
+            column,
+            direction: SortDirection::Ascending,
+        })
+    );
+    assert_eq!(pointer_memory.focused(), None);
+    assert!(
+        pointer
+            .output
+            .headers
+            .iter()
+            .all(|header| !header.response.state.focused)
+    );
+
+    let mut keyboard_memory = UiMemory::new();
+    keyboard_memory.focus(header_response(&seed, column).id);
+    for key in [Key::Enter, Key::Space] {
+        let keyboard = run_frame(
+            &items,
+            table_config.clone(),
+            &mut VirtualTableSelection::new(),
+            &mut keyboard_memory,
+            key_input(key, Modifiers::default(), false),
+        );
+        assert_eq!(
+            keyboard.output.sort_requested,
+            Some(TableSort {
+                column,
+                direction: SortDirection::Ascending,
+            })
+        );
+        let response = header_response(&keyboard, column);
+        assert!(response.clicked);
+        assert!(response.keyboard_activated);
+        assert!(response.state.focused);
+        assert_eq!(keyboard_memory.focused(), Some(response.id));
+    }
+
+    let mut modified = Modifiers::default();
+    modified.shift = true;
+    for input in [
+        key_input(Key::Enter, Modifiers::default(), true),
+        key_input(Key::Space, modified, false),
+    ] {
+        let inert = run_frame(
+            &items,
+            table_config.clone(),
+            &mut VirtualTableSelection::new(),
+            &mut keyboard_memory,
+            input,
+        );
+        assert_eq!(inert.output.sort_requested, None);
+        assert_eq!(inert.output.resize_requested, None);
+        assert!(!inert.output.selection_changed);
+        assert_eq!(inert.output.cursor_target, None);
+        assert_eq!(inert.frame.repaint, RepaintRequest::None);
+        assert!(inert.frame.actions.is_empty());
+        assert!(inert.frame.platform_requests.is_empty());
+    }
+}
+
+#[test]
+fn header_semantics_mirror_owned_focus_press_and_disabled_retention_without_selected_state() {
+    let items = projection(1);
+    let sort = Some(TableSort {
+        column: id(20),
+        direction: SortDirection::Ascending,
+    });
+    let seed = run_frame(
+        &items,
+        config(sort),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let column = id(20);
+    let header_id = header_response(&seed, column).id;
+    let point = header_response(&seed, column).rect.center();
+    let mut memory = UiMemory::new();
+    memory.focus(header_id);
+    let enabled = run_frame(
+        &items,
+        config(sort),
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        pointer_input(point, true),
+    );
+    let response = header_response(&enabled, column);
+    assert!(response.state.focused);
+    assert!(response.state.pressed);
+    assert!(!response.state.selected);
+    let semantic = enabled
+        .frame
+        .semantics
+        .get(header_id)
+        .expect("enabled header semantics");
+    assert_eq!(semantic.role, SemanticRole::Cell);
+    assert!(semantic.focusable);
+    assert!(semantic.state.focused);
+    assert!(semantic.state.pressed);
+    assert!(!semantic.state.selected);
+    assert_eq!(
+        semantic
+            .actions
+            .iter()
+            .map(|action| action.kind.clone())
+            .collect::<Vec<_>>(),
+        vec![SemanticActionKind::Focus, SemanticActionKind::Invoke]
+    );
+
+    let disabled = run_frame(
+        &items,
+        config(sort).disabled(true),
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        pointer_input(point, true),
+    );
+    let response = header_response(&disabled, column);
+    assert!(response.state.disabled);
+    assert!(response.state.focused, "retained focus remains observable");
+    assert!(!response.state.pressed, "disable cancels an owned press");
+    assert!(!response.clicked);
+    assert!(!response.keyboard_activated);
+    assert_eq!(disabled.output.sort_requested, None);
+    assert_eq!(disabled.output.resize_requested, None);
+    assert!(!disabled.output.selection_changed);
+    assert_eq!(disabled.output.cursor_target, None);
+    assert_eq!(
+        disabled
+            .frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        0
+    );
+    let semantic = disabled
+        .frame
+        .semantics
+        .get(header_id)
+        .expect("disabled retained-focus semantics");
+    assert!(semantic.state.disabled);
+    assert!(semantic.state.focused);
+    assert!(!semantic.state.pressed);
+    assert!(!semantic.focusable);
+    assert!(semantic.actions.is_empty());
+
+    let no_focus = run_frame(
+        &items,
+        config(sort).disabled(true),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let semantic = no_focus
+        .frame
+        .semantics
+        .get(header_id)
+        .expect("disabled header semantics");
+    assert!(!semantic.state.focused);
+    assert!(!semantic.state.pressed);
+    assert!(!semantic.focusable);
+    assert!(semantic.actions.is_empty());
+}
+
+#[test]
+fn resize_ownership_isolated_from_header_focus_sort_semantics_and_annuli() {
+    let items = projection(2);
+    let resize_config = config(None).resizable(true);
+    let seed = run_frame(
+        &items,
+        resize_config.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let column = id(10);
+    let header = seed
+        .output
+        .headers
+        .iter()
+        .find(|header| header.column == column)
+        .expect("resizable header");
+    let header_id = header.response.id;
+    let resize = header.resize_response.expect("resize response");
+    assert_ne!(header_id, resize.id);
+    let point = resize.rect.center();
+    let mut memory = UiMemory::new();
+    memory.focus(header_id);
+
+    let pressed = run_frame(
+        &items,
+        resize_config.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        drag_input(point, true, true, false, 0.0),
+    );
+    assert_eq!(pressed.output.sort_requested, None);
+    assert!(header_response(&pressed, column).state.focused);
+    assert_header_focus(&pressed, column, false);
+    let moved_point = Point::new(point.x + 12.0, point.y);
+    let moved = run_frame(
+        &items,
+        resize_config.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        drag_input(moved_point, true, false, false, 12.0),
+    );
+    assert_eq!(moved.output.sort_requested, None);
+    assert_eq!(
+        moved.output.resize_requested.map(|request| request.column),
+        Some(column)
+    );
+    assert!(!moved.output.selection_changed);
+    assert_eq!(moved.output.cursor_target, None);
+    assert_eq!(memory.focused(), Some(header_id));
+    assert_header_focus(&moved, column, false);
+    let _ = run_frame(
+        &items,
+        resize_config.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        drag_input(moved_point, false, false, true, 0.0),
+    );
+
+    let mut resize_focused_memory = UiMemory::new();
+    resize_focused_memory.focus(resize.id);
+    let resize_focused = run_frame(
+        &items,
+        resize_config,
+        &mut VirtualTableSelection::new(),
+        &mut resize_focused_memory,
+        UiInput::default(),
+    );
+    assert!(
+        resize_focused
+            .output
+            .headers
+            .iter()
+            .all(|header| !header.response.state.focused)
+    );
+    assert_eq!(
+        resize_focused
+            .frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        0
+    );
+    assert!(resize_focused.frame.semantics.get(resize.id).is_none());
+    assert!(
+        resize_focused
+            .frame
+            .semantics
+            .nodes()
+            .iter()
+            .all(|node| !node.state.focused)
+    );
+}
+
+#[test]
+fn column_reorder_preserves_identity_focus_and_body_selection_never_creates_header_annuli() {
+    let items = projection(4);
+    let seed = run_frame(
+        &items,
+        config(None),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let column = id(20);
+    let header_id = header_response(&seed, column).id;
+    let mut memory = UiMemory::new();
+    memory.focus(header_id);
+    let reordered = run_frame(
+        &items,
+        config_with(BOUNDS, None, [30, 10, 20]),
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(header_response(&reordered, column).id, header_id);
+    assert_eq!(memory.focused(), Some(header_id));
+    assert_header_focus(&reordered, column, false);
+
+    let mut selection = VirtualTableSelection::new();
+    let mut body_memory = UiMemory::new();
+    let body_config = config(None).selection_mode(VirtualTableSelectionMode::Cell);
+    let body_point = Point::new(BOUNDS.x + 10.0, BOUNDS.y + 30.0);
+    let _ = run_frame(
+        &items,
+        body_config.clone(),
+        &mut selection,
+        &mut body_memory,
+        pointer_input(body_point, true),
+    );
+    let selected = run_frame(
+        &items,
+        body_config,
+        &mut selection,
+        &mut body_memory,
+        release_input(body_point),
+    );
+    assert!(selected.output.selection_changed);
+    assert_eq!(selected.output.sort_requested, None);
+    assert_eq!(selected.output.resize_requested, None);
+    assert!(
+        selected
+            .output
+            .headers
+            .iter()
+            .all(|header| !header.response.state.focused)
+    );
+    assert_eq!(
+        selected
+            .frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        0,
+        "body selection uses the unchanged body-cell painter"
+    );
+}
+
+fn assert_header_clip_transform(run: &Run, bounds: Rect, offset_x: f32) {
+    let expected_clip = Rect::new(bounds.x, bounds.y, bounds.width, 20.25);
+    assert!(matches!(
+        run.frame.primitives[1],
+        Primitive::ClipBegin { rect, .. } if rect == expected_clip
+    ));
+    assert_eq!(
+        run.frame.primitives[2],
+        Primitive::TransformBegin(Transform::translation(Vec2::new(-offset_x, 0.0)))
+    );
+    let transform_end = run
+        .frame
+        .primitives
+        .iter()
+        .position(|primitive| matches!(primitive, Primitive::TransformEnd))
+        .expect("header transform end");
+    assert!(matches!(
+        run.frame.primitives[transform_end + 1],
+        Primitive::ClipEnd { .. }
+    ));
+}
+
+#[test]
+fn fractional_scroll_keeps_partial_and_fully_clipped_focus_in_exact_header_clip_transform_scope() {
+    let items = projection(3);
+    let bounds = Rect::new(3.25, 7.75, 120.0, 84.0);
+    let narrow = config_with(bounds, None, [10, 20, 30]);
+    let seed = run_frame(
+        &items,
+        narrow.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let column = id(10);
+    let header_id = header_response(&seed, column).id;
+    let logical_rect = header_response(&seed, column).rect;
+    assert_eq!(logical_rect, Rect::new(bounds.x, bounds.y, 80.0, 20.25));
+
+    let mut memory = UiMemory::new();
+    memory.focus(header_id);
+    memory.set_scroll_offset(seed.root, Vec2::new(30.25, 0.0));
+    let partial = run_frame(
+        &items,
+        narrow.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(partial.output.window.offset.x, 30.25);
+    assert_eq!(header_response(&partial, column).rect, logical_rect);
+    let expected = assert_header_focus(&partial, column, false);
+    assert_header_clip_transform(&partial, bounds, 30.25);
+
+    memory.set_scroll_offset(seed.root, Vec2::new(120.0, 0.0));
+    let clipped = run_frame(
+        &items,
+        narrow,
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(clipped.output.window.offset.x, 120.0);
+    assert_eq!(header_response(&clipped, column).rect, logical_rect);
+    assert_eq!(assert_header_focus(&clipped, column, false), expected);
+    assert_header_clip_transform(&clipped, bounds, 120.0);
+    assert!(clipped.frame.semantics.get(header_id).is_none());
+}
+
+#[test]
+fn ten_thousand_rows_compare_identically_modulo_two_header_paths_and_focus_bits() {
+    let items = projection(10_000);
+    let baseline = run_frame(
+        &items,
+        config(None),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let column = id(30);
+    let mut memory = UiMemory::new();
+    memory.focus(header_response(&baseline, column).id);
+    let focused = run_frame(
+        &items,
+        config(None),
+        &mut VirtualTableSelection::new(),
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_header_focus(&focused, column, false);
+    assert_focus_only_transition(&focused, &baseline);
+}
+
+fn linear_channel(channel: f32) -> f32 {
+    if channel <= 0.040_45 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn contrast_ratio(foreground: Color, background: Color) -> f32 {
+    let luminance = |color: Color| {
+        0.2126 * linear_channel(color.r)
+            + 0.7152 * linear_channel(color.g)
+            + 0.0722 * linear_channel(color.b)
+    };
+    let foreground = luminance(foreground);
+    let background = luminance(background);
+    (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05)
+}
+
+fn solid(brush: Brush) -> Color {
+    let Brush::Solid(color) = brush else {
+        panic!("expected solid theme brush");
+    };
+    color
+}
+
+fn assert_ratio(actual: f32, expected: f32) {
+    assert!(
+        (actual - expected).abs() < 0.000_01,
+        "{actual} != {expected}"
+    );
+}
+
+#[test]
+fn contrast_inventory_names_existing_exceptions_and_preserves_focus_separator_adjacency() {
+    let theme = default_dark_theme();
+    let neutral = theme.row(ComponentState::default());
+    let sorted = theme.row(ComponentState {
+        selected: true,
+        ..ComponentState::default()
+    });
+    let disabled = theme.row(ComponentState {
+        disabled: true,
+        ..ComponentState::default()
+    });
+    let focus = theme.focus_ring(true).expect("focus recipe");
+    let primary = solid(focus.primary.brush);
+    let separator = solid(focus.separator.brush);
+    let accent = theme.colors.accent.default;
+    let neutral_background = solid(neutral.background);
+    let sorted_background = solid(sorted.background);
+    let disabled_background = solid(disabled.background);
+    let idle_resize = theme.colors.border.subtle;
+
+    let sorted_label = contrast_ratio(sorted.foreground, sorted_background);
+    let idle_neutral_resize = contrast_ratio(idle_resize, neutral_background);
+    let active_sorted_resize = contrast_ratio(accent, sorted_background);
+    let idle_sorted_resize = contrast_ratio(idle_resize, sorted_background);
+    let active_neutral_resize = contrast_ratio(accent, neutral_background);
+    let disabled_label = contrast_ratio(disabled.foreground, disabled_background);
+    let focus_separator = contrast_ratio(primary, separator);
+    let separator_accent = contrast_ratio(separator, accent);
+    let direct_indicator_accent = contrast_ratio(primary, accent);
+
+    assert_ratio(sorted_label, 3.533_269);
+    assert!(sorted_label < 4.5, "named selected-label exception");
+    assert_ratio(idle_neutral_resize, 1.237_124);
+    assert!(
+        idle_neutral_resize < 3.0,
+        "preexisting idle-resize exception"
+    );
+    assert_ratio(active_sorted_resize, 1.0);
+    assert!(
+        active_sorted_resize < 3.0,
+        "preexisting active-resize exception"
+    );
+    assert_ratio(idle_sorted_resize, 4.502_908);
+    assert_ratio(active_neutral_resize, 5.570_656);
+    assert_ratio(disabled_label, 3.208_475);
+    assert!(disabled_label < 4.5, "disabled text is not claimed as AA");
+    assert_ratio(focus_separator, 8.555_114);
+    assert_ratio(separator_accent, 5.570_656);
+    assert_ratio(direct_indicator_accent, 1.535_746);
+    assert!(direct_indicator_accent < 3.0);
+    assert!(
+        separator_accent >= 3.0,
+        "separator is the adjacent boundary"
+    );
 }
