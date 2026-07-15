@@ -401,7 +401,7 @@ mod tab_focus_tests {
             selected: true,
             ..ComponentState::default()
         };
-        let recipe = theme.tab(focused);
+        let recipe = stern_core::Theme::tab(&theme, focused);
         let primitives = tab_surface_primitives(
             &theme,
             &recipe,
@@ -438,7 +438,7 @@ mod tab_focus_tests {
                 ..ComponentState::default()
             },
         ] {
-            let recipe = theme.tab(state);
+            let recipe = stern_core::Theme::tab(&theme, state);
             assert_eq!(
                 tab_surface_primitives(
                     &theme,
@@ -461,7 +461,7 @@ mod tab_focus_tests {
             focused: true,
             ..ComponentState::default()
         };
-        let recipe = theme.tab(state);
+        let recipe = stern_core::Theme::tab(&theme, state);
         for rect in [
             Rect::new(0.25, 0.75, 3.5, 2.0),
             Rect::new(4.25, 8.75, 0.0, 0.0),
