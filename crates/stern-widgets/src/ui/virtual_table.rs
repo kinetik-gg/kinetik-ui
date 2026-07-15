@@ -350,7 +350,6 @@ impl Ui<'_> {
                     cell.cell.rect,
                     label,
                     response,
-                    config.disabled,
                     config.selection_mode == VirtualTableSelectionMode::Cell,
                 );
                 if table.cell_is_visible(cell) {
@@ -538,14 +537,13 @@ impl Ui<'_> {
         rect: Rect,
         label: &str,
         response: Response,
-        disabled: bool,
         show_focus_annuli: bool,
     ) {
         let recipe_state = ComponentState {
             hovered: response.state.hovered,
             pressed: response.state.pressed,
             focused: response.state.focused,
-            disabled,
+            disabled: response.state.disabled,
             selected: response.state.selected,
         };
         let recipe = self.theme.row(recipe_state);
