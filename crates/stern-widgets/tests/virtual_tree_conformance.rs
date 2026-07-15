@@ -615,6 +615,167 @@ fn focused_branch_annuli_are_invariant_across_row_and_disclosure_interactions() 
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn completed_disclosure_click_preserves_active_selected_row_focus_and_annuli() {
+    let model = nested_model();
+
+    for initially_expanded in [false, true] {
+        let mut expansion = TreeExpansion::new();
+        if initially_expanded {
+            expansion.expand(id(10));
+        }
+        let mut cursor = CollectionCursor::new();
+        let mut selection = Selection::new();
+        let mut memory = UiMemory::new();
+        let selected = click_row(
+            0,
+            Modifiers::default(),
+            &model,
+            &mut expansion,
+            &mut cursor,
+            &mut selection,
+            &mut memory,
+        );
+        let row_id = selected.tree_id.child(("virtual-tree-row", 10_u64));
+        let disclosure_id = selected.tree_id.child(("virtual-tree-disclosure", 10_u64));
+        assert_eq!(cursor.active(), Some(id(10)));
+        assert_eq!(selection.selected(), vec![id(10)]);
+        assert!(memory.is_focused(row_id));
+        assert_eq!(expansion.is_expanded(id(10)), initially_expanded);
+
+        let baseline = run_frame(
+            &model,
+            config(),
+            &mut expansion,
+            &mut cursor,
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+            false,
+        );
+        let baseline_item = baseline.output.responses[0];
+        assert_eq!(baseline_item.response.id, row_id);
+        assert!(baseline_item.response.state.focused);
+        assert!(baseline_item.response.state.selected);
+        assert_eq!(baseline_item.row.expanded, initially_expanded);
+        let baseline_base =
+            assert_tree_row_focus(&baseline.frame, Rect::new(0.0, 0.0, 160.0, 20.0), true);
+        let baseline_annuli =
+            baseline.frame.primitives[baseline_base + 1..=baseline_base + 2].to_vec();
+
+        let toggled = click_at(
+            0,
+            8.0,
+            Modifiers::default(),
+            1,
+            &model,
+            &mut expansion,
+            &mut cursor,
+            &mut selection,
+            &mut memory,
+            false,
+        );
+        let toggled_item = toggled.output.responses[0];
+        let disclosure = toggled_item
+            .disclosure_response
+            .expect("branch disclosure response");
+        assert_eq!(toggled_item.response.id, row_id);
+        assert_eq!(disclosure.id, disclosure_id);
+        assert!(!toggled_item.response.clicked);
+        assert!(disclosure.clicked);
+        assert!(toggled_item.response.state.focused);
+        assert!(toggled_item.response.state.selected);
+        assert_eq!(toggled_item.row.expanded, initially_expanded);
+        assert!(!toggled.output.selection_changed);
+        assert!(toggled.output.expansion_changed);
+        assert_eq!(toggled.output.toggled, Some(id(10)));
+        assert_eq!(toggled.output.cursor_target, baseline.output.cursor_target);
+        assert_eq!(toggled.output.activated, None);
+        assert_eq!(cursor.active(), Some(id(10)));
+        assert_eq!(selection.selected(), vec![id(10)]);
+        assert!(memory.is_focused(row_id));
+        assert_eq!(expansion.is_expanded(id(10)), !initially_expanded);
+        let toggled_semantic = toggled
+            .frame
+            .semantics
+            .get(row_id)
+            .expect("toggled row semantic");
+        assert!(toggled_semantic.state.focused);
+        assert!(toggled_semantic.state.selected);
+        assert_eq!(
+            toggled_semantic.state.expanded,
+            Some(initially_expanded),
+            "the click frame keeps its prepared projection"
+        );
+        let toggled_base =
+            assert_tree_row_focus(&toggled.frame, Rect::new(0.0, 0.0, 160.0, 20.0), true);
+        assert_eq!(
+            &toggled.frame.primitives[toggled_base + 1..=toggled_base + 2],
+            baseline_annuli.as_slice()
+        );
+
+        let following = run_frame(
+            &model,
+            config(),
+            &mut expansion,
+            &mut cursor,
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+            false,
+        );
+        let following_item = following.output.responses[0];
+        let following_disclosure = following_item
+            .disclosure_response
+            .expect("following branch disclosure response");
+        assert_eq!(following_item.response.id, row_id);
+        assert_eq!(following_disclosure.id, disclosure_id);
+        assert!(!following_item.response.clicked);
+        assert!(!following_disclosure.clicked);
+        assert!(following_item.response.state.focused);
+        assert!(following_item.response.state.selected);
+        assert_eq!(following_item.row.expanded, !initially_expanded);
+        assert!(!following.output.selection_changed);
+        assert!(!following.output.expansion_changed);
+        assert_eq!(following.output.toggled, None);
+        assert_eq!(
+            following.output.cursor_target,
+            baseline.output.cursor_target
+        );
+        assert_eq!(following.output.activated, None);
+        assert_eq!(cursor.active(), Some(id(10)));
+        assert_eq!(selection.selected(), vec![id(10)]);
+        assert!(memory.is_focused(row_id));
+        assert_eq!(
+            following
+                .callbacks
+                .iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>(),
+            if initially_expanded {
+                vec![id(10), id(20)]
+            } else {
+                vec![id(10), id(11), id(12), id(20)]
+            }
+        );
+        let following_semantic = following
+            .frame
+            .semantics
+            .get(row_id)
+            .expect("following row semantic");
+        assert!(following_semantic.state.focused);
+        assert!(following_semantic.state.selected);
+        assert_eq!(following_semantic.state.expanded, Some(!initially_expanded));
+        let following_base =
+            assert_tree_row_focus(&following.frame, Rect::new(0.0, 0.0, 160.0, 20.0), true);
+        assert_eq!(
+            &following.frame.primitives[following_base + 1..=following_base + 2],
+            baseline_annuli.as_slice()
+        );
+    }
+}
+
+#[test]
 fn disclosure_identity_isolated_from_row_focus_selection_activation_and_cursor() {
     let model = nested_model();
     let seed = run_frame(
