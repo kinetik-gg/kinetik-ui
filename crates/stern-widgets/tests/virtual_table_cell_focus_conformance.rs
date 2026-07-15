@@ -5,14 +5,15 @@
 use std::time::Duration;
 
 use stern_core::{
-    Brush, Color, ComponentState, FrameContext, PathElement, PhysicalSize, Point,
-    PointerButtonState, PointerInput, PointerOrder, Primitive, Rect, ScaleFactor, SemanticNode,
-    SemanticRole, Size, TimeInfo, UiInput, UiMemory, ViewportInfo, WidgetId, default_dark_theme,
+    Brush, Color, ComponentState, FrameContext, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
+    PathElement, PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, Primitive,
+    Rect, ScaleFactor, SemanticNode, SemanticRole, Size, TimeInfo, Transform, UiInput, UiMemory,
+    Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_widgets::{
-    CollectionProjection, ItemId, TableColumn, TableLayout, Ui, VirtualTableConfig,
-    VirtualTableOutput, VirtualTableRow, VirtualTableSelection, VirtualTableSelectionMode,
-    VirtualTableTarget,
+    CollectionProjection, ItemId, SortDirection, TableColumn, TableLayout, TableSort, Ui,
+    VirtualTableConfig, VirtualTableOutput, VirtualTableRow, VirtualTableSelection,
+    VirtualTableSelectionMode, VirtualTableTarget,
 };
 
 const BOUNDS: Rect = Rect::new(3.25, 7.75, 240.0, 84.0);
@@ -25,7 +26,7 @@ fn projection(count: u64) -> CollectionProjection {
     CollectionProjection::from_source_ids(&(1..=count).map(id).collect::<Vec<_>>())
 }
 
-fn columns(order: [u64; 3]) -> Vec<TableColumn> {
+fn columns(order: impl IntoIterator<Item = u64>) -> Vec<TableColumn> {
     order
         .into_iter()
         .map(|raw| {
@@ -40,19 +41,28 @@ fn columns(order: [u64; 3]) -> Vec<TableColumn> {
         .collect()
 }
 
-fn config(mode: VirtualTableSelectionMode) -> VirtualTableConfig {
+fn table_config(
+    bounds: Rect,
+    order: impl IntoIterator<Item = u64>,
+    sort: Option<TableSort>,
+    overscan: usize,
+) -> VirtualTableConfig {
     VirtualTableConfig::new(
-        BOUNDS,
+        bounds,
         TableLayout {
-            columns: columns([10, 20, 30]),
+            columns: columns(order),
             header_height: 20.25,
             row_height: 20.0,
-            sort: None,
+            sort,
         },
     )
     .label("Assets")
-    .overscan(0)
-    .selection_mode(mode)
+    .overscan(overscan)
+    .selection_mode(VirtualTableSelectionMode::Cell)
+}
+
+fn config(mode: VirtualTableSelectionMode) -> VirtualTableConfig {
+    table_config(BOUNDS, [10, 20, 30], None, 0).selection_mode(mode)
 }
 
 fn context(input: UiInput) -> FrameContext {
@@ -73,6 +83,21 @@ fn pointer_input(point: Point, pressed: bool, released: bool) -> UiInput {
             position: Some(point),
             primary: PointerButtonState::new(pressed, pressed, released),
             ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
+}
+
+fn key_input(key: Key) -> UiInput {
+    UiInput {
+        keyboard: KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: vec![KeyEvent::new(
+                key,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            )],
         },
         ..UiInput::default()
     }
@@ -145,9 +170,13 @@ fn run_frame(
 }
 
 fn cell_point(row: usize, column: usize) -> Point {
+    cell_point_in(BOUNDS, row, column)
+}
+
+fn cell_point_in(bounds: Rect, row: usize, column: usize) -> Point {
     Point::new(
-        BOUNDS.x + column as f32 * 80.0 + 40.0,
-        BOUNDS.y + 20.25 + row as f32 * 20.0 + 10.0,
+        bounds.x + column as f32 * 80.0 + 40.0,
+        bounds.y + 20.25 + row as f32 * 20.0 + 10.0,
     )
 }
 
@@ -167,6 +196,29 @@ fn select_cell(
     column: usize,
 ) -> Run {
     let point = cell_point(row, column);
+    let _ = run_frame(
+        projection,
+        table_config.clone(),
+        selection,
+        memory,
+        pointer_input(point, true, false),
+    );
+    run_frame(
+        projection,
+        table_config,
+        selection,
+        memory,
+        pointer_input(point, false, true),
+    )
+}
+
+fn select_cell_in(
+    projection: &CollectionProjection,
+    table_config: VirtualTableConfig,
+    selection: &mut VirtualTableSelection,
+    memory: &mut UiMemory,
+    point: Point,
+) -> Run {
     let _ = run_frame(
         projection,
         table_config.clone(),
@@ -370,6 +422,69 @@ fn assert_focus_only_transition(focused: &Run, unfocused: &Run) {
         unfocused.frame.platform_requests
     );
     assert_eq!(focused.frame.warnings, unfocused.frame.warnings);
+}
+
+fn assert_cell_focus_transaction(run: &Run, target: VirtualTableTarget, changed: bool) {
+    assert_eq!(run.output.selection_changed, changed);
+    assert_eq!(run.output.sort_requested, None);
+    assert_eq!(run.output.resize_requested, None);
+    assert_eq!(
+        run.output
+            .selection_responses
+            .iter()
+            .filter(|response| response.response.state.focused)
+            .map(|response| response.target)
+            .collect::<Vec<_>>(),
+        vec![target]
+    );
+    assert!(run.frame.actions.is_empty());
+    assert_focused_cell(run, target);
+}
+
+fn assert_body_scope(run: &Run, bounds: Rect, offset: Vec2) -> (usize, usize) {
+    let body_clip = Rect::new(
+        bounds.x,
+        bounds.y + 20.25,
+        bounds.width,
+        bounds.height - 20.25,
+    );
+    let clip_begin = run
+        .frame
+        .primitives
+        .iter()
+        .position(
+            |primitive| matches!(primitive, Primitive::ClipBegin { rect, .. } if *rect == body_clip),
+        )
+        .expect("body clip begin");
+    let Primitive::ClipBegin {
+        id: body_clip_id, ..
+    } = run.frame.primitives[clip_begin]
+    else {
+        unreachable!()
+    };
+    let clip_end = run
+        .frame
+        .primitives
+        .iter()
+        .enumerate()
+        .skip(clip_begin + 1)
+        .find_map(|(index, primitive)| {
+            matches!(primitive, Primitive::ClipEnd { id } if *id == body_clip_id).then_some(index)
+        })
+        .expect("body clip end");
+    assert_eq!(
+        run.frame.primitives[clip_begin + 1],
+        Primitive::TransformBegin(Transform::translation(Vec2::new(-offset.x, -offset.y)))
+    );
+    assert_eq!(run.frame.primitives[clip_end - 1], Primitive::TransformEnd);
+    assert_eq!(
+        run.frame.primitives[clip_begin + 1..clip_end]
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::TransformBegin(_)))
+            .count(),
+        1
+    );
+    (clip_begin, clip_end)
 }
 
 #[test]
@@ -601,6 +716,422 @@ fn row_mode_retains_row_focus_and_exact_cell_bases_without_any_annuli() {
         UiInput::default(),
     );
     assert_focus_only_transition(&focused, &unfocused);
+}
+
+#[test]
+fn pointer_and_every_cell_navigation_key_move_one_stable_focus_owner_and_reveal() {
+    let bounds = Rect::new(3.25, 7.75, 120.0, 84.0);
+    let items = projection(20);
+    let table_config = table_config(bounds, [10, 20, 30], None, 1);
+    let mut selection = VirtualTableSelection::new();
+    let mut memory = UiMemory::new();
+    let selected = select_cell_in(
+        &items,
+        table_config.clone(),
+        &mut selection,
+        &mut memory,
+        cell_point_in(bounds, 0, 0),
+    );
+    let first = VirtualTableTarget::Cell {
+        row: id(1),
+        column: id(10),
+    };
+    assert_cell_focus_transaction(&selected, first, true);
+
+    for (key, target, expected_offset) in [
+        (
+            Key::ArrowRight,
+            VirtualTableTarget::Cell {
+                row: id(1),
+                column: id(20),
+            },
+            Vec2::new(40.0, 0.0),
+        ),
+        (
+            Key::End,
+            VirtualTableTarget::Cell {
+                row: id(1),
+                column: id(30),
+            },
+            Vec2::new(120.0, 0.0),
+        ),
+        (
+            Key::ArrowLeft,
+            VirtualTableTarget::Cell {
+                row: id(1),
+                column: id(20),
+            },
+            Vec2::new(80.0, 0.0),
+        ),
+        (
+            Key::Home,
+            VirtualTableTarget::Cell {
+                row: id(1),
+                column: id(10),
+            },
+            Vec2::new(0.0, 0.0),
+        ),
+        (
+            Key::ArrowDown,
+            VirtualTableTarget::Cell {
+                row: id(2),
+                column: id(10),
+            },
+            Vec2::new(0.0, 0.0),
+        ),
+        (
+            Key::PageDown,
+            VirtualTableTarget::Cell {
+                row: id(5),
+                column: id(10),
+            },
+            Vec2::new(0.0, 36.25),
+        ),
+        (
+            Key::ArrowUp,
+            VirtualTableTarget::Cell {
+                row: id(4),
+                column: id(10),
+            },
+            Vec2::new(0.0, 36.25),
+        ),
+        (
+            Key::PageUp,
+            VirtualTableTarget::Cell {
+                row: id(1),
+                column: id(10),
+            },
+            Vec2::new(0.0, 0.0),
+        ),
+    ] {
+        let moved = run_frame(
+            &items,
+            table_config.clone(),
+            &mut selection,
+            &mut memory,
+            key_input(key),
+        );
+        assert_eq!(selection.target(), Some(target));
+        assert_cell_focus_transaction(&moved, target, true);
+        let settled = run_frame(
+            &items,
+            table_config.clone(),
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+        );
+        assert_eq!(settled.output.window.offset, expected_offset);
+        assert_cell_focus_transaction(&settled, target, false);
+    }
+}
+
+#[test]
+fn stable_cell_identity_survives_projection_column_and_sort_reorder_then_repairs_removal() {
+    let original = CollectionProjection::from_source_ids(&[id(1), id(2), id(3), id(4)]);
+    let mut selection = VirtualTableSelection::new();
+    let mut memory = UiMemory::new();
+    let base_config = table_config(BOUNDS, [10, 20, 30], None, 1);
+    let selected = select_cell_in(
+        &original,
+        base_config,
+        &mut selection,
+        &mut memory,
+        cell_point(1, 1),
+    );
+    let stable = VirtualTableTarget::Cell {
+        row: id(2),
+        column: id(20),
+    };
+    let stable_id = selection_response(&selected, stable).id;
+    assert!(memory.is_focused(stable_id));
+
+    let reordered = CollectionProjection::from_source_ids(&[id(4), id(3), id(1), id(2)]);
+    let projection_reordered = run_frame(
+        &reordered,
+        table_config(BOUNDS, [10, 20, 30], None, 1),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(selection.target(), Some(stable));
+    assert_eq!(
+        selection_response(&projection_reordered, stable).id,
+        stable_id
+    );
+    assert_cell_focus_transaction(&projection_reordered, stable, false);
+
+    let sort = TableSort {
+        column: id(30),
+        direction: SortDirection::Descending,
+    };
+    let sorted = run_frame(
+        &reordered,
+        table_config(BOUNDS, [10, 20, 30], Some(sort), 1),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(selection.target(), Some(stable));
+    assert_eq!(selection_response(&sorted, stable).id, stable_id);
+    assert_cell_focus_transaction(&sorted, stable, false);
+
+    let columns_reordered = run_frame(
+        &reordered,
+        table_config(BOUNDS, [20, 30, 10], Some(sort), 1),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(selection.target(), Some(stable));
+    assert_eq!(selection_response(&columns_reordered, stable).id, stable_id);
+    assert_cell_focus_transaction(&columns_reordered, stable, false);
+
+    let removed_row = CollectionProjection::from_source_ids(&[id(4), id(3), id(1)]);
+    let repaired_row = VirtualTableTarget::Cell {
+        row: id(1),
+        column: id(20),
+    };
+    let row_repaired = run_frame(
+        &removed_row,
+        table_config(BOUNDS, [20, 30, 10], Some(sort), 1),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(selection.target(), Some(repaired_row));
+    assert!(!memory.is_focused(stable_id));
+    assert_cell_focus_transaction(&row_repaired, repaired_row, true);
+    assert!(
+        row_repaired
+            .output
+            .selection_responses
+            .iter()
+            .all(|response| response.target != stable)
+    );
+
+    let repaired_column = VirtualTableTarget::Cell {
+        row: id(1),
+        column: id(30),
+    };
+    let column_repaired = run_frame(
+        &removed_row,
+        table_config(BOUNDS, [30, 10], Some(sort), 1),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(selection.target(), Some(repaired_column));
+    assert_cell_focus_transaction(&column_repaired, repaired_column, true);
+    assert!(
+        column_repaired
+            .output
+            .selection_responses
+            .iter()
+            .all(|response| response.target != repaired_row)
+    );
+}
+
+#[test]
+fn fractional_two_axis_scroll_clips_one_full_geometry_pair_in_the_exact_body_scope() {
+    let items = projection(12);
+    let seed_bounds = Rect::new(3.25, 7.75, 240.0, 120.0);
+    let bounds = Rect::new(3.25, 7.75, 123.5, 64.0);
+    let offset = Vec2::new(30.25, 12.5);
+    let scrolled_config = table_config(bounds, [10, 20, 30], None, 1);
+    let body_clip = Rect::new(
+        bounds.x,
+        bounds.y + 20.25,
+        bounds.width,
+        bounds.height - 20.25,
+    );
+
+    for (row, column, visible) in [(0, 0, true), (1, 1, true), (2, 0, true), (3, 2, false)] {
+        let mut seeded_selection = VirtualTableSelection::new();
+        let seeded = select_cell_in(
+            &items,
+            table_config(seed_bounds, [10, 20, 30], None, 1),
+            &mut seeded_selection,
+            &mut UiMemory::new(),
+            cell_point_in(seed_bounds, row, column),
+        );
+        let target = cell_target(row, column);
+        let cell_id = seeded.root.child((
+            "virtual-table-cell",
+            row as u64 + 1,
+            [10_u64, 20, 30][column],
+        ));
+
+        let mut focused_selection = seeded_selection.clone();
+        let mut focused_memory = UiMemory::new();
+        focused_memory.set_scroll_offset(seeded.root, offset);
+        focused_memory.focus(cell_id);
+        let focused = run_frame(
+            &items,
+            scrolled_config.clone(),
+            &mut focused_selection,
+            &mut focused_memory,
+            UiInput::default(),
+        );
+        assert_eq!(focused.output.window.offset, offset);
+        assert!(
+            focused.output.window.body.materialized_range.len()
+                > focused.output.window.body.visible_range.len()
+        );
+        assert_eq!(focused.callbacks.len(), focused.output.rows.len());
+        assert_eq!(
+            focused.callbacks,
+            focused
+                .output
+                .rows
+                .iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>()
+        );
+        assert_cell_focus_transaction(&focused, target, false);
+        let response = selection_response(&focused, target);
+        let translated = Rect::new(
+            response.rect.x - offset.x,
+            response.rect.y - offset.y,
+            response.rect.width,
+            response.rect.height,
+        );
+        assert_eq!(translated.intersection(body_clip).is_some(), visible);
+        match (row, column) {
+            (0, 0) => {
+                assert!(translated.x < body_clip.x && translated.max_x() > body_clip.x);
+                assert!(translated.y < body_clip.y && translated.max_y() > body_clip.y);
+            }
+            (1, 1) => {
+                assert!(translated.x < body_clip.max_x() && translated.max_x() > body_clip.max_x());
+            }
+            (2, 0) => {
+                assert!(translated.y < body_clip.max_y() && translated.max_y() > body_clip.max_y());
+            }
+            (3, 2) => assert!(translated.intersection(body_clip).is_none()),
+            _ => unreachable!(),
+        }
+        let semantic = focused.frame.semantics.get(cell_id);
+        assert_eq!(semantic.is_some(), visible);
+        let (clip_begin, clip_end) = assert_body_scope(&focused, bounds, offset);
+        let base = cell_base_index(&focused, target);
+        assert!(clip_begin < base && base + 3 < clip_end);
+
+        let mut unfocused_selection = seeded_selection;
+        let mut unfocused_memory = UiMemory::new();
+        unfocused_memory.set_scroll_offset(seeded.root, offset);
+        let unfocused = run_frame(
+            &items,
+            scrolled_config.clone(),
+            &mut unfocused_selection,
+            &mut unfocused_memory,
+            UiInput::default(),
+        );
+        assert_focus_only_transition(&focused, &unfocused);
+    }
+}
+
+#[test]
+fn ten_and_hundred_thousand_rows_bound_materialization_without_recycled_focus_transfer() {
+    let bounds = Rect::new(3.25, 7.75, 123.5, 64.0);
+    let table_config = table_config(bounds, [10, 20, 30], None, 2);
+    for count in [10_000_u64, 100_000] {
+        let items = projection(count);
+        let mut selection = VirtualTableSelection::new();
+        let mut seed_memory = UiMemory::new();
+        let seed = select_cell_in(
+            &items,
+            table_config.clone(),
+            &mut selection,
+            &mut seed_memory,
+            cell_point_in(bounds, 0, 1),
+        );
+        let original = VirtualTableTarget::Cell {
+            row: id(1),
+            column: id(20),
+        };
+        let original_id = selection_response(&seed, original).id;
+        let far_offset = Vec2::new(30.25, count as f32 * 10.0 + 0.5);
+        let mut memory = UiMemory::new();
+        memory.set_scroll_offset(seed.root, far_offset);
+        memory.focus(original_id);
+        let scrolled = run_frame(
+            &items,
+            table_config.clone(),
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+        );
+        assert_eq!(scrolled.output.window.offset, far_offset);
+        assert_eq!(selection.target(), Some(original));
+        assert!(memory.is_focused(original_id));
+        assert_eq!(scrolled.callbacks.len(), scrolled.output.rows.len());
+        assert!(scrolled.callbacks.len() <= 8);
+        assert_eq!(
+            scrolled.callbacks.len(),
+            scrolled.output.window.body.materialized_range.len()
+        );
+        assert!(
+            scrolled
+                .output
+                .selection_responses
+                .iter()
+                .all(|response| !response.response.state.focused)
+        );
+        assert!(
+            scrolled
+                .frame
+                .semantics
+                .nodes()
+                .iter()
+                .all(|node| !node.state.focused)
+        );
+        assert_eq!(
+            scrolled
+                .frame
+                .primitives
+                .iter()
+                .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+                .count(),
+            0
+        );
+
+        let staged_reveal = run_frame(
+            &items,
+            table_config.clone(),
+            &mut selection,
+            &mut memory,
+            key_input(Key::ArrowDown),
+        );
+        let revealed_target = VirtualTableTarget::Cell {
+            row: id(2),
+            column: id(20),
+        };
+        assert_eq!(selection.target(), Some(revealed_target));
+        assert!(staged_reveal.output.selection_changed);
+        assert!(staged_reveal.callbacks.len() <= 8);
+        assert_eq!(
+            staged_reveal
+                .frame
+                .primitives
+                .iter()
+                .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+                .count(),
+            0
+        );
+
+        let revealed = run_frame(
+            &items,
+            table_config.clone(),
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+        );
+        assert_eq!(revealed.output.window.offset, Vec2::new(36.5, 20.0));
+        assert!(revealed.callbacks.len() <= 8);
+        assert!(revealed.callbacks.contains(&id(2)));
+        assert_cell_focus_transaction(&revealed, revealed_target, false);
+        assert!(!memory.is_focused(original_id));
+    }
 }
 
 fn linear_channel(channel: f32) -> f32 {
