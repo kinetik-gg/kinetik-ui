@@ -946,3 +946,496 @@ fn retained_disabled_focus_is_suppressed_while_read_only_focus_remains_visible_a
     );
     assert!(read_only.output.requests.is_empty());
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn rename_transfers_focus_omits_item_annuli_and_restores_them_after_all_terminal_paths() {
+    let model = AssetBrowserModel::new(vec![asset(1, "Stone", "material")]);
+    let cfg = config(AssetBrowserViewMode::List);
+    let mut state = AssetBrowserState::new();
+    let mut memory = UiMemory::new();
+    let idle = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+    );
+    let focused = click(
+        idle.items[0].rect.center(),
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+    );
+    let item_widget = focused.root.child(("asset-browser-item", 1_u64));
+    let rename_widget = focused.root.child(("inline-edit", 1_u64));
+    assert_item_focus(&focused, id(1));
+
+    let begin = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        key_input(Key::Function(2)),
+    );
+    assert!(matches!(
+        begin.output.requests.as_slice(),
+        [AssetBrowserRequest::Rename(InlineEditRequest::Begin(request))]
+            if request.target == id(1)
+    ));
+    assert_eq!(state.rename_target(), Some(id(1)));
+    assert!(memory.is_focused(rename_widget));
+    assert!(!item_response(&begin, id(1)).state.focused);
+    assert_no_item_annuli(&begin);
+    assert!(
+        begin
+            .frame
+            .primitives
+            .iter()
+            .any(|primitive| matches!(primitive, Primitive::Text(text) if text.text == "Stone"))
+    );
+
+    let drafted = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        typed_input("X"),
+    );
+    assert!(matches!(
+        drafted.output.requests.as_slice(),
+        [AssetBrowserRequest::Rename(InlineEditRequest::DraftEdit(draft))]
+            if draft.target == id(1) && draft.draft_text == "StoneX"
+    ));
+    assert_only_item_content_while_editing(&drafted, id(1));
+
+    let conflict = run_frame_with_options(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        key_input(Key::Enter),
+        true,
+        false,
+    );
+    assert_eq!(
+        conflict
+            .output
+            .rename_conflict
+            .as_ref()
+            .map(|conflict| conflict.message.as_str()),
+        Some("name already exists")
+    );
+    assert_eq!(state.rename_target(), Some(id(1)));
+    assert!(memory.is_focused(rename_widget));
+    assert_only_item_content_while_editing(&conflict, id(1));
+
+    let committed = run_frame_with_options(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        key_input(Key::Enter),
+        false,
+        false,
+    );
+    assert!(matches!(
+        committed.output.requests.as_slice(),
+        [AssetBrowserRequest::Rename(InlineEditRequest::Commit(commit))]
+            if commit.target == id(1)
+                && commit.draft_text == "StoneX"
+                && commit.reason == InlineEditCommitReason::Enter
+    ));
+    assert_eq!(state.rename_target(), None);
+    assert!(memory.is_focused(item_widget));
+    assert_only_item_content_while_editing(&committed, id(1));
+    let after_commit = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_item_focus(&after_commit, id(1));
+
+    let cancel_begin = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        key_input(Key::Function(2)),
+    );
+    assert_no_item_annuli(&cancel_begin);
+    let cancelled = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        key_input(Key::Escape),
+    );
+    assert!(matches!(
+        cancelled.output.requests.as_slice(),
+        [AssetBrowserRequest::Rename(InlineEditRequest::Cancel(cancel))]
+            if cancel.target == id(1) && cancel.reason == InlineEditCancelReason::Escape
+    ));
+    assert_only_item_content_while_editing(&cancelled, id(1));
+    let after_cancel = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_item_focus(&after_cancel, id(1));
+
+    let focus_loss_begin = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        key_input(Key::Function(2)),
+    );
+    assert_no_item_annuli(&focus_loss_begin);
+    let _ = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        typed_input("Y"),
+    );
+    memory.focus(focus_loss_begin.outside);
+    let focus_lost = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert!(matches!(
+        focus_lost.output.requests.as_slice(),
+        [AssetBrowserRequest::Rename(InlineEditRequest::Commit(commit))]
+            if commit.target == id(1)
+                && commit.draft_text == "StoneY"
+                && commit.reason == InlineEditCommitReason::FocusLost
+    ));
+    assert_only_item_content_while_editing(&focus_lost, id(1));
+    let after_focus_loss = run_frame(&model, cfg, &mut state, &mut memory, UiInput::default());
+    assert_item_focus(&after_focus_loss, id(1));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn drop_background_and_context_owners_never_create_asset_item_annuli() {
+    let model = AssetBrowserModel::new(vec![
+        asset(1, "One", "mesh"),
+        asset(2, "Two", "mesh"),
+        asset(3, "Three", "mesh"),
+    ]);
+    let cfg = config(AssetBrowserViewMode::List);
+    let mut state = AssetBrowserState::new();
+    let mut memory = UiMemory::new();
+    let idle = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+    );
+    let source = idle.items[0].rect.center();
+    let target = idle.items[2].rect.center();
+    let focused = click(source, &model, cfg.clone(), &mut state, &mut memory);
+    let source_widget = focused.root.child(("asset-browser-item", 1_u64));
+    let baseline_annuli = assert_item_focus(&focused, id(1));
+    assert_eq!(state.cursor.active(), Some(id(1)));
+    assert_eq!(state.selection.selected(), vec![id(1)]);
+
+    let pressed = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        pointer_input(source, true, true, false),
+    );
+    assert_eq!(assert_item_focus(&pressed, id(1)), baseline_annuli);
+    let dragging = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        move_input(target, Vec2::new(target.x - source.x, target.y - source.y)),
+    );
+    assert_eq!(assert_item_focus(&dragging, id(1)), baseline_annuli);
+    assert_eq!(
+        dragging
+            .output
+            .drag_payload
+            .as_ref()
+            .map(|source| source.items.clone()),
+        Some(vec![id(1)])
+    );
+    assert!(matches!(
+        dragging
+            .output
+            .drop_preview
+            .as_ref()
+            .map(|preview| preview.kind),
+        Some(AssetBrowserDropTargetKind::Item { target }) if target == id(3)
+    ));
+    let clip_end = dragging
+        .frame
+        .primitives
+        .iter()
+        .rposition(|primitive| matches!(primitive, Primitive::ClipEnd { .. }))
+        .expect("asset clip end");
+    assert!(matches!(
+        dragging.frame.primitives[clip_end - 1],
+        Primitive::Rect(preview) if preview.rect == item_rect(&dragging, id(3)).rect
+    ));
+    let dropped = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        pointer_input(target, false, false, true),
+    );
+    assert!(matches!(
+        dropped.output.requests.as_slice(),
+        [AssetBrowserRequest::Drop(drop)]
+            if drop.source.items == vec![id(1)]
+                && drop.kind == AssetBrowserDropTargetKind::Item { target: id(3) }
+    ));
+    assert_eq!(state.cursor.active(), Some(id(1)));
+    assert_eq!(state.selection.selected(), vec![id(1)]);
+    assert!(memory.is_focused(source_widget));
+
+    for derived_owner in [
+        source_widget.child("drop"),
+        focused.root.child("background"),
+        focused.root.child("background").child("drop"),
+    ] {
+        memory.focus(derived_owner);
+        let derived = run_frame(
+            &model,
+            cfg.clone(),
+            &mut state,
+            &mut memory,
+            UiInput::default(),
+        );
+        assert!(
+            derived
+                .output
+                .responses
+                .iter()
+                .all(|response| !response.response.state.focused)
+        );
+        assert_eq!(
+            derived
+                .frame
+                .primitives
+                .iter()
+                .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+                .count(),
+            0
+        );
+        assert_eq!(state.cursor.active(), Some(id(1)));
+        assert_eq!(state.selection.selected(), vec![id(1)]);
+    }
+
+    memory.focus(source_widget);
+    let context_opened = context_click(target, &model, cfg.clone(), &mut state, &mut memory);
+    assert_eq!(
+        context_opened.output.context_opened,
+        Some(CollectionContextTarget::item(id(3)))
+    );
+    assert_eq!(state.cursor.active(), Some(id(1)));
+    assert_eq!(state.selection.selected(), vec![id(1)]);
+    let context_trigger = focused.root.child(("asset-browser-item", 3_u64));
+    assert_eq!(memory.focused(), Some(context_trigger));
+    let menu = run_frame_with_options(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+        false,
+        true,
+    );
+    assert!(!item_response(&menu, id(1)).state.focused);
+    assert!(item_response(&menu, id(3)).state.focused);
+    assert_item_focus(&menu, id(3));
+    let inspect = menu
+        .frame
+        .semantics
+        .nodes()
+        .iter()
+        .find(|node| node.label.as_deref() == Some("Inspect"))
+        .expect("context overlay row");
+    let inspect_id = inspect.id;
+    let clip_end = menu
+        .frame
+        .primitives
+        .iter()
+        .position(|primitive| matches!(primitive, Primitive::ClipEnd { .. }))
+        .expect("asset clip end");
+    let inspect_text = menu
+        .frame
+        .primitives
+        .iter()
+        .position(|primitive| matches!(primitive, Primitive::Text(text) if text.text == "Inspect"))
+        .expect("context text paint");
+    assert!(inspect_text > clip_end);
+
+    memory.focus(inspect_id);
+    let overlay_focused = run_frame_with_options(
+        &model,
+        cfg,
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+        false,
+        true,
+    );
+    assert!(
+        overlay_focused
+            .output
+            .responses
+            .iter()
+            .all(|response| !response.response.state.focused)
+    );
+    assert_eq!(
+        overlay_focused
+            .frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        0
+    );
+    assert_eq!(state.cursor.active(), Some(id(1)));
+    assert_eq!(state.selection.selected(), vec![id(1)]);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn selected_names_inventory_only_the_named_exception_while_muted_kind_remains_nonconforming() {
+    let theme = default_dark_theme();
+    let model = AssetBrowserModel::new(vec![asset(1, "Selected asset", "Selected kind")]);
+
+    for view_mode in [AssetBrowserViewMode::Grid, AssetBrowserViewMode::List] {
+        let seed = run_frame(
+            &model,
+            config(view_mode),
+            &mut AssetBrowserState::new(),
+            &mut UiMemory::new(),
+            UiInput::default(),
+        );
+        let target_widget = seed.root.child(("asset-browser-item", 1_u64));
+        let point = seed.items[0].rect.center();
+        for (focused, hovered, pressed) in [
+            (false, false, false),
+            (false, true, false),
+            (false, false, true),
+            (true, false, false),
+            (true, true, false),
+            (true, false, true),
+        ] {
+            let input = if pressed {
+                pointer_input(point, true, true, false)
+            } else if hovered {
+                pointer_input(point, false, false, false)
+            } else {
+                UiInput::default()
+            };
+            let mut state = AssetBrowserState::new();
+            state.selection.replace(id(1));
+            let mut memory = UiMemory::new();
+            if focused {
+                memory.focus(target_widget);
+            }
+            let run = run_frame(&model, config(view_mode), &mut state, &mut memory, input);
+            let Primitive::Rect(base) = &run.frame.primitives[item_base_index(&run, id(1))] else {
+                unreachable!()
+            };
+            assert_eq!(
+                base.fill,
+                Some(Brush::Solid(theme.colors.selection.background))
+            );
+            let name = text_color(&run, "Selected asset");
+            let kind = text_color(&run, "Selected kind");
+            assert_eq!(name, theme.colors.selection.foreground);
+            assert_eq!(kind, theme.colors.content.muted);
+            let name_ratio = contrast_ratio(name, theme.colors.selection.background);
+            let kind_ratio = contrast_ratio(kind, theme.colors.selection.background);
+            assert!((3.52..3.54).contains(&name_ratio));
+            assert!(name_ratio < 4.5);
+            assert!((1.23..1.25).contains(&kind_ratio));
+            assert!(kind_ratio < 3.0);
+            if focused {
+                assert_item_focus(&run, id(1));
+            } else {
+                assert_eq!(
+                    run.frame
+                        .primitives
+                        .iter()
+                        .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+                        .count(),
+                    0
+                );
+            }
+        }
+    }
+
+    let disabled_model = AssetBrowserModel::new(vec![
+        asset(1, "Disabled selected", "Disabled kind").disabled(true),
+    ]);
+    let mut disabled_state = AssetBrowserState::new();
+    disabled_state.selection.replace(id(1));
+    let seed = run_frame(
+        &disabled_model,
+        config(AssetBrowserViewMode::List),
+        &mut AssetBrowserState::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let mut disabled_memory = UiMemory::new();
+    disabled_memory.focus(seed.root.child(("asset-browser-item", 1_u64)));
+    let disabled = run_frame(
+        &disabled_model,
+        config(AssetBrowserViewMode::List),
+        &mut disabled_state,
+        &mut disabled_memory,
+        UiInput::default(),
+    );
+    let response = item_response(&disabled, id(1));
+    let recipe = theme.row(ComponentState {
+        hovered: response.state.hovered,
+        pressed: response.state.pressed,
+        focused: response.state.focused,
+        disabled: response.state.disabled,
+        selected: response.state.selected,
+    });
+    let Primitive::Rect(base) = &disabled.frame.primitives[item_base_index(&disabled, id(1))]
+    else {
+        unreachable!()
+    };
+    assert_eq!(base.fill, Some(recipe.background));
+    assert_eq!(
+        text_color(&disabled, "Disabled selected"),
+        recipe.foreground
+    );
+    assert_ne!(recipe.foreground, theme.colors.selection.foreground);
+    assert_ne!(
+        base.fill,
+        Some(Brush::Solid(theme.colors.selection.background))
+    );
+    assert_eq!(
+        disabled
+            .frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        0
+    );
+}
