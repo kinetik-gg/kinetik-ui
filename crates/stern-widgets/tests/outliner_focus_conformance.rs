@@ -218,6 +218,26 @@ fn row_response(run: &Run, target: ItemId) -> stern_widgets::outliner::OutlinerR
         .unwrap_or_else(|| panic!("missing response for row {}", target.raw()))
 }
 
+fn assert_isolated_nested_click(run: &Run, target: ItemId, target_kind: &str) {
+    let response = row_response(run, target);
+    assert!(!response.row.clicked);
+    assert_eq!(
+        response.disclosure.expect("disclosure response").clicked,
+        target_kind == "disclosure"
+    );
+    assert_eq!(
+        response.visibility.expect("visibility response").clicked,
+        target_kind == "visibility"
+    );
+    assert_eq!(
+        response.lock.expect("lock response").clicked,
+        target_kind == "lock"
+    );
+    assert!(!run.output.selection_changed);
+    assert_eq!(run.output.activated, None);
+    assert_eq!(run.output.context_opened, None);
+}
+
 fn row_zones(run: &Run, target: ItemId) -> &OutlinerRowZones {
     run.rows
         .iter()
@@ -618,6 +638,13 @@ fn row_nested_drag_and_completed_control_transactions_preserve_owned_focus() {
             &mut memory,
         );
         let before_paths = assert_row_focus(&selected, id(1));
+        let row_id = selected.root.child(("outliner-row", 1_u64));
+        assert_eq!(memory.focused(), Some(row_id));
+        assert_eq!(state.cursor.active(), Some(id(1)));
+        assert_eq!(state.selection.selected(), vec![id(1)]);
+        let selected_semantic = selected.frame.semantics.get(row_id).expect("row semantic");
+        assert!(selected_semantic.state.focused);
+        assert!(selected_semantic.state.selected);
         let zones = row_zones(&selected, id(1));
         let point = match target_kind {
             "disclosure" => zones.disclosure_rect.center(),
@@ -626,6 +653,7 @@ fn row_nested_drag_and_completed_control_transactions_preserve_owned_focus() {
             _ => unreachable!(),
         };
         let completed = click(point, 1, &model, cfg.clone(), &mut state, &mut memory);
+        assert_isolated_nested_click(&completed, id(1), target_kind);
         assert_eq!(state.cursor.active(), Some(id(1)));
         assert_eq!(state.selection.selected(), vec![id(1)]);
         assert_eq!(assert_row_focus(&completed, id(1)), before_paths);
@@ -645,11 +673,13 @@ fn row_nested_drag_and_completed_control_transactions_preserve_owned_focus() {
                 assert_eq!(assert_row_focus(&following, id(1)), before_paths);
             }
             "visibility" => {
+                assert!(!completed.output.expansion_changed);
                 assert!(matches!(
                     completed.output.requests.as_slice(),
                     [OutlinerRequest::Visibility(request)]
                         if request.target == id(1) && request.visible
                 ));
+                assert!(!state.expansion.is_expanded(id(1)));
                 let mut updated_flags = flags;
                 updated_flags.visible = false;
                 let updated = owned_model(updated_flags);
@@ -664,11 +694,13 @@ fn row_nested_drag_and_completed_control_transactions_preserve_owned_focus() {
                 assert_eq!(assert_row_focus(&following, id(1)), before_paths);
             }
             "lock" => {
+                assert!(!completed.output.expansion_changed);
                 assert!(matches!(
                     completed.output.requests.as_slice(),
                     [OutlinerRequest::Lock(request)]
                         if request.target == id(1) && !request.locked
                 ));
+                assert!(!state.expansion.is_expanded(id(1)));
                 let mut updated_flags = flags;
                 updated_flags.locked = true;
                 let updated = owned_model(updated_flags);
@@ -681,6 +713,70 @@ fn row_nested_drag_and_completed_control_transactions_preserve_owned_focus() {
                 );
                 assert!(row_zones(&following, id(1)).row.flags.locked);
                 assert_eq!(assert_row_focus(&following, id(1)), before_paths);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    for target_kind in ["disclosure", "visibility", "lock"] {
+        let mut state = OutlinerState::new();
+        let mut memory = UiMemory::new();
+        let seed = run_frame(
+            &model,
+            cfg.clone(),
+            &mut state,
+            &mut memory,
+            UiInput::default(),
+        );
+        let row_id = seed.root.child(("outliner-row", 1_u64));
+        assert_eq!(memory.focused(), None);
+        assert_eq!(state.cursor.active(), None);
+        assert!(state.selection.selected().is_empty());
+        let seed_semantic = seed.frame.semantics.get(row_id).expect("row semantic");
+        assert!(!seed_semantic.state.focused);
+        assert!(!seed_semantic.state.selected);
+
+        let zones = row_zones(&seed, id(1));
+        let point = match target_kind {
+            "disclosure" => zones.disclosure_rect.center(),
+            "visibility" => zones.visibility_toggle_rect.center(),
+            "lock" => zones.lock_toggle_rect.center(),
+            _ => unreachable!(),
+        };
+        let completed = click(point, 1, &model, cfg.clone(), &mut state, &mut memory);
+        assert_isolated_nested_click(&completed, id(1), target_kind);
+        assert_eq!(memory.focused(), None);
+        assert_eq!(state.cursor.active(), None);
+        assert!(state.selection.selected().is_empty());
+        assert!(!row_response(&completed, id(1)).row.state.focused);
+        assert_no_row_annuli(&completed, id(1));
+        let semantic = completed.frame.semantics.get(row_id).expect("row semantic");
+        assert!(!semantic.state.focused);
+        assert!(!semantic.state.selected);
+
+        match target_kind {
+            "disclosure" => {
+                assert!(completed.output.expansion_changed);
+                assert!(completed.output.requests.is_empty());
+                assert!(state.expansion.is_expanded(id(1)));
+            }
+            "visibility" => {
+                assert!(!completed.output.expansion_changed);
+                assert!(matches!(
+                    completed.output.requests.as_slice(),
+                    [OutlinerRequest::Visibility(request)]
+                        if request.target == id(1) && request.visible
+                ));
+                assert!(!state.expansion.is_expanded(id(1)));
+            }
+            "lock" => {
+                assert!(!completed.output.expansion_changed);
+                assert!(matches!(
+                    completed.output.requests.as_slice(),
+                    [OutlinerRequest::Lock(request)]
+                        if request.target == id(1) && !request.locked
+                ));
+                assert!(!state.expansion.is_expanded(id(1)));
             }
             _ => unreachable!(),
         }
