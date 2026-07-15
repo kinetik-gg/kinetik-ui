@@ -5,10 +5,10 @@
 use std::time::Duration;
 
 use stern_core::{
-    ActionDescriptor, ComponentState, FrameContext, Key, KeyEvent, KeyState, KeyboardInput,
-    Modifiers, PathElement, PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder,
-    Primitive, Rect, ScaleFactor, SemanticNode, Size, TimeInfo, UiInput, UiMemory, Vec2,
-    ViewportInfo, WidgetId, default_dark_theme,
+    ActionDescriptor, Brush, Color, ComponentState, FrameContext, Key, KeyEvent, KeyState,
+    KeyboardInput, Modifiers, PathElement, PhysicalSize, Point, PointerButtonState, PointerInput,
+    PointerOrder, Primitive, Rect, ScaleFactor, SemanticActionKind, SemanticNode, Size, TimeInfo,
+    UiInput, UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_widgets::outliner::{
     OutlinerConfig, OutlinerOutput, OutlinerRequest, OutlinerSelectionMode, OutlinerState,
@@ -987,4 +987,677 @@ fn rename_transfers_focus_omits_row_label_and_restores_annuli_after_terminal_fra
         UiInput::default(),
     );
     assert_row_focus(&loss_restored, id(1));
+}
+
+fn roots(count: usize) -> OutlinerModel {
+    OutlinerModel::new(
+        (0..count)
+            .map(|index| OutlinerItem::new(id(index as u64), format!("Row {index}")))
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn ten_thousand_fractionally_scrolled_rows_preserve_clip_window_and_focus_geometry() {
+    let model = roots(10_000);
+    let cfg = config(BOUNDS);
+    let mut seed_state = OutlinerState::new();
+    let seed = run_frame(
+        &model,
+        cfg.clone(),
+        &mut seed_state,
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let mut probe_state = OutlinerState::new();
+    let mut probe_memory = UiMemory::new();
+    probe_memory.set_scroll_offset(seed.root, Vec2::new(0.0, 12.5));
+    let probe = run_frame(
+        &model,
+        cfg.clone(),
+        &mut probe_state,
+        &mut probe_memory,
+        UiInput::default(),
+    );
+    assert_eq!(probe.output.window.clamped_scroll_offset, 12.5);
+    assert_eq!(probe.output.window.content_extent, 240_000.0);
+    assert_eq!(
+        probe.rows.len(),
+        probe.output.window.materialized_range.len()
+    );
+    assert!(probe.rows[0].rect.y < BOUNDS.y);
+    assert!(probe.rows[0].rect.max_y() > BOUNDS.y);
+    assert!(
+        probe
+            .rows
+            .iter()
+            .any(|row| row.rect.y < BOUNDS.max_y() && row.rect.max_y() > BOUNDS.max_y())
+    );
+    assert!(
+        probe
+            .rows
+            .last()
+            .is_some_and(|row| row.rect.y >= BOUNDS.max_y())
+    );
+
+    let targets = [
+        probe.rows[0].row.id,
+        probe.rows[probe.rows.len() / 2].row.id,
+        probe.rows[probe.rows.len() - 1].row.id,
+    ];
+    for target in targets {
+        let mut unfocused_state = OutlinerState::new();
+        unfocused_state.selection.replace(target);
+        let mut unfocused_memory = UiMemory::new();
+        unfocused_memory.set_scroll_offset(probe.root, Vec2::new(0.0, 12.5));
+        let unfocused = run_frame(
+            &model,
+            cfg.clone(),
+            &mut unfocused_state,
+            &mut unfocused_memory,
+            UiInput::default(),
+        );
+        let mut focused_state = OutlinerState::new();
+        focused_state.selection.replace(target);
+        let mut focused_memory = UiMemory::new();
+        focused_memory.set_scroll_offset(probe.root, Vec2::new(0.0, 12.5));
+        focused_memory.focus(probe.root.child(("outliner-row", target.raw())));
+        let focused = run_frame(
+            &model,
+            cfg.clone(),
+            &mut focused_state,
+            &mut focused_memory,
+            UiInput::default(),
+        );
+
+        assert_eq!(focused.rows, unfocused.rows);
+        assert_eq!(focused.output.window, probe.output.window);
+        assert_eq!(unfocused.output.window, probe.output.window);
+        assert_eq!(
+            output_without_focus(focused.output.clone()),
+            unfocused.output
+        );
+        assert_eq!(
+            primitives_without_paths(&focused),
+            unfocused.frame.primitives
+        );
+        assert_eq!(
+            semantics_without_focus(&focused),
+            unfocused.frame.semantics.nodes()
+        );
+        assert_row_focus(&focused, target);
+        let clip_begin = focused
+            .frame
+            .primitives
+            .iter()
+            .position(|primitive| {
+                matches!(primitive, Primitive::ClipBegin { rect, .. } if *rect == BOUNDS)
+            })
+            .expect("outliner clip begins");
+        let clip_end = focused
+            .frame
+            .primitives
+            .iter()
+            .position(|primitive| matches!(primitive, Primitive::ClipEnd { .. }))
+            .expect("outliner clip ends");
+        let base = focused
+            .frame
+            .primitives
+            .iter()
+            .position(|primitive| {
+                matches!(primitive, Primitive::Rect(rect) if rect.rect == row_zones(&focused, target).rect)
+            })
+            .expect("focused row base");
+        assert!(clip_begin < base && base + 2 < clip_end);
+        assert!(
+            focused
+                .frame
+                .primitives
+                .iter()
+                .all(|primitive| !matches!(primitive, Primitive::TransformBegin { .. }))
+        );
+    }
+
+    for row in probe.rows.iter().filter(|row| {
+        row.rect
+            .intersection(BOUNDS)
+            .is_some_and(|intersection| intersection.width > 0.0 && intersection.height > 0.0)
+    }) {
+        let semantic = probe
+            .frame
+            .semantics
+            .get(probe.root.child(("outliner-row", row.row.id.raw())))
+            .expect("visible row semantic");
+        assert_eq!(
+            semantic.bounds,
+            row.rect.intersection(BOUNDS).expect("visible intersection")
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn disabled_non_selectable_and_read_only_rows_preserve_exact_semantic_eligibility() {
+    let enabled_flags = OutlinerRowFlags::new();
+    let mut disabled_flags = OutlinerRowFlags::new();
+    disabled_flags.disabled = true;
+    let mut non_selectable_flags = OutlinerRowFlags::new();
+    non_selectable_flags.selectable = false;
+    let mut read_only_flags = OutlinerRowFlags::new();
+    read_only_flags.read_only = true;
+    let model = OutlinerModel::new(vec![
+        OutlinerItem::new(id(1), "Enabled")
+            .with_has_children(true)
+            .with_flags(enabled_flags),
+        OutlinerItem::new(id(2), "Disabled")
+            .with_has_children(true)
+            .with_flags(disabled_flags),
+        OutlinerItem::new(id(3), "Non selectable")
+            .with_has_children(true)
+            .with_flags(non_selectable_flags),
+        OutlinerItem::new(id(4), "Read only")
+            .with_has_children(true)
+            .with_flags(read_only_flags),
+    ]);
+    let cfg = config(BOUNDS);
+    let mut state = OutlinerState::new();
+    let mut memory = UiMemory::new();
+    let seed = run_frame(
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+    );
+    let enabled = click(
+        row_zones(&seed, id(1)).label_rect.center(),
+        1,
+        &model,
+        cfg.clone(),
+        &mut state,
+        &mut memory,
+    );
+    let expected_cursor = state.cursor.clone();
+    let expected_selection = state.selection.clone();
+    let mut expected_semantics = enabled.frame.semantics.nodes().to_vec();
+    expected_semantics[0].state.disabled = true;
+    for semantic in expected_semantics.iter_mut().skip(1) {
+        semantic.state.disabled = true;
+        semantic.focusable = false;
+        semantic.actions.clear();
+    }
+    let globally_disabled = run_frame(
+        &model,
+        cfg.clone().disabled(true),
+        &mut state,
+        &mut memory,
+        UiInput::default(),
+    );
+    assert_eq!(state.cursor, expected_cursor);
+    assert_eq!(state.selection, expected_selection);
+    assert_eq!(globally_disabled.rows, enabled.rows);
+    assert_eq!(globally_disabled.output.window, enabled.output.window);
+    assert_eq!(
+        globally_disabled.frame.semantics.nodes(),
+        expected_semantics
+    );
+    assert!(globally_disabled.output.requests.is_empty());
+    assert!(
+        globally_disabled
+            .output
+            .responses
+            .iter()
+            .all(|response| response.row.state.disabled)
+    );
+    assert!(row_response(&globally_disabled, id(1)).row.state.focused);
+    assert_eq!(
+        globally_disabled
+            .frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        0
+    );
+
+    let mut disabled_state = OutlinerState::new();
+    disabled_state.selection.replace(id(2));
+    let mut disabled_memory = UiMemory::new();
+    disabled_memory.focus(seed.root.child(("outliner-row", 2_u64)));
+    let disabled = run_frame(
+        &model,
+        cfg.clone(),
+        &mut disabled_state,
+        &mut disabled_memory,
+        UiInput::default(),
+    );
+    assert!(row_response(&disabled, id(2)).row.state.focused);
+    assert!(row_response(&disabled, id(2)).row.state.disabled);
+    assert_no_row_annuli(&disabled, id(2));
+    let semantic = disabled
+        .frame
+        .semantics
+        .get(seed.root.child(("outliner-row", 2_u64)))
+        .expect("disabled row semantic");
+    assert!(semantic.state.disabled);
+    assert!(semantic.state.focused);
+    assert!(semantic.state.selected);
+    assert!(!semantic.focusable);
+    assert!(semantic.actions.is_empty());
+
+    let mut non_selectable_state = OutlinerState::new();
+    non_selectable_state.selection.replace(id(3));
+    let mut non_selectable_memory = UiMemory::new();
+    non_selectable_memory.focus(seed.root.child(("outliner-row", 3_u64)));
+    let non_selectable = run_frame(
+        &model,
+        cfg.clone(),
+        &mut non_selectable_state,
+        &mut non_selectable_memory,
+        UiInput::default(),
+    );
+    let response = row_response(&non_selectable, id(3));
+    assert!(response.row.state.focused);
+    assert!(!response.row.state.disabled);
+    assert!(response.row.state.selected);
+    assert_no_row_annuli(&non_selectable, id(3));
+    let semantic = non_selectable
+        .frame
+        .semantics
+        .get(seed.root.child(("outliner-row", 3_u64)))
+        .expect("non-selectable row semantic");
+    assert!(!semantic.focusable);
+    assert!(semantic.state.focused);
+    assert!(semantic.state.selected);
+    assert!(semantic.actions.iter().all(|action| !matches!(
+        action.kind,
+        SemanticActionKind::Focus | SemanticActionKind::Invoke
+    )));
+
+    let mut read_only_state = OutlinerState::new();
+    let mut read_only_memory = UiMemory::new();
+    let read_only = click(
+        row_zones(&seed, id(4)).label_rect.center(),
+        1,
+        &model,
+        cfg.clone(),
+        &mut read_only_state,
+        &mut read_only_memory,
+    );
+    assert_eq!(read_only_state.cursor.active(), Some(id(4)));
+    assert_eq!(read_only_state.selection.selected(), vec![id(4)]);
+    assert_row_focus(&read_only, id(4));
+    let response = row_response(&read_only, id(4));
+    assert!(response.visibility.is_none());
+    assert!(response.lock.is_none());
+    let semantic = read_only
+        .frame
+        .semantics
+        .get(seed.root.child(("outliner-row", 4_u64)))
+        .expect("read-only row semantic");
+    assert!(semantic.focusable);
+    assert!(semantic.state.focused);
+    assert!(semantic.state.selected);
+    assert!(
+        semantic
+            .actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::Focus)
+    );
+    assert!(
+        semantic
+            .actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::Invoke)
+    );
+    assert!(semantic.actions.iter().all(|action| !matches!(
+        &action.kind,
+        SemanticActionKind::Custom(name)
+            if matches!(name.as_str(), "rename" | "toggle-visibility" | "toggle-lock")
+    )));
+    assert!(
+        row_zones(&read_only, id(4))
+            .row
+            .drag_source(&read_only_state.selection)
+            .is_some()
+    );
+    let read_only_f2 = run_frame(
+        &model,
+        cfg,
+        &mut read_only_state,
+        &mut read_only_memory,
+        key_input(Key::Function(2)),
+    );
+    assert!(read_only_f2.output.requests.is_empty());
+    assert_row_focus(&read_only_f2, id(4));
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RowContentColors {
+    disclosure: Option<Color>,
+    visibility: Option<Color>,
+    lock_stroke: Option<Color>,
+    lock_fill: Option<Color>,
+    label: Option<Color>,
+}
+
+fn solid_color(brush: Brush) -> Color {
+    match brush {
+        Brush::Solid(color) => color,
+        Brush::LinearGradient(_) => panic!("outliner content uses solid brushes"),
+    }
+}
+
+fn row_content_colors(run: &Run, target: ItemId) -> RowContentColors {
+    let zones = row_zones(run, target);
+    let base = run
+        .frame
+        .primitives
+        .iter()
+        .position(|primitive| matches!(primitive, Primitive::Rect(rect) if rect.rect == zones.rect))
+        .expect("row base");
+    let mut index = base + 1;
+    while matches!(run.frame.primitives.get(index), Some(Primitive::Path(_))) {
+        index += 1;
+    }
+    let disclosure = zones.row.has_children.then(|| {
+        let Primitive::Line(line) = run.frame.primitives[index] else {
+            panic!("disclosure line")
+        };
+        index += 2;
+        solid_color(line.stroke.brush)
+    });
+    let visibility = zones.row.flags.visibility_toggle_available.then(|| {
+        let Primitive::Rect(icon) = run.frame.primitives[index] else {
+            panic!("visibility icon")
+        };
+        index += 1;
+        if !zones.row.flags.visible {
+            index += 1;
+        }
+        solid_color(icon.stroke.expect("visibility stroke").brush)
+    });
+    let (lock_stroke, lock_fill) = if zones.row.flags.lock_toggle_available {
+        let Primitive::Rect(icon) = run.frame.primitives[index] else {
+            panic!("lock icon")
+        };
+        index += 4;
+        (
+            Some(solid_color(icon.stroke.expect("lock stroke").brush)),
+            icon.fill.map(solid_color),
+        )
+    } else {
+        (None, None)
+    };
+    let label = match run.frame.primitives.get(index) {
+        Some(Primitive::Text(text)) if text.text == zones.row.label => {
+            Some(solid_color(text.brush))
+        }
+        _ => None,
+    };
+    RowContentColors {
+        disclosure,
+        visibility,
+        lock_stroke,
+        lock_fill,
+        label,
+    }
+}
+
+fn linear_channel(channel: f32) -> f32 {
+    if channel <= 0.04045 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn srgb_channel(channel: f32) -> f32 {
+    if channel <= 0.003_130_8 {
+        channel * 12.92
+    } else {
+        1.055 * channel.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn contrast_ratio(foreground: Color, background: Color) -> f32 {
+    let luminance = |color: Color| {
+        0.2126 * linear_channel(color.r)
+            + 0.7152 * linear_channel(color.g)
+            + 0.0722 * linear_channel(color.b)
+    };
+    let foreground = luminance(foreground);
+    let background = luminance(background);
+    (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05)
+}
+
+fn blend_channel_space(foreground: Color, background: Color) -> Color {
+    let alpha = foreground.a;
+    Color::rgba(
+        foreground.r * alpha + background.r * (1.0 - alpha),
+        foreground.g * alpha + background.g * (1.0 - alpha),
+        foreground.b * alpha + background.b * (1.0 - alpha),
+        1.0,
+    )
+}
+
+fn blend_linear_light(foreground: Color, background: Color) -> Color {
+    let alpha = foreground.a;
+    Color::rgba(
+        srgb_channel(
+            linear_channel(foreground.r) * alpha + linear_channel(background.r) * (1.0 - alpha),
+        ),
+        srgb_channel(
+            linear_channel(foreground.g) * alpha + linear_channel(background.g) * (1.0 - alpha),
+        ),
+        srgb_channel(
+            linear_channel(foreground.b) * alpha + linear_channel(background.b) * (1.0 - alpha),
+        ),
+        1.0,
+    )
+}
+
+fn assert_selected_content_colors(run: &Run, expected_visibility_alpha: f32, locked: bool) {
+    let theme = default_dark_theme();
+    let foreground = theme.colors.selection.foreground;
+    let colors = row_content_colors(run, id(1));
+    assert_eq!(colors.disclosure, Some(foreground));
+    assert_eq!(
+        colors.visibility,
+        Some(foreground.with_alpha(expected_visibility_alpha))
+    );
+    assert_eq!(
+        colors.lock_stroke,
+        Some(foreground.with_alpha(if locked { 1.0 } else { 0.55 }))
+    );
+    assert_eq!(colors.lock_fill, locked.then_some(foreground));
+    assert_eq!(colors.label, Some(foreground));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn selected_content_discloses_named_white_exception_and_separate_alpha_nonconformities() {
+    let theme = default_dark_theme();
+    let background = theme.colors.selection.background;
+    let foreground = theme.colors.selection.foreground;
+    let full_ratio = contrast_ratio(foreground, background);
+    assert!((3.52..3.54).contains(&full_ratio));
+    assert!(full_ratio < 4.5);
+
+    let mut full_flags = OutlinerRowFlags::new();
+    full_flags.visible = true;
+    full_flags.locked = true;
+    let full_model = owned_model(full_flags);
+    let cfg = config(BOUNDS);
+    for (focus, expanded, point_kind, pressed) in [
+        (false, false, "none", false),
+        (true, false, "none", false),
+        (true, true, "row", false),
+        (true, true, "row", true),
+        (true, true, "disclosure", false),
+        (true, true, "disclosure", true),
+        (true, true, "visibility", false),
+        (true, true, "visibility", true),
+        (true, true, "lock", false),
+        (true, true, "lock", true),
+    ] {
+        let mut state = OutlinerState::new();
+        state.selection.replace(id(1));
+        if expanded {
+            state.expansion.expand(id(1));
+        }
+        let mut memory = UiMemory::new();
+        let seed = run_frame(
+            &full_model,
+            cfg.clone(),
+            &mut state,
+            &mut memory,
+            UiInput::default(),
+        );
+        if focus {
+            memory.focus(seed.root.child(("outliner-row", 1_u64)));
+        }
+        let zones = row_zones(&seed, id(1));
+        let point = match point_kind {
+            "row" => zones.label_rect.center(),
+            "disclosure" => zones.disclosure_rect.center(),
+            "visibility" => zones.visibility_toggle_rect.center(),
+            "lock" => zones.lock_toggle_rect.center(),
+            _ => Point::new(-100.0, -100.0),
+        };
+        let run = run_frame(
+            &full_model,
+            cfg.clone(),
+            &mut state,
+            &mut memory,
+            if point_kind == "none" {
+                UiInput::default()
+            } else {
+                primary_input(point, pressed, pressed, false, u8::from(pressed))
+            },
+        );
+        assert_selected_content_colors(&run, 1.0, true);
+        if focus {
+            assert_row_focus(&run, id(1));
+        } else {
+            assert_no_row_annuli(&run, id(1));
+        }
+    }
+
+    let mut alpha_flags = OutlinerRowFlags::new();
+    alpha_flags.visible = false;
+    alpha_flags.locked = false;
+    let alpha_model = owned_model(alpha_flags);
+    let mut alpha_state = OutlinerState::new();
+    alpha_state.selection.replace(id(1));
+    let alpha_seed = run_frame(
+        &alpha_model,
+        cfg.clone(),
+        &mut alpha_state,
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let colors = row_content_colors(&alpha_seed, id(1));
+    assert_selected_content_colors(&alpha_seed, 0.5, false);
+    let hidden = colors.visibility.expect("hidden visibility color");
+    let unlocked = colors.lock_stroke.expect("unlocked lock color");
+    let hidden_channel = contrast_ratio(blend_channel_space(hidden, background), background);
+    let hidden_linear = contrast_ratio(blend_linear_light(hidden, background), background);
+    let unlocked_channel = contrast_ratio(blend_channel_space(unlocked, background), background);
+    let unlocked_linear = contrast_ratio(blend_linear_light(unlocked, background), background);
+    assert!((1.90..1.92).contains(&hidden_channel));
+    assert!((2.25..2.28).contains(&hidden_linear));
+    assert!((2.02..2.05).contains(&unlocked_channel));
+    assert!((2.38..2.41).contains(&unlocked_linear));
+    assert!(hidden_channel < 3.0 && hidden_linear < 3.0);
+    assert!(unlocked_channel < 3.0 && unlocked_linear < 3.0);
+
+    let mut drag_state = OutlinerState::new();
+    let mut drag_memory = UiMemory::new();
+    let drag_seed = run_frame(
+        &full_model,
+        cfg.clone(),
+        &mut drag_state,
+        &mut drag_memory,
+        UiInput::default(),
+    );
+    let row_point = row_zones(&drag_seed, id(1)).label_rect.center();
+    let _ = click(
+        row_point,
+        1,
+        &full_model,
+        cfg.clone(),
+        &mut drag_state,
+        &mut drag_memory,
+    );
+    let _ = run_frame(
+        &full_model,
+        cfg.clone(),
+        &mut drag_state,
+        &mut drag_memory,
+        primary_input(row_point, true, true, false, 1),
+    );
+    let dragged = run_frame(
+        &full_model,
+        cfg.clone(),
+        &mut drag_state,
+        &mut drag_memory,
+        move_input(
+            Point::new(row_point.x + 12.0, row_point.y),
+            Vec2::new(12.0, 0.0),
+        ),
+    );
+    assert!(row_response(&dragged, id(1)).row.dragged);
+    assert_selected_content_colors(&dragged, 1.0, true);
+    assert_row_focus(&dragged, id(1));
+
+    let mut rename_state = OutlinerState::new();
+    let mut rename_memory = UiMemory::new();
+    let (_, _) = start_rename(
+        &full_model,
+        cfg.clone(),
+        &mut rename_state,
+        &mut rename_memory,
+    );
+    let editing = run_frame(
+        &full_model,
+        cfg.clone(),
+        &mut rename_state,
+        &mut rename_memory,
+        UiInput::default(),
+    );
+    let editing_colors = row_content_colors(&editing, id(1));
+    assert_eq!(editing_colors.label, None);
+    assert_eq!(editing_colors.disclosure, Some(foreground));
+    assert_eq!(editing_colors.visibility, Some(foreground));
+    assert_eq!(editing_colors.lock_fill, Some(foreground));
+    assert_no_row_annuli(&editing, id(1));
+
+    let mut context_state = OutlinerState::new();
+    let mut context_memory = UiMemory::new();
+    let seed = run_frame(
+        &full_model,
+        cfg.clone(),
+        &mut context_state,
+        &mut context_memory,
+        UiInput::default(),
+    );
+    let selected = click(
+        row_zones(&seed, id(1)).label_rect.center(),
+        1,
+        &full_model,
+        cfg.clone(),
+        &mut context_state,
+        &mut context_memory,
+    );
+    let context = context_click(
+        row_zones(&selected, id(1)).context_rect.center(),
+        &full_model,
+        cfg,
+        &mut context_state,
+        &mut context_memory,
+    );
+    assert_selected_content_colors(&context, 1.0, true);
+    assert_row_focus(&context, id(1));
 }
