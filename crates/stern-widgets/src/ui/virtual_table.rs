@@ -534,19 +534,28 @@ impl Ui<'_> {
         response: Response,
         disabled: bool,
     ) {
-        let recipe = self.theme.row(ComponentState {
+        let recipe_state = ComponentState {
             hovered: response.state.hovered,
             pressed: response.state.pressed,
             focused: response.state.focused,
             disabled,
             selected: response.state.selected,
-        });
-        self.primitive(Primitive::Rect(RectPrimitive {
+        };
+        let recipe = self.theme.row(recipe_state);
+        let primitive_state = ComponentState {
+            focused: false,
+            ..recipe_state
+        };
+        for primitive in row_surface_primitives(
+            self.theme,
+            &recipe,
+            primitive_state,
             rect,
-            fill: Some(recipe.background),
-            stroke: Some(recipe.border),
-            radius: recipe.radius,
-        }));
+            recipe.radius,
+            RowFocusPlacement::Inward,
+        ) {
+            self.primitive(primitive);
+        }
         self.paint_virtual_table_text(rect, label, recipe.foreground);
     }
 
