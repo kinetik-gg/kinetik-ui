@@ -264,7 +264,10 @@ fn button_recipe_uses_state_colors() {
         hovered.background,
         Brush::Solid(theme.colors.surface.control_hover)
     );
-    assert_eq!(focused.border.brush, Brush::Solid(theme.colors.focus.ring));
+    assert_eq!(
+        focused.border.brush,
+        Brush::Solid(theme.colors.border.default)
+    );
     assert_eq!(disabled.foreground, theme.colors.content.disabled);
     assert_eq!(
         primary.background,
@@ -604,7 +607,10 @@ fn primary_button_uses_exact_accent_roles_and_bounded_state_precedence() {
         },
     );
     assert_eq!(focused_hover.background, Brush::Solid(colors.accent.hover));
-    assert_eq!(focused_hover.border.brush, Brush::Solid(colors.focus.ring));
+    assert_eq!(
+        focused_hover.border.brush,
+        Brush::Solid(colors.border.default)
+    );
     assert_eq!(focused_hover.border.width, normal.border.width);
     assert_eq!(focused_hover.radius, normal.radius);
     assert_eq!(focused_hover.foreground, normal.foreground);
@@ -756,6 +762,7 @@ fn recipe_lookups_follow_independently_overridden_semantic_paths() {
     colors.accent.default = Color::rgb8(22, 23, 24);
     colors.border.focused = Color::rgb8(25, 26, 27);
     colors.selection.foreground = Color::rgb8(28, 29, 30);
+    colors.border.default = Color::rgb8(31, 32, 33);
     let theme = default_dark_theme().with_colors(colors);
 
     assert_eq!(
@@ -814,7 +821,7 @@ fn recipe_lookups_follow_independently_overridden_semantic_paths() {
             })
             .border
             .brush,
-        Brush::Solid(colors.focus.ring)
+        Brush::Solid(colors.border.default)
     );
     assert_eq!(
         theme
