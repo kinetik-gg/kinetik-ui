@@ -132,6 +132,31 @@ fn key_input(key: Key, modifiers: Modifiers, repeat: bool) -> UiInput {
     }
 }
 
+#[derive(Clone, Copy)]
+enum HeaderInteraction {
+    Idle,
+    Hover,
+    Press,
+}
+
+impl HeaderInteraction {
+    fn input(self, point: Point) -> UiInput {
+        match self {
+            Self::Idle => UiInput::default(),
+            Self::Hover => pointer_input(point, false),
+            Self::Press => pointer_input(point, true),
+        }
+    }
+
+    const fn expected_hovered(self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+
+    const fn expected_pressed(self) -> bool {
+        matches!(self, Self::Press)
+    }
+}
+
 struct Run {
     root: WidgetId,
     output: VirtualTableOutput,
@@ -359,7 +384,7 @@ fn assert_focus_only_transition(focused: &Run, unfocused: &Run) {
 }
 
 #[test]
-fn first_middle_last_headers_add_only_exact_owned_annuli_across_sort_hover_and_press() {
+fn every_header_state_matrix_case_adds_only_exact_owned_annuli_when_focused() {
     let items = projection(3);
     let seed = run_frame(
         &items,
@@ -369,36 +394,7 @@ fn first_middle_last_headers_add_only_exact_owned_annuli_across_sort_hover_and_p
         UiInput::default(),
     );
 
-    for (column, sort) in [
-        (id(10), None),
-        (
-            id(20),
-            Some(TableSort {
-                column: id(20),
-                direction: SortDirection::Ascending,
-            }),
-        ),
-        (id(30), None),
-    ] {
-        let mut unfocused_memory = UiMemory::new();
-        let unfocused = run_frame(
-            &items,
-            config(sort),
-            &mut VirtualTableSelection::new(),
-            &mut unfocused_memory,
-            UiInput::default(),
-        );
-        assert_eq!(
-            unfocused
-                .frame
-                .primitives
-                .iter()
-                .filter(|primitive| matches!(primitive, Primitive::Path(_)))
-                .count(),
-            0,
-            "sort alone must not paint focus"
-        );
-
+    for column in [id(10), id(20), id(30)] {
         let header_id = seed
             .output
             .headers
@@ -407,34 +403,130 @@ fn first_middle_last_headers_add_only_exact_owned_annuli_across_sort_hover_and_p
             .expect("seed header")
             .response
             .id;
-        let mut focused_memory = UiMemory::new();
-        focused_memory.focus(header_id);
-        let focused = run_frame(
-            &items,
-            config(sort),
-            &mut VirtualTableSelection::new(),
-            &mut focused_memory,
-            UiInput::default(),
-        );
-        let expected = assert_header_focus(&focused, column, sort.is_some());
-        assert_focus_only_transition(&focused, &unfocused);
+        let point = header_response(&seed, column).rect.center();
+        for selected in [false, true] {
+            let sort = selected.then_some(TableSort {
+                column,
+                direction: SortDirection::Ascending,
+            });
+            for interaction in [
+                HeaderInteraction::Idle,
+                HeaderInteraction::Hover,
+                HeaderInteraction::Press,
+            ] {
+                let unfocused = run_frame(
+                    &items,
+                    config(sort),
+                    &mut VirtualTableSelection::new(),
+                    &mut UiMemory::new(),
+                    interaction.input(point),
+                );
+                let unfocused_response = header_response(&unfocused, column);
+                assert!(!unfocused_response.state.focused);
+                assert_eq!(
+                    unfocused_response.state.hovered,
+                    interaction.expected_hovered()
+                );
+                assert_eq!(
+                    unfocused_response.state.pressed,
+                    interaction.expected_pressed()
+                );
+                assert!(!unfocused_response.state.selected);
+                assert_eq!(
+                    unfocused
+                        .frame
+                        .primitives
+                        .iter()
+                        .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+                        .count(),
+                    0,
+                    "unfocused headers never paint focus paths"
+                );
+                let state = ComponentState {
+                    hovered: unfocused_response.state.hovered,
+                    pressed: unfocused_response.state.pressed,
+                    focused: false,
+                    disabled: false,
+                    selected,
+                };
+                let recipe = default_dark_theme().row(state);
+                let base_index = header_base_index(&unfocused, column);
+                let Primitive::Rect(base) = &unfocused.frame.primitives[base_index] else {
+                    unreachable!()
+                };
+                assert_eq!(base.rect, unfocused_response.rect);
+                assert_eq!(base.fill, Some(recipe.background));
+                assert_eq!(base.stroke, Some(recipe.border));
+                assert_eq!(base.radius, recipe.radius);
+                assert!(matches!(
+                    unfocused.frame.primitives[base_index + 1],
+                    Primitive::Text(_)
+                ));
 
-        for input in [
-            pointer_input(header_response(&focused, column).rect.center(), false),
-            pointer_input(header_response(&focused, column).rect.center(), true),
-        ] {
-            let state_run = run_frame(
-                &items,
-                config(sort),
-                &mut VirtualTableSelection::new(),
-                &mut focused_memory,
-                input,
-            );
-            assert_eq!(
-                assert_header_focus(&state_run, column, sort.is_some()),
-                expected,
-                "hover/press may not alter owned annuli"
-            );
+                let mut focused_memory = UiMemory::new();
+                focused_memory.focus(header_id);
+                let focused = run_frame(
+                    &items,
+                    config(sort),
+                    &mut VirtualTableSelection::new(),
+                    &mut focused_memory,
+                    interaction.input(point),
+                );
+                let focused_response = header_response(&focused, column);
+                assert_eq!(
+                    focused_response.state.hovered,
+                    interaction.expected_hovered()
+                );
+                assert_eq!(
+                    focused_response.state.pressed,
+                    interaction.expected_pressed()
+                );
+                assert_header_focus(&focused, column, selected);
+                assert_focus_only_transition(&focused, &unfocused);
+            }
+        }
+    }
+}
+
+#[test]
+fn focused_annuli_are_identical_across_every_header_interaction_and_sort_state() {
+    let items = projection(3);
+    let seed = run_frame(
+        &items,
+        config(None),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    for column in [id(10), id(20), id(30)] {
+        let response = header_response(&seed, column);
+        let mut reference = None;
+        for selected in [false, true] {
+            let sort = selected.then_some(TableSort {
+                column,
+                direction: SortDirection::Ascending,
+            });
+            for interaction in [
+                HeaderInteraction::Idle,
+                HeaderInteraction::Hover,
+                HeaderInteraction::Press,
+            ] {
+                let mut memory = UiMemory::new();
+                memory.focus(response.id);
+                let run = run_frame(
+                    &items,
+                    config(sort),
+                    &mut VirtualTableSelection::new(),
+                    &mut memory,
+                    interaction.input(response.rect.center()),
+                );
+                let annuli = assert_header_focus(&run, column, selected);
+                if let Some(reference) = &reference {
+                    assert_eq!(&annuli, reference);
+                } else {
+                    reference = Some(annuli);
+                }
+            }
         }
     }
 }
