@@ -22,6 +22,7 @@ use crate::{
     InlineEditFocusLossPolicy, InlineEditRequest, ItemId, Menu, MenuOverlay, OverlayDismissal,
     OverlayKind, OverlayScene, OverlaySceneIntent, OverlaySceneSurface, PopoverPlacement,
     Selection, TextFieldAccess, collection_context_actions,
+    components::{RowFocusPlacement, row_surface_primitives},
 };
 
 impl Ui<'_> {
@@ -335,6 +336,12 @@ impl Ui<'_> {
         for (zones, mut semantic) in strict_rows.iter().zip(final_semantics.into_iter().skip(1)) {
             if prepared_rename == Some(zones.row.id) {
                 continue;
+            }
+            let disabled = config.disabled || zones.row.flags.disabled;
+            semantic.state.disabled = disabled;
+            if disabled {
+                semantic.focusable = false;
+                semantic.actions.clear();
             }
             if let Some(response) = output
                 .responses
@@ -799,19 +806,24 @@ impl Ui<'_> {
             || disclosure.is_some_and(|response| response.state.pressed)
             || visibility.is_some_and(|response| response.state.pressed)
             || lock.is_some_and(|response| response.state.pressed);
-        let recipe = self.theme.row(ComponentState {
+        let state = ComponentState {
             hovered,
             pressed,
-            focused: row.state.focused,
+            focused: row.state.focused && zones.row.flags.can_request_selection(),
             disabled: row.state.disabled,
             selected: row.state.selected,
-        });
-        self.primitive(Primitive::Rect(RectPrimitive {
-            rect: zones.rect,
-            fill: Some(recipe.background),
-            stroke: Some(recipe.border),
-            radius: recipe.radius,
-        }));
+        };
+        let recipe = self.theme.row(state);
+        for primitive in row_surface_primitives(
+            self.theme,
+            &recipe,
+            state,
+            zones.rect,
+            recipe.radius,
+            RowFocusPlacement::Inward,
+        ) {
+            self.primitive(primitive);
+        }
 
         if zones.row.has_children {
             self.paint_outliner_disclosure(

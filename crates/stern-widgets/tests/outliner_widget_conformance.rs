@@ -555,7 +555,24 @@ fn visibility_and_lock_controls_emit_typed_requests_without_mutating_app_flags()
         &theme,
     );
     assert_eq!(idle.rows, focused.rows);
-    assert_eq!(idle.frame.primitives.len(), focused.frame.primitives.len());
+    assert_eq!(
+        focused.frame.primitives.len(),
+        idle.frame.primitives.len() + 2
+    );
+    assert_eq!(
+        focused
+            .frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        idle.frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count()
+            + 2
+    );
     assert_eq!(
         idle.output
             .responses
