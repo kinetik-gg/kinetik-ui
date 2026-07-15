@@ -1314,59 +1314,200 @@ fn assert_ratio(actual: f32, expected: f32) {
     );
 }
 
+fn header_base_color(run: &Run, column: ItemId) -> Color {
+    let Primitive::Rect(base) = &run.frame.primitives[header_base_index(run, column)] else {
+        unreachable!()
+    };
+    solid(base.fill.expect("header base fill"))
+}
+
+fn header_text_evidence(run: &Run, column: ItemId) -> (String, Color, usize) {
+    let base_index = header_base_index(run, column);
+    let (index, text) = run
+        .frame
+        .primitives
+        .iter()
+        .enumerate()
+        .skip(base_index + 1)
+        .find_map(|(index, primitive)| match primitive {
+            Primitive::Text(text) => Some((index, text)),
+            _ => None,
+        })
+        .expect("header text primitive");
+    (text.text.clone(), solid(text.brush), index)
+}
+
+fn header_resize_line_color(run: &Run, column: ItemId) -> Color {
+    let response = run
+        .output
+        .headers
+        .iter()
+        .find(|header| header.column == column)
+        .expect("header response");
+    let handle = response.resize_response.expect("resize response");
+    let (_, _, text_index) = header_text_evidence(run, column);
+    let Primitive::Rect(line) = &run.frame.primitives[text_index + 1] else {
+        panic!("resize line must follow header text");
+    };
+    assert_eq!(line.rect.height, handle.rect.height);
+    assert_eq!(line.rect.center().x, handle.rect.center().x);
+    assert!(line.stroke.is_none());
+    solid(line.fill.expect("resize line fill"))
+}
+
+fn header_focus_colors(run: &Run, column: ItemId) -> (Color, Color) {
+    let base_index = header_base_index(run, column);
+    let Primitive::Path(primary) = &run.frame.primitives[base_index + 1] else {
+        panic!("primary focus path");
+    };
+    let Primitive::Path(separator) = &run.frame.primitives[base_index + 2] else {
+        panic!("separator focus path");
+    };
+    (
+        solid(primary.fill.expect("primary focus fill")),
+        solid(separator.fill.expect("separator focus fill")),
+    )
+}
+
 #[test]
-fn contrast_inventory_names_existing_exceptions_and_preserves_focus_separator_adjacency() {
+fn production_header_primitives_inventory_acc005_and_resize_nonconformities() {
     let theme = default_dark_theme();
-    let neutral = theme.row(ComponentState::default());
-    let sorted = theme.row(ComponentState {
-        selected: true,
-        ..ComponentState::default()
-    });
-    let disabled = theme.row(ComponentState {
-        disabled: true,
-        ..ComponentState::default()
-    });
-    let focus = theme.focus_ring(true).expect("focus recipe");
-    let primary = solid(focus.primary.brush);
-    let separator = solid(focus.separator.brush);
+    let items = projection(2);
+    let column = id(20);
+    let resizable = config(None).resizable(true);
+    let seed = run_frame(
+        &items,
+        resizable.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let seed_response = header_response(&seed, column);
+    let point = seed_response.rect.center();
+    let mut focused_colors = None;
+
+    for selected in [false, true] {
+        let sort = selected.then_some(TableSort {
+            column,
+            direction: SortDirection::Ascending,
+        });
+        for focused in [false, true] {
+            for interaction in [
+                HeaderInteraction::Idle,
+                HeaderInteraction::Hover,
+                HeaderInteraction::Press,
+            ] {
+                let mut memory = UiMemory::new();
+                if focused {
+                    memory.focus(seed_response.id);
+                }
+                let run = run_frame(
+                    &items,
+                    config(sort).resizable(true),
+                    &mut VirtualTableSelection::new(),
+                    &mut memory,
+                    interaction.input(point),
+                );
+                let response = header_response(&run, column);
+                let state = ComponentState {
+                    hovered: response.state.hovered,
+                    pressed: response.state.pressed,
+                    focused,
+                    disabled: false,
+                    selected,
+                };
+                let recipe = theme.row(state);
+                let background = header_base_color(&run, column);
+                let (label, label_color, _) = header_text_evidence(&run, column);
+                assert_eq!(
+                    label,
+                    if selected { "Kind ↑" } else { "Kind" },
+                    "actual label primitive includes the production sort arrow"
+                );
+                assert_eq!(background, solid(recipe.background));
+                assert_eq!(label_color, recipe.foreground);
+                let idle_resize = header_resize_line_color(&run, column);
+                assert_eq!(idle_resize, theme.colors.border.subtle);
+
+                if selected {
+                    let ratio = contrast_ratio(label_color, background);
+                    assert_ratio(ratio, 3.533_269);
+                    assert!(ratio < 4.5, "ACC-005 named selected-label exception");
+                    assert_ratio(contrast_ratio(idle_resize, background), 4.502_908);
+                } else {
+                    let ratio = contrast_ratio(idle_resize, background);
+                    if matches!(interaction, HeaderInteraction::Idle) {
+                        assert_ratio(ratio, 1.237_124);
+                        assert!(ratio < 3.0, "idle neutral resize is a nonconformity");
+                    }
+                }
+
+                if focused {
+                    let colors = header_focus_colors(&run, column);
+                    if let Some(expected) = focused_colors {
+                        assert_eq!(colors, expected);
+                    } else {
+                        focused_colors = Some(colors);
+                    }
+                }
+            }
+        }
+    }
+
+    for selected in [false, true] {
+        let sort = selected.then_some(TableSort {
+            column,
+            direction: SortDirection::Ascending,
+        });
+        let handle = seed
+            .output
+            .headers
+            .iter()
+            .find(|header| header.column == column)
+            .and_then(|header| header.resize_response)
+            .expect("resize handle");
+        let active = run_frame(
+            &items,
+            config(sort).resizable(true),
+            &mut VirtualTableSelection::new(),
+            &mut UiMemory::new(),
+            drag_input(handle.rect.center(), true, true, false, 0.0),
+        );
+        assert!(!header_response(&active, column).state.pressed);
+        let active_resize = header_resize_line_color(&active, column);
+        let background = header_base_color(&active, column);
+        assert_eq!(active_resize, theme.colors.accent.default);
+        if selected {
+            let ratio = contrast_ratio(active_resize, background);
+            assert_ratio(ratio, 1.0);
+            assert!(ratio < 3.0, "active sorted resize is a nonconformity");
+        } else {
+            assert_ratio(contrast_ratio(active_resize, background), 5.570_656);
+        }
+    }
+
+    let disabled = run_frame(
+        &items,
+        config(None).disabled(true).resizable(true),
+        &mut VirtualTableSelection::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+    let (_, disabled_label, _) = header_text_evidence(&disabled, column);
+    let disabled_background = header_base_color(&disabled, column);
+    let disabled_ratio = contrast_ratio(disabled_label, disabled_background);
+    assert_ratio(disabled_ratio, 3.208_475);
+    assert!(disabled_ratio < 4.5, "disabled text is not claimed as AA");
+
+    let (primary, separator) = focused_colors.expect("actual focused header colors");
     let accent = theme.colors.accent.default;
-    let neutral_background = solid(neutral.background);
-    let sorted_background = solid(sorted.background);
-    let disabled_background = solid(disabled.background);
-    let idle_resize = theme.colors.border.subtle;
-
-    let sorted_label = contrast_ratio(sorted.foreground, sorted_background);
-    let idle_neutral_resize = contrast_ratio(idle_resize, neutral_background);
-    let active_sorted_resize = contrast_ratio(accent, sorted_background);
-    let idle_sorted_resize = contrast_ratio(idle_resize, sorted_background);
-    let active_neutral_resize = contrast_ratio(accent, neutral_background);
-    let disabled_label = contrast_ratio(disabled.foreground, disabled_background);
-    let focus_separator = contrast_ratio(primary, separator);
-    let separator_accent = contrast_ratio(separator, accent);
+    assert_ratio(contrast_ratio(primary, separator), 8.555_114);
+    assert_ratio(contrast_ratio(separator, accent), 5.570_656);
     let direct_indicator_accent = contrast_ratio(primary, accent);
-
-    assert_ratio(sorted_label, 3.533_269);
-    assert!(sorted_label < 4.5, "named selected-label exception");
-    assert_ratio(idle_neutral_resize, 1.237_124);
-    assert!(
-        idle_neutral_resize < 3.0,
-        "preexisting idle-resize exception"
-    );
-    assert_ratio(active_sorted_resize, 1.0);
-    assert!(
-        active_sorted_resize < 3.0,
-        "preexisting active-resize exception"
-    );
-    assert_ratio(idle_sorted_resize, 4.502_908);
-    assert_ratio(active_neutral_resize, 5.570_656);
-    assert_ratio(disabled_label, 3.208_475);
-    assert!(disabled_label < 4.5, "disabled text is not claimed as AA");
-    assert_ratio(focus_separator, 8.555_114);
-    assert_ratio(separator_accent, 5.570_656);
     assert_ratio(direct_indicator_accent, 1.535_746);
     assert!(direct_indicator_accent < 3.0);
     assert!(
-        separator_accent >= 3.0,
+        contrast_ratio(separator, accent) >= 3.0,
         "separator is the adjacent boundary"
     );
 }
