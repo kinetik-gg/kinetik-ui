@@ -695,7 +695,10 @@ fn assert_chrome_tab_focus_pair(
             matches!(primitive, Primitive::Rect(base) if base.rect == rect && base.stroke.is_some())
         })
         .expect("unfocused chrome tab base");
-    assert_eq!(focused.primitives[base], unfocused.primitives[unfocused_base]);
+    assert_eq!(
+        focused.primitives[base],
+        unfocused.primitives[unfocused_base]
+    );
     let Primitive::Rect(surface) = &focused.primitives[base] else {
         unreachable!()
     };
@@ -774,10 +777,21 @@ fn first_last_and_close_truncated_chrome_tabs_use_neutral_contained_inward_focus
             false,
         ),
     ];
-    let first_rect = unfocused.semantics.get(cases[0].0).expect("first tab").bounds;
-    let last_rect = unfocused.semantics.get(cases[1].0).expect("last tab").bounds;
+    let first_rect = unfocused
+        .semantics
+        .get(cases[0].0)
+        .expect("first tab")
+        .bounds;
+    let last_rect = unfocused
+        .semantics
+        .get(cases[1].0)
+        .expect("last tab")
+        .bounds;
     assert!((first_rect.min_x() - strip_rect.min_x()).abs() <= f32::EPSILON);
-    assert!(first_rect.width < 70.0, "close affordance truncates the body");
+    assert!(
+        first_rect.width < 70.0,
+        "close affordance truncates the body"
+    );
     assert!((last_rect.max_x() - strip_rect.max_x()).abs() <= f32::EPSILON);
     assert!(first_rect.max_x() <= last_rect.min_x());
 
