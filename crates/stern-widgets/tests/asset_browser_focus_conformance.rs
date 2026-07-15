@@ -5,16 +5,21 @@
 use std::time::Duration;
 
 use stern_core::{
-    ComponentState, FrameContext, ImageId, PathElement, PhysicalSize, Point, PointerButtonState,
-    PointerInput, PointerOrder, Primitive, Rect, ScaleFactor, SemanticNode, Size, TimeInfo,
+    ActionDescriptor, Brush, Color, ComponentState, FrameContext, ImageId, Key, KeyEvent, KeyState,
+    KeyboardInput, Modifiers, PathElement, PhysicalSize, Point, PointerButtonState, PointerInput,
+    PointerOrder, Primitive, Rect, ScaleFactor, SemanticActionKind, SemanticNode, Size, TimeInfo,
     UiInput, UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_widgets::asset_browser::{
-    AssetBrowserConfig, AssetBrowserItem, AssetBrowserItemRect, AssetBrowserLayout,
-    AssetBrowserModel, AssetBrowserOutput, AssetBrowserSort, AssetBrowserSortKey,
-    AssetBrowserState, AssetBrowserViewMode, AssetIconFallback,
+    AssetBrowserConfig, AssetBrowserDropTargetKind, AssetBrowserItem, AssetBrowserItemRect,
+    AssetBrowserLayout, AssetBrowserModel, AssetBrowserOutput, AssetBrowserRequest,
+    AssetBrowserSort, AssetBrowserSortKey, AssetBrowserState, AssetBrowserViewMode,
+    AssetIconFallback,
 };
-use stern_widgets::{GridColumns, GridLayout, ItemId, ListLayout, SortDirection, Ui};
+use stern_widgets::{
+    CollectionContextTarget, GridColumns, GridLayout, InlineEditCancelReason,
+    InlineEditCommitReason, InlineEditRequest, ItemId, ListLayout, SortDirection, Ui,
+};
 
 const BOUNDS: Rect = Rect::new(10.25, 20.5, 240.0, 112.0);
 
@@ -69,9 +74,65 @@ fn pointer_input(point: Point, down: bool, pressed: bool, released: bool) -> UiI
     }
 }
 
+fn secondary_input(point: Point, down: bool, pressed: bool, released: bool) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(point),
+            secondary: PointerButtonState::new(down, pressed, released),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
+}
+
+fn move_input(point: Point, delta: Vec2) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(point),
+            delta,
+            primary: PointerButtonState::new(true, false, false),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
+}
+
+fn key_input(key: Key) -> UiInput {
+    UiInput {
+        keyboard: KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: vec![KeyEvent::new(
+                key,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            )],
+        },
+        ..UiInput::default()
+    }
+}
+
+fn typed_input(text: &str) -> UiInput {
+    let event = KeyEvent::new(
+        Key::Character(text.to_owned()),
+        KeyState::Pressed,
+        Modifiers::default(),
+        false,
+    )
+    .with_text(text);
+    UiInput {
+        keyboard: KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: vec![event],
+        },
+        ..UiInput::default()
+    }
+}
+
 #[derive(Debug)]
 struct Run {
     root: WidgetId,
+    outside: WidgetId,
     items: Vec<AssetBrowserItemRect>,
     projected: Vec<ItemId>,
     output: AssetBrowserOutput,
@@ -85,27 +146,90 @@ fn run_frame(
     memory: &mut UiMemory,
     input: UiInput,
 ) -> Run {
+    run_frame_with_options(model, config, state, memory, input, false, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_frame_with_options(
+    model: &AssetBrowserModel,
+    config: AssetBrowserConfig,
+    state: &mut AssetBrowserState,
+    memory: &mut UiMemory,
+    input: UiInput,
+    reject_rename: bool,
+    context_actions: bool,
+) -> Run {
     let theme = default_dark_theme();
     let mut ui = Ui::begin_frame(context(input), memory, &theme);
     let scene = ui
         .prepare_asset_browser("focus-assets", config, model, state)
         .expect("valid asset browser scene");
     let root = scene.widget_id();
+    let outside = ui.make_id("outside-focus");
+    ui.register_id(outside);
     let items = scene.layout().items.clone();
     let projected = scene.projection().visible_ids();
     ui.resolve_pointer_targets(|plan| {
         scene.declare_pointer_targets(plan, PointerOrder::new(100), state);
     })
     .expect("valid shared pointer plan");
-    let output = ui.asset_browser(&scene, state, |_target, _draft| None, |_target| Vec::new());
+    let output = ui.asset_browser(
+        &scene,
+        state,
+        |_target, _draft| reject_rename.then(|| "name already exists".to_owned()),
+        |target| {
+            if !context_actions {
+                return Vec::new();
+            }
+            match target {
+                CollectionContextTarget::Background(_) => {
+                    vec![ActionDescriptor::new("asset.create", "Create")]
+                }
+                CollectionContextTarget::Item(_) => {
+                    vec![ActionDescriptor::new("asset.inspect", "Inspect")]
+                }
+                CollectionContextTarget::Selection(_) => {
+                    vec![ActionDescriptor::new("asset.delete", "Delete")]
+                }
+            }
+        },
+    );
     let frame = ui.finish_output();
     Run {
         root,
+        outside,
         items,
         projected,
         output,
         frame,
     }
+}
+
+fn context_click(
+    point: Point,
+    model: &AssetBrowserModel,
+    config: AssetBrowserConfig,
+    state: &mut AssetBrowserState,
+    memory: &mut UiMemory,
+) -> Run {
+    let _ = run_frame_with_options(
+        model,
+        config.clone(),
+        state,
+        memory,
+        secondary_input(point, true, true, false),
+        false,
+        true,
+    );
+    run_frame_with_options(
+        model,
+        config,
+        state,
+        memory,
+        secondary_input(point, false, false, true),
+        false,
+        true,
+    )
 }
 
 fn click(
@@ -527,4 +651,298 @@ fn stable_id_focus_cursor_and_selection_survive_filter_sort_reorder_scroll_and_v
     assert_item_focus(&scrolled_list, id(3));
     assert_eq!(scrolled_list.output.visible_range, 1..6);
     assert_eq!(scrolled_list.output.materialized_range, 0..6);
+}
+
+fn assert_only_item_content_while_editing(run: &Run, target: ItemId) {
+    let item = item_rect(run, target);
+    let base_index = run
+        .frame
+        .primitives
+        .iter()
+        .position(|primitive| matches!(primitive, Primitive::Rect(base) if base.rect == item.rect))
+        .expect("editing item base");
+    assert!(matches!(
+        run.frame.primitives[base_index + 1],
+        Primitive::Rect(preview) if preview.rect == item.preview_rect
+    ));
+    assert!(matches!(
+        run.frame.primitives[base_index + 2],
+        Primitive::Text(ref text) if text.text == item.item.fallback.label
+    ));
+    assert!(matches!(
+        run.frame.primitives[base_index + 3],
+        Primitive::Text(ref text) if text.text == item.item.kind
+    ));
+    assert_eq!(
+        run.frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        0
+    );
+    assert!(
+        run.frame
+            .semantics
+            .get(run.root.child(("asset-browser-item", target.raw())))
+            .is_none()
+    );
+}
+
+fn assert_no_item_annuli(run: &Run) {
+    assert_eq!(
+        run.frame
+            .primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+            .count(),
+        0
+    );
+}
+
+fn item_base_index(run: &Run, target: ItemId) -> usize {
+    let rect = item_rect(run, target).rect;
+    run.frame
+        .primitives
+        .iter()
+        .position(|primitive| matches!(primitive, Primitive::Rect(base) if base.rect == rect))
+        .expect("asset item base")
+}
+
+fn text_color(run: &Run, text: &str) -> Color {
+    run.frame
+        .primitives
+        .iter()
+        .find_map(|primitive| match primitive {
+            Primitive::Text(primitive) if primitive.text == text => match primitive.brush {
+                Brush::Solid(color) => Some(color),
+                Brush::LinearGradient(_) => None,
+            },
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing text primitive {text}"))
+}
+
+fn linear_channel(channel: f32) -> f32 {
+    if channel <= 0.040_45 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn contrast_ratio(foreground: Color, background: Color) -> f32 {
+    let luminance = |color: Color| {
+        0.2126 * linear_channel(color.r)
+            + 0.7152 * linear_channel(color.g)
+            + 0.0722 * linear_channel(color.b)
+    };
+    let foreground = luminance(foreground);
+    let background = luminance(background);
+    (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05)
+}
+
+#[test]
+fn fractional_scroll_clips_first_middle_last_and_overscan_annuli_without_transforming_geometry() {
+    let model = AssetBrowserModel::new(
+        (1..=12)
+            .map(|raw| asset(raw, format!("Asset {raw}"), "mesh"))
+            .collect::<Vec<_>>(),
+    );
+
+    for (view_mode, offset) in [
+        (AssetBrowserViewMode::Grid, 18.25_f32),
+        (AssetBrowserViewMode::List, 14.25_f32),
+    ] {
+        let seed = run_frame(
+            &model,
+            config(view_mode),
+            &mut AssetBrowserState::new(),
+            &mut UiMemory::new(),
+            UiInput::default(),
+        );
+        let mut probe_memory = UiMemory::new();
+        probe_memory.set_scroll_offset(seed.root, Vec2::new(0.0, offset));
+        let probe = run_frame(
+            &model,
+            config(view_mode),
+            &mut AssetBrowserState::new(),
+            &mut probe_memory,
+            UiInput::default(),
+        );
+        assert!(probe.output.materialized_range.len() > probe.output.visible_range.len());
+        assert!(
+            probe
+                .items
+                .first()
+                .is_some_and(|item| item.rect.y < BOUNDS.y && item.rect.max_y() > BOUNDS.y)
+        );
+        assert!(probe.items.iter().any(|item| {
+            item.rect.y < BOUNDS.max_y()
+                && item.rect.max_y() > BOUNDS.max_y()
+                && item.rect.intersection(BOUNDS).is_some()
+        }));
+        assert!(
+            probe
+                .items
+                .last()
+                .is_some_and(|item| item.rect.intersection(BOUNDS).is_none())
+        );
+
+        let targets = [
+            probe.items[0].item.id,
+            probe.items[probe.items.len() / 2].item.id,
+            probe.items[probe.items.len() - 1].item.id,
+        ];
+        for target in targets {
+            let mut memory = UiMemory::new();
+            memory.set_scroll_offset(seed.root, Vec2::new(0.0, offset));
+            memory.focus(seed.root.child(("asset-browser-item", target.raw())));
+            let focused = run_frame(
+                &model,
+                config(view_mode),
+                &mut AssetBrowserState::new(),
+                &mut memory,
+                UiInput::default(),
+            );
+            assert_item_focus(&focused, target);
+            let clip_begin = focused
+                .frame
+                .primitives
+                .iter()
+                .position(|primitive| {
+                    matches!(primitive, Primitive::ClipBegin { rect, .. } if *rect == BOUNDS)
+                })
+                .expect("asset browser clip begins");
+            let clip_end = focused
+                .frame
+                .primitives
+                .iter()
+                .rposition(|primitive| matches!(primitive, Primitive::ClipEnd { .. }))
+                .expect("asset browser clip ends");
+            let item_base = item_base_index(&focused, target);
+            assert!(clip_begin < item_base && item_base + 2 < clip_end);
+            assert!(
+                focused
+                    .frame
+                    .primitives
+                    .iter()
+                    .all(|primitive| !matches!(primitive, Primitive::TransformBegin { .. }))
+            );
+            assert_eq!(focused.output.visible_range, probe.output.visible_range);
+            assert_eq!(
+                focused.output.materialized_range,
+                probe.output.materialized_range
+            );
+            assert_eq!(
+                item_rect(&focused, target).rect,
+                item_rect(&probe, target).rect
+            );
+        }
+    }
+}
+
+#[test]
+fn retained_disabled_focus_is_suppressed_while_read_only_focus_remains_visible_and_inert() {
+    let model = AssetBrowserModel::new(vec![
+        asset(1, "Enabled", "mesh"),
+        asset(2, "Item disabled", "mesh").disabled(true),
+        asset(3, "Read only", "mesh").read_only(true),
+    ]);
+    let seed = run_frame(
+        &model,
+        config(AssetBrowserViewMode::List),
+        &mut AssetBrowserState::new(),
+        &mut UiMemory::new(),
+        UiInput::default(),
+    );
+
+    for (target, globally_disabled) in [(id(1), true), (id(2), false)] {
+        let mut memory = UiMemory::new();
+        memory.focus(seed.root.child(("asset-browser-item", target.raw())));
+        let disabled = run_frame(
+            &model,
+            config(AssetBrowserViewMode::List).disabled(globally_disabled),
+            &mut AssetBrowserState::new(),
+            &mut memory,
+            UiInput::default(),
+        );
+        let response = item_response(&disabled, target);
+        assert!(response.state.focused);
+        assert!(response.state.disabled);
+        assert_eq!(
+            disabled
+                .frame
+                .primitives
+                .iter()
+                .filter(|primitive| matches!(primitive, Primitive::Path(_)))
+                .count(),
+            0
+        );
+        let semantic = disabled
+            .frame
+            .semantics
+            .get(seed.root.child(("asset-browser-item", target.raw())))
+            .expect("disabled item semantic");
+        assert!(semantic.state.focused);
+        assert_eq!(semantic.state.disabled, target == id(2));
+        if target == id(2) {
+            assert!(
+                semantic
+                    .actions
+                    .iter()
+                    .all(|action| action.kind != SemanticActionKind::Invoke)
+            );
+        }
+    }
+
+    let mut read_only_state = AssetBrowserState::new();
+    read_only_state.selection.replace(id(3));
+    let mut read_only_memory = UiMemory::new();
+    read_only_memory.focus(seed.root.child(("asset-browser-item", 3_u64)));
+    let read_only = run_frame(
+        &model,
+        config(AssetBrowserViewMode::List),
+        &mut read_only_state,
+        &mut read_only_memory,
+        UiInput::default(),
+    );
+    let response = item_response(&read_only, id(3));
+    assert!(response.state.focused);
+    assert!(response.state.selected);
+    assert!(!response.state.disabled);
+    assert_item_focus(&read_only, id(3));
+    let semantic = read_only
+        .frame
+        .semantics
+        .get(seed.root.child(("asset-browser-item", 3_u64)))
+        .expect("read-only semantic");
+    assert!(semantic.state.focused);
+    assert!(semantic.state.selected);
+    assert!(
+        semantic
+            .actions
+            .iter()
+            .any(|action| action.kind == SemanticActionKind::Invoke)
+    );
+    assert!(
+        semantic
+            .actions
+            .iter()
+            .all(|action| action.kind != SemanticActionKind::Custom("rename".to_owned()))
+    );
+    let resolved = item_rect(&read_only, id(3));
+    assert!(
+        resolved
+            .item
+            .inline_rename_begin_request(seed.root)
+            .is_none()
+    );
+    assert!(
+        resolved
+            .item
+            .drag_source(&read_only_state.selection)
+            .is_none()
+    );
+    assert!(read_only.output.requests.is_empty());
 }
