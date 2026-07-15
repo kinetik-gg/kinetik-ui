@@ -1123,7 +1123,7 @@ fn assert_header_clip_transform(run: &Run, bounds: Rect, offset_x: f32) {
 }
 
 #[test]
-fn fractional_scroll_keeps_partial_and_fully_clipped_focus_in_exact_header_clip_transform_scope() {
+fn fractional_scroll_keeps_partial_left_right_and_fully_clipped_focus_in_header_scope() {
     let items = projection(3);
     let bounds = Rect::new(3.25, 7.75, 120.0, 84.0);
     let narrow = config_with(bounds, None, [10, 20, 30]);
@@ -1153,6 +1153,41 @@ fn fractional_scroll_keeps_partial_and_fully_clipped_focus_in_exact_header_clip_
     assert_eq!(header_response(&partial, column).rect, logical_rect);
     let expected = assert_header_focus(&partial, column, false);
     assert_header_clip_transform(&partial, bounds, 30.25);
+
+    let right_column = id(30);
+    let right_header_id = header_response(&seed, right_column).id;
+    let right_logical_rect = header_response(&seed, right_column).rect;
+    assert_eq!(
+        right_logical_rect,
+        Rect::new(bounds.x + 160.0, bounds.y, 80.0, 20.25)
+    );
+    let mut right_memory = UiMemory::new();
+    right_memory.focus(right_header_id);
+    right_memory.set_scroll_offset(seed.root, Vec2::new(90.0, 0.0));
+    let partial_right = run_frame(
+        &items,
+        narrow.clone(),
+        &mut VirtualTableSelection::new(),
+        &mut right_memory,
+        UiInput::default(),
+    );
+    assert_eq!(partial_right.output.window.offset.x, 90.0);
+    assert_eq!(
+        header_response(&partial_right, right_column).rect,
+        right_logical_rect
+    );
+    assert_header_focus(&partial_right, right_column, false);
+    assert_header_clip_transform(&partial_right, bounds, 90.0);
+    let right_semantic = partial_right
+        .frame
+        .semantics
+        .get(right_header_id)
+        .expect("partially right-clipped header semantics");
+    assert_eq!(
+        right_semantic.bounds,
+        Rect::new(bounds.x + 70.0, bounds.y, 50.0, 20.25)
+    );
+    assert!(right_semantic.state.focused);
 
     memory.set_scroll_offset(seed.root, Vec2::new(120.0, 0.0));
     let clipped = run_frame(
