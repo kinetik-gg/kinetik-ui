@@ -4,7 +4,7 @@
 
 use stern_core::{
     FontFeatureScale, FontFeatureToken, FontLineHeightScale, FontLineHeightToken, FontSizeScale,
-    FontSizeToken, FontWeightScale, FontWeightToken, default_dark_theme,
+    FontSizeToken, FontWeightScale, FontWeightToken, TextRole, TypographyScale, default_dark_theme,
 };
 
 const EXPECTED_SIZE_TOKENS: [FontSizeToken; 6] = [
@@ -30,6 +30,14 @@ const EXPECTED_WEIGHT_TOKENS: [FontWeightToken; 4] = [
 ];
 
 const EXPECTED_FEATURE_TOKENS: [FontFeatureToken; 1] = [FontFeatureToken::Numeric];
+
+const TEXT_ROLES: [TextRole; 5] = [
+    TextRole::Body,
+    TextRole::Label,
+    TextRole::Caption,
+    TextRole::Title,
+    TextRole::Monospace,
+];
 
 #[test]
 fn token_inventories_have_exact_normative_order() {
@@ -112,4 +120,54 @@ fn typed_lookups_route_every_independent_sentinel() {
         features.get(FontFeatureToken::Numeric),
         "sentinel-tabular-numeric"
     );
+}
+
+#[test]
+fn replacing_any_foundation_scale_preserves_theme_and_resolved_text_roles() {
+    let base_theme = default_dark_theme();
+    let base = base_theme.typography;
+    let sizes = FontSizeScale::new(201.0, 203.0, 207.0, 209.0, 211.0, 223.0);
+    let line_heights = FontLineHeightScale::new(227.0, 229.0, 233.0);
+    let weights = FontWeightScale::new(701, 709, 719, 727);
+    let features = FontFeatureScale::new("replacement-numeric");
+    let variants = [
+        TypographyScale { sizes, ..base },
+        TypographyScale {
+            line_heights,
+            ..base
+        },
+        TypographyScale { weights, ..base },
+        TypographyScale { features, ..base },
+        TypographyScale {
+            sizes,
+            line_heights,
+            weights,
+            features,
+            ..base
+        },
+    ];
+
+    for typography in variants {
+        let customized = base_theme.with_typography(typography);
+
+        assert_ne!(typography, base);
+        assert_eq!(typography.families, base.families);
+        for role in TEXT_ROLES {
+            assert_eq!(typography.metrics(role), base.metrics(role));
+            assert_eq!(customized.font(role), base_theme.font(role));
+        }
+
+        assert_eq!(customized.text_size, base_theme.text_size);
+        assert_eq!(customized.colors, base_theme.colors);
+        assert_eq!(customized.spacing, base_theme.spacing);
+        assert_eq!(customized.sizes, base_theme.sizes);
+        assert_eq!(customized.radii, base_theme.radii);
+        assert_eq!(customized.strokes, base_theme.strokes);
+        assert_eq!(customized.opacity, base_theme.opacity);
+        assert_eq!(customized.elevation, base_theme.elevation);
+        assert_eq!(customized.duration, base_theme.duration);
+        assert_eq!(customized.controls, base_theme.controls);
+        assert_eq!(customized.radius, base_theme.radius);
+        assert_eq!(customized.border_width, base_theme.border_width);
+    }
 }
