@@ -160,6 +160,36 @@ fn named_space_grotesk_family_shapes_with_bundled_font() {
 }
 
 #[test]
+fn space_grotesk_loading_preserves_ui_and_mono_resolution() {
+    let mut engine = CosmicTextEngine::new();
+    let cases: [(&str, &[u8]); 5] = [
+        (DEFAULT_FONT_FAMILY, fonts::INTER_VARIABLE),
+        ("sans-serif", fonts::INTER_VARIABLE),
+        (DEFAULT_MONOSPACE_FONT_FAMILY, fonts::SPACE_MONO_REGULAR),
+        ("monospace", fonts::SPACE_MONO_REGULAR),
+        ("mono", fonts::SPACE_MONO_REGULAR),
+    ];
+
+    for (family, expected_bytes) in cases {
+        let layout = engine.shape_text(&TextLayoutKey::new(
+            "Stern 0123",
+            TextStyle::new(family, 13.0, 18.0),
+            200.0,
+            false,
+        ));
+
+        assert!(!layout.runs.is_empty(), "{family} did not shape");
+        assert!(
+            layout
+                .runs
+                .iter()
+                .all(|run| run.font.data.data() == expected_bytes),
+            "{family} resolved through unexpected bytes"
+        );
+    }
+}
+
+#[test]
 fn cosmic_text_engine_shapes_owned_glyph_runs() {
     let mut engine = CosmicTextEngine::new();
     let key = TextLayoutKey::new(
