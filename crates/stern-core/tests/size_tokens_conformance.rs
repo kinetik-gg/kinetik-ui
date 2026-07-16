@@ -233,6 +233,11 @@ fn icon_size_member_access_audit_handles_layout_and_ignores_non_code() {
         "theme\n    .controls\n    .icon_size",
         "theme.controls/* authority hop */.icon_size",
         "theme /* root */ . controls /* field */ . icon_size",
+        r#"fn inspect<'a>(value: &'a str) {
+            let quote = '"';
+            let byte_quote = b'"';
+            let _ = (value, quote, byte_quote, theme.controls.icon_size);
+        }"#,
     ] {
         assert!(has_icon_size_member_access(mutated_consumer));
     }
@@ -244,6 +249,7 @@ fn icon_size_member_access_audit_handles_layout_and_ignores_non_code() {
         /* theme . controls . icon_size */
         let icon_size = theme.sizes.icon.md;
         let split = theme.icon_/* token boundary */size;
+        let raster_size = raster_options.icon_size;
     "##;
     assert!(!has_icon_size_member_access(
         comments_literals_and_identifiers
@@ -337,22 +343,34 @@ fn control_metrics_declares_field(source: &str, field: &str) -> bool {
 fn has_icon_size_member_access(source: &str) -> bool {
     let source = mask_rust_comments_and_literals(source);
     let bytes = source.as_bytes();
-    let field = b"icon_size";
+    let controls = b"controls";
+    let icon_size = b"icon_size";
     for dot in bytes
         .iter()
         .enumerate()
         .filter_map(|(index, byte)| (*byte == b'.').then_some(index))
     {
-        let start = skip_ascii_whitespace(bytes, dot + 1);
-        if bytes.get(start..start + field.len()) == Some(field)
-            && bytes
-                .get(start + field.len())
-                .is_none_or(|byte| !is_rust_identifier_byte(*byte))
-        {
+        let controls_start = skip_ascii_whitespace(bytes, dot + 1);
+        if !identifier_matches(bytes, controls_start, controls) {
+            continue;
+        }
+        let separator = skip_ascii_whitespace(bytes, controls_start + controls.len());
+        if bytes.get(separator) != Some(&b'.') {
+            continue;
+        }
+        let icon_size_start = skip_ascii_whitespace(bytes, separator + 1);
+        if identifier_matches(bytes, icon_size_start, icon_size) {
             return true;
         }
     }
     false
+}
+
+fn identifier_matches(bytes: &[u8], start: usize, identifier: &[u8]) -> bool {
+    bytes.get(start..start + identifier.len()) == Some(identifier)
+        && bytes
+            .get(start + identifier.len())
+            .is_none_or(|byte| !is_rust_identifier_byte(*byte))
 }
 
 fn control_metrics_body(source: &str) -> String {
@@ -416,6 +434,13 @@ fn mask_rust_comments_and_literals(source: &str) -> String {
             let end = quoted_string_end(bytes, cursor);
             mask_non_code(&mut masked, cursor, end, true);
             cursor = end;
+        } else if bytes[cursor] == b'\'' {
+            if let Some(end) = character_literal_end(source, cursor) {
+                mask_non_code(&mut masked, cursor, end, true);
+                cursor = end;
+            } else {
+                cursor += 1;
+            }
         } else {
             cursor += 1;
         }
@@ -492,6 +517,28 @@ fn quoted_string_end(bytes: &[u8], start: usize) -> usize {
         }
     }
     bytes.len()
+}
+
+fn character_literal_end(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let value_start = start + 1;
+    if bytes.get(value_start) == Some(&b'\\') {
+        let escape_start = value_start + 1;
+        let value_end = match bytes.get(escape_start) {
+            Some(b'x') => escape_start + 3,
+            Some(b'u') if bytes.get(escape_start + 1) == Some(&b'{') => bytes[escape_start + 2..]
+                .iter()
+                .position(|byte| *byte == b'}')
+                .map(|offset| escape_start + 3 + offset)?,
+            Some(_) => escape_start + 1,
+            None => return None,
+        };
+        return (bytes.get(value_end) == Some(&b'\'')).then_some(value_end + 1);
+    }
+
+    let character = source.get(value_start..)?.chars().next()?;
+    let value_end = value_start + character.len_utf8();
+    (bytes.get(value_end) == Some(&b'\'')).then_some(value_end + 1)
 }
 
 fn collect_production_rust_sources(directory: &Path, output: &mut Vec<std::path::PathBuf>) {
