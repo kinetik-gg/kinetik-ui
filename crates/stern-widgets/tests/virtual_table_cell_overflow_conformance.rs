@@ -370,3 +370,59 @@ fn narrow_nonpositive_spans_and_paragraphs_keep_registered_full_source_policy() 
         );
     }
 }
+
+#[test]
+fn over_budget_source_rejects_custom_and_generic_layouts_without_store_mutation() {
+    const RETAINED_PAYLOAD_CEILING: usize = 32 * 1024 * 1024;
+
+    let items = projection(&[1]);
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let mut selection = VirtualTableSelection::new();
+    let warm = run_table(
+        Some(&mut store),
+        &items,
+        config(BOUNDS, [80.0], VirtualTableSelectionMode::Cell),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new(["Warm retained table body-cell label"]),
+    );
+    assert!(
+        body_texts(&warm.frame, "Warm retained table body-cell label")[0]
+            .layout
+            .is_some()
+    );
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    let source = "x".repeat(RETAINED_PAYLOAD_CEILING + 1);
+    let rejected = run_table(
+        Some(&mut store),
+        &items,
+        config(BOUNDS, [80.0], VirtualTableSelectionMode::Cell),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([source.clone()]),
+    );
+    let texts = body_texts(&rejected.frame, &source);
+    let semantics = body_semantics(&rejected.frame, &source);
+    assert_eq!(texts.len(), 1);
+    assert_eq!(texts[0].layout, None);
+    assert_eq!(texts[0].text, source);
+    assert_eq!(semantics.len(), 1);
+    assert_eq!(semantics[0].label.as_deref(), Some(source.as_str()));
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+    assert!(store.layouts().all(|entry| entry.key.text != source));
+}
