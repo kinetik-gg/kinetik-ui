@@ -1,8 +1,10 @@
 //! Windowless conformance for retained standard-button label end ellipsis.
 
 use stern_core::{
-    CursorShape, FrameOutput, PlatformRequest, Point, PointerButtonState, PointerInput, Primitive,
-    Rect, Response, SemanticRole, TextPrimitive, UiInput, UiMemory, WidgetId, default_dark_theme,
+    ActionContext, ActionDescriptor, ActionIcon, ActionId, ActionSource, CursorShape, FrameOutput,
+    Key, KeyEvent, KeyState, KeyboardInput, Modifiers, MouseButton, PlatformRequest, Point,
+    PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, Response, SemanticRole,
+    Shortcut, TextPrimitive, UiInput, UiMemory, WidgetId, default_dark_theme,
 };
 use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow};
 use stern_widgets::{Ui, button};
@@ -44,6 +46,15 @@ fn marker_count(store: &TextLayoutStore, text: &TextPrimitive) -> usize {
         .flat_map(|run| &run.glyphs)
         .filter(|glyph| glyph.elided)
         .count()
+}
+
+fn pointer_transition(down: bool) -> UiInput {
+    let mut input = UiInput::default();
+    input.pointer.position = Some(BUTTON.center());
+    input
+        .pointer
+        .apply_button_transition(MouseButton::Primary, down);
+    input
 }
 
 #[test]
@@ -551,4 +562,175 @@ fn interaction_states_preserve_label_identity_and_existing_surface_order() {
             .platform_requests
             .contains(&PlatformRequest::SetCursor(CursorShape::PointingHand))
     );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn delegated_action_button_preserves_visibility_metadata_and_exact_activation_routing() {
+    let source =
+        "Complete action button source remains intact while its retained presentation elides";
+    let context = ActionContext::Widget(WidgetId::from_key("action-owner"));
+    let action = ActionDescriptor::new("render.start", source);
+    let mut store = TextLayoutStore::new();
+
+    let mut plain_memory = UiMemory::new();
+    let input = UiInput::default();
+    let theme = default_dark_theme();
+    let mut ui = Ui::new(&input, &mut plain_memory, &theme).with_text_layouts(&mut store);
+    let plain_response = ui
+        .action_button("action", BUTTON, &action, context.clone())
+        .expect("visible action button");
+    let plain_frame = ui.finish_output();
+    let plain_label = button_text(&plain_frame, source);
+    let expected_id = plain_label.layout.expect("retained action label identity");
+    let stored = store
+        .stored_layout(expected_id)
+        .expect("resident action label entry");
+    assert_eq!(stored.key.text, source);
+    assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+    assert!(stored.layout.is_elided());
+    assert_eq!(marker_count(&store, plain_label), 1);
+    assert!(plain_frame.actions.is_empty());
+
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+    let mut hidden = action.clone();
+    hidden.state.visible = false;
+    let mut hidden_memory = UiMemory::new();
+    let input = pointer_transition(true);
+    let mut ui = Ui::new(&input, &mut hidden_memory, &theme).with_text_layouts(&mut store);
+    assert_eq!(
+        ui.action_button("action", BUTTON, &hidden, context.clone()),
+        None
+    );
+    let hidden_frame = ui.finish_output();
+    assert!(hidden_frame.primitives.is_empty());
+    assert!(hidden_frame.semantics.nodes().is_empty());
+    assert!(hidden_frame.actions.is_empty());
+    assert!(hidden_frame.platform_requests.is_empty());
+    assert_eq!(hidden_frame.repaint, RepaintRequest::None);
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+
+    let mut disabled = action.clone();
+    disabled.state.enabled = false;
+    let mut disabled_memory = UiMemory::new();
+    let mut ui = Ui::new(&input, &mut disabled_memory, &theme).with_text_layouts(&mut store);
+    let disabled_response = ui
+        .action_button("action", BUTTON, &disabled, context.clone())
+        .expect("visible disabled action button");
+    let disabled_frame = ui.finish_output();
+    assert!(disabled_response.state.disabled);
+    assert!(!disabled_response.clicked);
+    assert!(!disabled_response.keyboard_activated);
+    assert_eq!(
+        button_text(&disabled_frame, source).layout,
+        Some(expected_id)
+    );
+    assert_eq!(
+        disabled_frame.semantics.nodes()[0].label.as_deref(),
+        Some(source)
+    );
+    assert!(disabled_frame.actions.is_empty());
+
+    let mut pressed_memory = UiMemory::new();
+    let input = pointer_transition(true);
+    let mut ui = Ui::new(&input, &mut pressed_memory, &theme).with_text_layouts(&mut store);
+    let pressed = ui
+        .action_button("action", BUTTON, &action, context.clone())
+        .expect("pressed action button");
+    assert!(pressed.state.pressed);
+    assert!(ui.finish_output().actions.is_empty());
+
+    let input = pointer_transition(false);
+    let mut ui = Ui::new(&input, &mut pressed_memory, &theme).with_text_layouts(&mut store);
+    let released = ui
+        .action_button("action", BUTTON, &action, context.clone())
+        .expect("released action button");
+    let mut pointer_frame = ui.finish_output();
+    assert!(released.clicked);
+    assert!(!released.keyboard_activated);
+    assert_eq!(
+        button_text(&pointer_frame, source).layout,
+        Some(expected_id)
+    );
+    let invocation = pointer_frame
+        .actions
+        .pop_front()
+        .expect("pointer action invocation");
+    assert_eq!(invocation.action_id, ActionId::new("render.start"));
+    assert_eq!(invocation.source, ActionSource::Button);
+    assert_eq!(invocation.context, context);
+    assert!(pointer_frame.actions.is_empty());
+
+    let followup = ActionDescriptor::new("render.followup", "Follow up");
+    let keyboard = UiInput {
+        keyboard: KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: vec![KeyEvent::new(
+                Key::Space,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            )],
+        },
+        ..UiInput::default()
+    };
+    let mut keyboard_memory = UiMemory::new();
+    keyboard_memory.focus(plain_response.id);
+    let mut ui = Ui::new(&keyboard, &mut keyboard_memory, &theme).with_text_layouts(&mut store);
+    let keyboard_response = ui
+        .action_button("action", BUTTON, &action, context.clone())
+        .expect("keyboard action button");
+    assert!(ui.invoke_action_descriptor(
+        &followup,
+        ActionSource::Programmatic,
+        ActionContext::Global,
+    ));
+    let mut keyboard_frame = ui.finish_output();
+    assert!(keyboard_response.clicked);
+    assert!(keyboard_response.keyboard_activated);
+    assert_eq!(
+        button_text(&keyboard_frame, source).layout,
+        Some(expected_id)
+    );
+    let invocations = keyboard_frame.actions.drain().collect::<Vec<_>>();
+    assert_eq!(invocations.len(), 2);
+    assert_eq!(invocations[0].action_id, ActionId::new("render.start"));
+    assert_eq!(invocations[0].source, ActionSource::Button);
+    assert_eq!(invocations[0].context, context);
+    assert_eq!(invocations[1].action_id, ActionId::new("render.followup"));
+    assert_eq!(invocations[1].source, ActionSource::Programmatic);
+    assert_eq!(invocations[1].context, ActionContext::Global);
+
+    let mut rich = action.clone();
+    rich.icon = Some(ActionIcon::new("render"));
+    rich.tooltip = Some("Longer application-owned tooltip".to_owned());
+    rich.keywords = vec!["start".to_owned(), "render".to_owned()];
+    rich.shortcut = Some(Shortcut::new(
+        Modifiers::new(false, true, false, false),
+        Key::Character("r".to_owned()),
+    ));
+    rich.state.checked = Some(true);
+    let mut rich_memory = UiMemory::new();
+    let input = UiInput::default();
+    let mut ui = Ui::new(&input, &mut rich_memory, &theme).with_text_layouts(&mut store);
+    let rich_response = ui
+        .action_button("action", BUTTON, &rich, context)
+        .expect("metadata-rich action button");
+    let rich_frame = ui.finish_output();
+    assert_eq!(rich_response, plain_response);
+    assert_eq!(rich_frame.primitives, plain_frame.primitives);
+    assert_eq!(rich_frame.semantics, plain_frame.semantics);
+    assert_eq!(button_text(&rich_frame, source).layout, Some(expected_id));
+    assert!(rich_frame.actions.is_empty());
 }
