@@ -254,3 +254,119 @@ fn ordinary_required_and_fitting_labels_preserve_complete_sources() {
         }));
     }
 }
+
+#[test]
+fn help_and_status_glyphs_keep_exact_reservations_and_visible_layouts() {
+    let cases = [
+        (
+            PropertyGridRow::property(ItemId::from_raw(31), "Help only label source", 0)
+                .with_help_text("Helpful detail"),
+            22.0_f32,
+            &["?"][..],
+        ),
+        (
+            PropertyGridRow::property(ItemId::from_raw(32), "Empty help label source", 0)
+                .with_help_text(""),
+            22.0_f32,
+            &["?"][..],
+        ),
+        (
+            PropertyGridRow::property(ItemId::from_raw(33), "Info label source", 0)
+                .with_status(PropertyGridRowStatus::info("Information")),
+            10.0_f32,
+            &["i"][..],
+        ),
+        (
+            PropertyGridRow::property(ItemId::from_raw(34), "Warning label source", 0)
+                .with_status(PropertyGridRowStatus::warning("Warning")),
+            10.0_f32,
+            &["!"][..],
+        ),
+        (
+            PropertyGridRow::property(ItemId::from_raw(35), "Error label source", 0)
+                .with_status(PropertyGridRowStatus::error("Error")),
+            10.0_f32,
+            &["x"][..],
+        ),
+        (
+            PropertyGridRow::property(ItemId::from_raw(36), "Help and status label source", 0)
+                .with_help_text("Help wins")
+                .with_status(PropertyGridRowStatus::error("Error remains separate")),
+            22.0_f32,
+            &["?", "x"][..],
+        ),
+    ];
+
+    for (row, reserved_right, glyphs) in cases {
+        let source = row.label.clone();
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let (output, frame) = retained_default(&mut store, &mut memory, &[row]);
+        let geometry = output.visible_rows[0];
+        let label = label_text(&frame, &source);
+        let label_id = label.layout.expect("registered property label");
+        let stored = store
+            .stored_layout(label_id)
+            .expect("resident property label");
+        assert_eq!(
+            stored.key.width_bits,
+            ((geometry.label_rect.width - 6.0_f32) - reserved_right)
+                .max(0.0_f32)
+                .to_bits()
+        );
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+
+        for glyph in glyphs {
+            let primitive = label_text(&frame, glyph);
+            let glyph_id = primitive.layout.expect("registered trailing glyph");
+            let glyph_layout = store
+                .stored_layout(glyph_id)
+                .expect("resident trailing glyph");
+            assert_ne!(glyph_id, label_id);
+            assert_eq!(glyph_layout.key.text, *glyph);
+            assert_eq!(glyph_layout.key.overflow, TextOverflow::Visible);
+            assert!(!glyph_layout.layout.is_elided());
+        }
+    }
+}
+
+#[test]
+fn severity_and_access_brush_changes_preserve_effective_label_identity() {
+    let source = "Stable property source keeps identity across presentation-only brush changes";
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let mut severity_id = None;
+    let mut severity_brushes = Vec::new();
+
+    for status in [
+        PropertyGridRowStatus::info("Info"),
+        PropertyGridRowStatus::warning("Warning"),
+        PropertyGridRowStatus::error("Error"),
+    ] {
+        let row = PropertyGridRow::property(ItemId::from_raw(41), source, 0).with_status(status);
+        let (_, frame) = retained_default(&mut store, &mut memory, &[row]);
+        let label = label_text(&frame, source);
+        let id = label.layout.expect("severity label identity");
+        assert_eq!(*severity_id.get_or_insert(id), id);
+        severity_brushes.push(label.brush);
+    }
+    assert_ne!(severity_brushes[0], severity_brushes[1]);
+    assert_ne!(severity_brushes[1], severity_brushes[2]);
+
+    let mut access_id = None;
+    let mut access_brushes = Vec::new();
+    for row in [
+        PropertyGridRow::property(ItemId::from_raw(42), source, 0),
+        PropertyGridRow::property(ItemId::from_raw(42), source, 0).with_read_only(true),
+        PropertyGridRow::property(ItemId::from_raw(42), source, 0).with_disabled(true),
+    ] {
+        let (_, frame) = retained_default(&mut store, &mut memory, &[row]);
+        let label = label_text(&frame, source);
+        let id = label.layout.expect("access label identity");
+        assert_eq!(*access_id.get_or_insert(id), id);
+        access_brushes.push(label.brush);
+    }
+    assert_eq!(access_brushes[0], access_brushes[1]);
+    assert_ne!(access_brushes[1], access_brushes[2]);
+}
