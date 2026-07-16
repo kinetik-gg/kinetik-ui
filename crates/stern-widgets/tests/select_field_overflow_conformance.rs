@@ -611,3 +611,47 @@ fn nonpositive_and_nonfinite_text_geometry_preserves_visible_complete_source() {
         );
     }
 }
+
+#[test]
+fn multiline_and_paragraph_separator_labels_remain_visible_and_complete() {
+    for source in [
+        "First complete line\nSecond complete line",
+        "First complete line\r\nSecond complete line",
+        "First complete paragraph\u{2029}Second complete paragraph",
+    ] {
+        let model = selected_model(source);
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let (output, frame) = retained_frame(
+            &mut store,
+            &mut memory,
+            &model,
+            FIELD,
+            SelectFieldConfig::new("Choose"),
+        );
+        let value = value_text(&output);
+        let id = value.layout.expect("registered multiline-policy layout");
+        let stored = store
+            .stored_layout(id)
+            .expect("resident multiline-policy layout");
+
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert!(!stored.layout.is_elided());
+        assert!(
+            stored
+                .layout
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .all(|glyph| !glyph.elided)
+        );
+        assert_eq!(stored.key.text, source);
+        assert_eq!(value.text, source);
+        assert_eq!(output.presentation.label, source);
+        assert_eq!(final_value_layout(&frame, source), Some(id));
+        assert_eq!(
+            output.widget.semantics[0].state.value,
+            Some(SemanticValue::Text(source.to_owned()))
+        );
+    }
+}
