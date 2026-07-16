@@ -2,9 +2,9 @@
 
 use stern_core::{
     ActionContext, ActionDescriptor, ActionIcon, ActionId, ActionSource, CursorShape, FrameOutput,
-    Key, KeyEvent, KeyState, KeyboardInput, Modifiers, MouseButton, PlatformRequest, Point,
-    PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, Response, SemanticRole,
-    Shortcut, TextPrimitive, UiInput, UiMemory, WidgetId, default_dark_theme,
+    Key, KeyEvent, KeyState, KeyboardInput, Modifiers, MouseButton, PathElement, PlatformRequest,
+    Point, PointerButtonState, PointerInput, Primitive, Rect, RepaintRequest, Response,
+    SemanticRole, Shortcut, TextPrimitive, UiInput, UiMemory, WidgetId, default_dark_theme,
 };
 use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow};
 use stern_widgets::{Ui, button};
@@ -62,6 +62,51 @@ fn assert_rect_bits(left: Rect, right: Rect) {
     assert_eq!(left.y.to_bits(), right.y.to_bits());
     assert_eq!(left.width.to_bits(), right.width.to_bits());
     assert_eq!(left.height.to_bits(), right.height.to_bits());
+}
+
+fn assert_point_translation(source: Point, translated: Point, delta: Point) {
+    assert_eq!(translated.x.to_bits(), (source.x + delta.x).to_bits());
+    assert_eq!(translated.y.to_bits(), (source.y + delta.y).to_bits());
+}
+
+fn assert_path_element_translation(source: &PathElement, translated: &PathElement, delta: Point) {
+    match (source, translated) {
+        (PathElement::MoveTo(source), PathElement::MoveTo(translated))
+        | (PathElement::LineTo(source), PathElement::LineTo(translated)) => {
+            assert_point_translation(*source, *translated, delta);
+        }
+        (
+            PathElement::QuadTo {
+                ctrl: source_ctrl,
+                to: source_to,
+            },
+            PathElement::QuadTo {
+                ctrl: translated_ctrl,
+                to: translated_to,
+            },
+        ) => {
+            assert_point_translation(*source_ctrl, *translated_ctrl, delta);
+            assert_point_translation(*source_to, *translated_to, delta);
+        }
+        (
+            PathElement::CubicTo {
+                ctrl1: source_ctrl1,
+                ctrl2: source_ctrl2,
+                to: source_to,
+            },
+            PathElement::CubicTo {
+                ctrl1: translated_ctrl1,
+                ctrl2: translated_ctrl2,
+                to: translated_to,
+            },
+        ) => {
+            assert_point_translation(*source_ctrl1, *translated_ctrl1, delta);
+            assert_point_translation(*source_ctrl2, *translated_ctrl2, delta);
+            assert_point_translation(*source_to, *translated_to, delta);
+        }
+        (PathElement::Close, PathElement::Close) => {}
+        _ => panic!("translated focus path changed element topology"),
+    }
 }
 
 #[test]
@@ -444,6 +489,157 @@ fn hot_frames_translation_source_and_width_obey_retained_identity_boundaries() {
             .width_bits,
         first_width_bits
     );
+}
+
+#[test]
+fn focused_retained_button_translates_complete_surface_and_focus_geometry_only() {
+    let source = "Focused retained button translates without changing label identity";
+    let delta = Point::new(40.0, 20.0);
+    let translated_rect = Rect::new(
+        BUTTON.x + delta.x,
+        BUTTON.y + delta.y,
+        BUTTON.width,
+        BUTTON.height,
+    );
+    let mut store = TextLayoutStore::new();
+    let mut initial_memory = UiMemory::new();
+    let (initial_response, _) = retained_button(
+        &mut store,
+        &mut initial_memory,
+        BUTTON,
+        source,
+        false,
+        &UiInput::default(),
+    );
+
+    let mut source_memory = UiMemory::new();
+    source_memory.focus(initial_response.id);
+    let (source_response, source_frame) = retained_button(
+        &mut store,
+        &mut source_memory,
+        BUTTON,
+        source,
+        false,
+        &UiInput::default(),
+    );
+    let source_label = button_text(&source_frame, source);
+    let retained_id = source_label.layout.expect("focused retained label");
+    let width_bits = store
+        .stored_layout(retained_id)
+        .expect("focused retained entry")
+        .key
+        .width_bits;
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    let mut translated_memory = UiMemory::new();
+    translated_memory.focus(initial_response.id);
+    let (translated_response, translated_frame) = retained_button(
+        &mut store,
+        &mut translated_memory,
+        translated_rect,
+        source,
+        false,
+        &UiInput::default(),
+    );
+    let translated_label = button_text(&translated_frame, source);
+
+    assert!(source_response.state.focused);
+    assert!(translated_response.state.focused);
+    assert_eq!(source_response.id, translated_response.id);
+    assert_point_translation(
+        Point::new(source_response.rect.x, source_response.rect.y),
+        Point::new(translated_response.rect.x, translated_response.rect.y),
+        delta,
+    );
+    assert_eq!(source_response.rect.width, translated_response.rect.width);
+    assert_eq!(source_response.rect.height, translated_response.rect.height);
+    assert_eq!(source_frame.primitives.len(), 4);
+    assert_eq!(translated_frame.primitives.len(), 4);
+
+    for (source_primitive, translated_primitive) in source_frame
+        .primitives
+        .iter()
+        .zip(&translated_frame.primitives)
+    {
+        match (source_primitive, translated_primitive) {
+            (Primitive::Rect(source), Primitive::Rect(translated)) => {
+                assert_point_translation(
+                    Point::new(source.rect.x, source.rect.y),
+                    Point::new(translated.rect.x, translated.rect.y),
+                    delta,
+                );
+                assert_eq!(source.rect.width, translated.rect.width);
+                assert_eq!(source.rect.height, translated.rect.height);
+                assert_eq!(source.fill, translated.fill);
+                assert_eq!(source.stroke, translated.stroke);
+                assert_eq!(source.radius, translated.radius);
+            }
+            (Primitive::Path(source), Primitive::Path(translated)) => {
+                assert_eq!(source.elements.len(), 20);
+                assert_eq!(translated.elements.len(), 20);
+                assert_eq!(source.fill, translated.fill);
+                assert_eq!(source.stroke, translated.stroke);
+                for (source, translated) in source.elements.iter().zip(&translated.elements) {
+                    assert_path_element_translation(source, translated, delta);
+                }
+            }
+            (Primitive::Text(source), Primitive::Text(translated)) => {
+                assert_point_translation(source.origin, translated.origin, delta);
+                assert_eq!(source.layout, translated.layout);
+                assert_eq!(source.text, translated.text);
+                assert_eq!(source.family, translated.family);
+                assert_eq!(source.size.to_bits(), translated.size.to_bits());
+                assert_eq!(
+                    source.line_height.to_bits(),
+                    translated.line_height.to_bits()
+                );
+                assert_eq!(source.brush, translated.brush);
+            }
+            _ => panic!("translated focused button changed primitive topology"),
+        }
+    }
+
+    assert_eq!(translated_label.layout, Some(retained_id));
+    assert_eq!(
+        store
+            .stored_layout(retained_id)
+            .expect("translated focused retained entry")
+            .key
+            .width_bits,
+        width_bits
+    );
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+    assert_eq!(source_frame.semantics.nodes().len(), 1);
+    assert_eq!(translated_frame.semantics.nodes().len(), 1);
+    let source_semantic = &source_frame.semantics.nodes()[0];
+    let translated_semantic = &translated_frame.semantics.nodes()[0];
+    assert_point_translation(
+        Point::new(source_semantic.bounds.x, source_semantic.bounds.y),
+        Point::new(translated_semantic.bounds.x, translated_semantic.bounds.y),
+        delta,
+    );
+    assert_eq!(
+        source_semantic.bounds.width,
+        translated_semantic.bounds.width
+    );
+    assert_eq!(
+        source_semantic.bounds.height,
+        translated_semantic.bounds.height
+    );
+    let mut normalized = translated_semantic.clone();
+    normalized.bounds = source_semantic.bounds;
+    assert_eq!(*source_semantic, normalized);
 }
 
 #[test]
