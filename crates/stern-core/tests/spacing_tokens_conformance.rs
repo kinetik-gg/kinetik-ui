@@ -157,7 +157,6 @@ fn spacing_replacement_preserves_every_non_spacing_theme_field() {
         compact_control_height: 702.0,
         padding_x: 705.0,
         padding_y: 706.0,
-        ..base.controls
     };
     base.radius = CornerRadius::all(801.0);
     base.border_width = 802.0;

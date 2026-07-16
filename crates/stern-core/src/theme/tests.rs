@@ -91,7 +91,6 @@ fn size_replacement_is_isolated_from_theme_and_control_metrics() {
         compact_control_height: 307.0,
         padding_x: 317.0,
         padding_y: 331.0,
-        ..default_dark_theme().controls
     };
     baseline.radius = CornerRadius::all(337.0);
     baseline.border_width = 347.0;
@@ -134,7 +133,6 @@ fn control_metrics_defaults_and_customization_remain_independent() {
         compact_control_height: 419.0,
         padding_x: 433.0,
         padding_y: 439.0,
-        ..defaults.controls
     };
     let customized = defaults
         .with_controls(controls)
@@ -196,7 +194,6 @@ fn controls_and_legacy_mirror_cannot_mutate_stroke_authority() {
         compact_control_height: 19.0,
         padding_x: 9.0,
         padding_y: 5.0,
-        ..default_dark_theme().controls
     };
     let mut theme = default_dark_theme()
         .with_strokes(strokes)

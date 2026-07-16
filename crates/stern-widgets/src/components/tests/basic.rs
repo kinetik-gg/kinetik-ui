@@ -294,7 +294,6 @@ fn remaining_control_metrics_cannot_change_icon_geometry() {
         compact_control_height: 103.0,
         padding_x: 109.0,
         padding_y: 113.0,
-        ..baseline.controls
     });
 
     assert_eq!(unsized_icon_family_primitives(&customized), expected);
