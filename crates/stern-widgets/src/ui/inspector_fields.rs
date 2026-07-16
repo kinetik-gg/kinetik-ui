@@ -14,6 +14,8 @@ use stern_text::{
     TextComposition, TextEditState, TextLayoutKey, TextLayoutStore, TextSelection, TextStyle,
 };
 
+use crate::components::select_field_with_text_layouts as select_field_widget;
+
 #[allow(unused_imports)]
 use super::{
     RadioGroupChoice, RadioGroupOutput, ScrollAreaOutput, TextVisualState, Ui,
@@ -49,8 +51,7 @@ use crate::{
     radio_button as radio_button_widget, radio_button_with_label as radio_button_with_label_widget,
     radio_button_with_label_target as radio_button_with_label_target_widget,
     search_field_with_text_layouts_and_caret_visibility as search_field_widget,
-    select_field_with_text_layouts as select_field_widget, separator as separator_widget,
-    slider as slider_widget,
+    separator as separator_widget, slider as slider_widget,
     slider_with_label as slider_with_label_widget,
     slider_with_label_and_step as slider_with_label_and_step_widget,
     slider_with_step as slider_with_step_widget, tab_button as tab_button_widget,
