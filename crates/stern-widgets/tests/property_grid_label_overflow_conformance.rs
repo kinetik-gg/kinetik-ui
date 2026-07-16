@@ -1,8 +1,8 @@
 //! Windowless conformance for retained property-label end ellipsis.
 
 use stern_core::{
-    FrameOutput, Primitive, Rect, SemanticRole, TextPrimitive, Theme, UiInput, UiMemory, WidgetId,
-    default_dark_theme,
+    FrameOutput, PointerInput, Primitive, Rect, SemanticRole, SpacingRole, TextLayoutId,
+    TextPrimitive, Theme, UiInput, UiMemory, Vec2, WidgetId, default_dark_theme,
 };
 use stern_text::{TextLayoutStore, TextOverflow};
 use stern_widgets::{
@@ -91,6 +91,23 @@ fn marker_count(store: &TextLayoutStore, text: &TextPrimitive) -> usize {
         .flat_map(|run| &run.glyphs)
         .filter(|glyph| glyph.elided)
         .count()
+}
+
+fn label_id(frame: &FrameOutput, source: &str) -> TextLayoutId {
+    label_text(frame, source)
+        .layout
+        .expect("registered property label identity")
+}
+
+fn wheel_input(bounds: Rect, delta_y: f32) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(bounds.center()),
+            wheel_delta: Vec2::new(0.0, delta_y),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
 }
 
 #[test]
@@ -369,4 +386,149 @@ fn severity_and_access_brush_changes_preserve_effective_label_identity() {
     }
     assert_eq!(access_brushes[0], access_brushes[1]);
     assert_ne!(access_brushes[1], access_brushes[2]);
+}
+
+#[test]
+fn translation_and_scroll_change_origins_without_retained_identity_growth() {
+    let source = "Translated property source retains exact width and identity";
+    let row = PropertyGridRow::property(ItemId::from_raw(51), source, 0);
+    let rows = [row.clone()];
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (_, first) = retained_default(&mut store, &mut memory, &rows);
+    let first_label = label_text(&first, source);
+    let first_id = first_label.layout.expect("initial translated identity");
+    let width_bits = store
+        .stored_layout(first_id)
+        .expect("initial translated layout")
+        .key
+        .width_bits;
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    let translated = Rect::new(47.25, 91.5, BOUNDS.width, BOUNDS.height);
+    let (_, second) = retained_grid(
+        &mut store,
+        &mut memory,
+        &rows,
+        translated,
+        PropertyGridConfig::default(),
+        &UiInput::default(),
+        &default_dark_theme(),
+    );
+    let second_label = label_text(&second, source);
+    assert_eq!(second_label.layout, Some(first_id));
+    assert_ne!(second_label.origin, first_label.origin);
+    assert_eq!(
+        store
+            .stored_layout(first_id)
+            .expect("translated resident layout")
+            .key
+            .width_bits,
+        width_bits
+    );
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+
+    let scroll_bounds = Rect::new(0.0, 0.0, 300.0, 24.0);
+    let scroll_config = PropertyGridConfig::new(PropertyGridLayout::new(
+        100.0, 26.0, 120.0, 6.0, 12.0,
+    ))
+    .with_overscan(0);
+    let mut scroll_store = TextLayoutStore::new();
+    let mut scroll_memory = UiMemory::new();
+    let (_, unscrolled) = retained_grid(
+        &mut scroll_store,
+        &mut scroll_memory,
+        &rows,
+        scroll_bounds,
+        scroll_config,
+        &UiInput::default(),
+        &default_dark_theme(),
+    );
+    let unscrolled_label = label_text(&unscrolled, source);
+    let scroll_id = unscrolled_label.layout.expect("initial scroll identity");
+    let scroll_accounting = (
+        scroll_store.len(),
+        scroll_store.retained_payload_bytes(),
+        scroll_store.change_cursor(),
+    );
+    let (_, scrolled) = retained_grid(
+        &mut scroll_store,
+        &mut scroll_memory,
+        &rows,
+        scroll_bounds,
+        scroll_config,
+        &wheel_input(scroll_bounds, -20.0),
+        &default_dark_theme(),
+    );
+    let scrolled_label = label_text(&scrolled, source);
+    assert_eq!(scrolled_label.layout, Some(scroll_id));
+    assert_ne!(scrolled_label.origin.y, unscrolled_label.origin.y);
+    assert_eq!(
+        (
+            scroll_store.len(),
+            scroll_store.retained_payload_bytes(),
+            scroll_store.change_cursor()
+        ),
+        scroll_accounting
+    );
+}
+
+#[test]
+fn icon_label_gap_customization_does_not_enter_property_label_identity() {
+    let source = "Property label width ignores the icon-label spacing role";
+    let row = PropertyGridRow::property(ItemId::from_raw(52), source, 0);
+    let base_theme = default_dark_theme();
+    let mut changed_theme = base_theme;
+    changed_theme.spacing.two += 37.0;
+    assert_ne!(
+        base_theme.spacing.resolve(SpacingRole::IconLabelGap),
+        changed_theme.spacing.resolve(SpacingRole::IconLabelGap)
+    );
+
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (_, first) = retained_grid(
+        &mut store,
+        &mut memory,
+        std::slice::from_ref(&row),
+        BOUNDS,
+        PropertyGridConfig::default(),
+        &UiInput::default(),
+        &base_theme,
+    );
+    let id = label_id(&first, source);
+    let width_bits = store
+        .stored_layout(id)
+        .expect("base spacing layout")
+        .key
+        .width_bits;
+    let (_, second) = retained_grid(
+        &mut store,
+        &mut memory,
+        &[row],
+        BOUNDS,
+        PropertyGridConfig::default(),
+        &UiInput::default(),
+        &changed_theme,
+    );
+    assert_eq!(label_id(&second, source), id);
+    assert_eq!(
+        store
+            .stored_layout(id)
+            .expect("changed spacing layout")
+            .key
+            .width_bits,
+        width_bits
+    );
 }
