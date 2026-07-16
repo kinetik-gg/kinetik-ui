@@ -225,3 +225,66 @@ fn long_placeholder_uses_retained_policy_without_becoming_selected() {
         Some(SemanticValue::Text(placeholder.to_owned()))
     );
 }
+
+#[test]
+fn open_disabled_and_read_only_states_preserve_value_identity_and_disclosure_isolation() {
+    let source = "Complete selected source survives every select trigger presentation state";
+    let model = selected_model(source);
+
+    for (config, open, disabled, read_only) in [
+        (SelectFieldConfig::new("Choose"), false, false, false),
+        (
+            SelectFieldConfig::new("Choose").open(true),
+            true,
+            false,
+            false,
+        ),
+        (
+            SelectFieldConfig::new("Choose").disabled(true),
+            false,
+            true,
+            false,
+        ),
+        (
+            SelectFieldConfig::new("Choose").read_only(true),
+            false,
+            true,
+            true,
+        ),
+    ] {
+        let theme = default_dark_theme();
+        let input = UiInput::default();
+        let mut memory = UiMemory::new();
+        let mut store = TextLayoutStore::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme).with_text_layouts(&mut store);
+        let output = ui.select_field("state", FIELD, "Material", &model, config);
+        let _ = ui.finish_output();
+        let value = value_text(&output);
+        let stored = store
+            .stored_layout(value.layout.expect("explicit state value layout"))
+            .expect("resident state value layout");
+        let semantic = &output.widget.semantics[0];
+
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert_eq!(value.text, source);
+        assert_eq!(output.presentation.label, source);
+        assert_eq!(output.presentation.selected_id, Some(ITEM_ID));
+        assert!(!output.presentation.placeholder);
+        assert_eq!(output.presentation.open, open);
+        assert_eq!(output.presentation.disabled, disabled);
+        assert_eq!(output.read_only, read_only);
+        assert_eq!(output.response.state.disabled, disabled);
+        assert!(!output.open_requested);
+        assert_eq!(semantic.description.as_deref(), Some(source));
+        assert_eq!(
+            semantic.state.value,
+            Some(SemanticValue::Text(source.to_owned()))
+        );
+        assert!(semantic.state.selected);
+        assert_eq!(semantic.state.disabled, disabled);
+        assert_eq!(semantic.state.expanded, Some(open));
+        assert_eq!(disclosure_text(&output).text, if open { "^" } else { "v" });
+        assert_eq!(disclosure_text(&output).layout, None);
+    }
+}
