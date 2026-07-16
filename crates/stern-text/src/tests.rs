@@ -21,6 +21,16 @@ fn creates_cosmic_text_engine() {
 }
 
 #[test]
+fn space_mono_asset_authority_is_exact() {
+    assert_eq!(DEFAULT_MONOSPACE_FONT_FAMILY, "Space Mono");
+    assert_eq!(
+        fonts::SPACE_MONO_UPSTREAM_COMMIT,
+        "329858c2c4dbd3476f972a4ae00624b018cf4b81"
+    );
+    assert_eq!(fonts::SPACE_MONO_REGULAR.len(), 99_356);
+}
+
+#[test]
 fn bundled_font_database_sets_default_family_aliases() {
     let mut engine = CosmicTextEngine::new();
 
