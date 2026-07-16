@@ -3,7 +3,8 @@
 #![allow(clippy::float_cmp)]
 
 use stern_core::{
-    FontFeatureToken, FontLineHeightToken, FontSizeToken, FontWeightToken, default_dark_theme,
+    FontFeatureScale, FontFeatureToken, FontLineHeightScale, FontLineHeightToken, FontSizeScale,
+    FontSizeToken, FontWeightScale, FontWeightToken, default_dark_theme,
 };
 
 const EXPECTED_SIZE_TOKENS: [FontSizeToken; 6] = [
@@ -79,5 +80,36 @@ fn default_foundation_values_and_storage_types_are_exact() {
     assert_eq!(
         typography.features.get(FontFeatureToken::Numeric),
         "tabular-nums"
+    );
+}
+
+#[test]
+fn typed_lookups_route_every_independent_sentinel() {
+    let sizes = FontSizeScale::new(101.0, 103.0, 107.0, 109.0, 113.0, 127.0);
+    assert_eq!(sizes.get(FontSizeToken::Ui), 101.0);
+    assert_eq!(sizes.get(FontSizeToken::Dense), 103.0);
+    assert_eq!(sizes.get(FontSizeToken::Metadata), 107.0);
+    assert_eq!(sizes.get(FontSizeToken::Section), 109.0);
+    assert_eq!(sizes.get(FontSizeToken::Dialog), 113.0);
+    assert_eq!(sizes.get(FontSizeToken::Heading), 127.0);
+
+    let line_heights = FontLineHeightScale::new(131.0, 137.0, 139.0);
+    assert_eq!(line_heights.get(FontLineHeightToken::Ui), 131.0);
+    assert_eq!(line_heights.get(FontLineHeightToken::Dense), 137.0);
+    assert_eq!(
+        line_heights.get(FontLineHeightToken::Metadata),
+        139.0
+    );
+
+    let weights = FontWeightScale::new(601, 607, 613, 617);
+    assert_eq!(weights.get(FontWeightToken::Regular), 601);
+    assert_eq!(weights.get(FontWeightToken::Medium), 607);
+    assert_eq!(weights.get(FontWeightToken::Semibold), 613);
+    assert_eq!(weights.get(FontWeightToken::Bold), 617);
+
+    let features = FontFeatureScale::new("sentinel-tabular-numeric");
+    assert_eq!(
+        features.get(FontFeatureToken::Numeric),
+        "sentinel-tabular-numeric"
     );
 }
