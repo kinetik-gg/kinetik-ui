@@ -2,8 +2,8 @@
 use super::{
     ButtonVariant, ComponentState, ControlMetrics, ControlSizeScale, DurationScale, ElevationLevel,
     ElevationScale, HandleSizeScale, IconSizeScale, OpacityScale, RadiusScale, RowSizeScale,
-    SemanticColor, SizeScale, SizeToken, SpacingScale, StrokeScale, TextRole, ThemeColors,
-    TypographyScale, default_dark_theme,
+    SemanticColor, SizeScale, SizeToken, SpacingScale, StrokeScale, TextRole, TextRoleMetrics,
+    ThemeColors, TypographyScale, default_dark_theme,
 };
 use crate::{Brush, Color, CornerRadius};
 
@@ -43,7 +43,7 @@ fn default_theme_has_dense_editor_spacing() {
     assert_eq!(theme.font(TextRole::Label).family, "Inter");
     assert_eq!(theme.font(TextRole::Caption).family, "Inter");
     assert_eq!(theme.font(TextRole::Title).family, "Inter");
-    assert_eq!(theme.font(TextRole::Monospace).family, "Geist Mono");
+    assert_eq!(theme.font(TextRole::Monospace).family, "Space Mono");
     assert_eq!(theme.font(TextRole::Body).line_height, 17.0);
 }
 
@@ -269,7 +269,7 @@ fn canonical_component_recipes_use_radius_roles_by_intent() {
 #[test]
 fn token_overrides_are_structural_and_predictable() {
     let typography = TypographyScale {
-        body: super::FontToken::new("sans-serif", 13.0, 18.0),
+        body: TextRoleMetrics::new(13.0, 18.0),
         ..default_dark_theme().typography
     };
     let controls = ControlMetrics {

@@ -415,7 +415,7 @@ impl Theme {
             },
             padding_x: self.controls.padding_x * 0.5,
             padding_y: self.controls.padding_y,
-            font: self.typography.body,
+            font: self.typography.get(TextRole::Body),
         }
     }
 

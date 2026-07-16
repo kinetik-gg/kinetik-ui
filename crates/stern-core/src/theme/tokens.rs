@@ -971,25 +971,38 @@ pub enum TextRole {
     Monospace,
 }
 
+impl TextRole {
+    /// Returns the semantic family role used by this text role.
+    #[must_use]
+    pub const fn family_role(self) -> FontFamilyRole {
+        match self {
+            Self::Body | Self::Label | Self::Caption | Self::Title => FontFamilyRole::Ui,
+            Self::Monospace => FontFamilyRole::Mono,
+        }
+    }
+}
+
 /// Typography token scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TypographyScale {
+    /// Semantic font-family authority.
+    pub families: FontFamilyScale,
     /// Body copy and ordinary labels.
-    pub body: FontToken,
+    pub body: TextRoleMetrics,
     /// Compact labels inside controls.
-    pub label: FontToken,
+    pub label: TextRoleMetrics,
     /// Secondary captions.
-    pub caption: FontToken,
+    pub caption: TextRoleMetrics,
     /// Section or panel headings.
-    pub title: FontToken,
+    pub title: TextRoleMetrics,
     /// Monospace values and code-like labels.
-    pub monospace: FontToken,
+    pub monospace: TextRoleMetrics,
 }
 
 impl TypographyScale {
-    /// Returns a font token for a text role.
+    /// Returns the stored metrics for a text role.
     #[must_use]
-    pub const fn get(self, role: TextRole) -> FontToken {
+    pub const fn metrics(self, role: TextRole) -> TextRoleMetrics {
         match role {
             TextRole::Body => self.body,
             TextRole::Label => self.label,
@@ -997,6 +1010,23 @@ impl TypographyScale {
             TextRole::Title => self.title,
             TextRole::Monospace => self.monospace,
         }
+    }
+
+    /// Resolves a semantic font-family role.
+    #[must_use]
+    pub const fn family(self, role: FontFamilyRole) -> &'static str {
+        self.families.get(role)
+    }
+
+    /// Returns a font token for a text role.
+    #[must_use]
+    pub const fn get(self, role: TextRole) -> FontToken {
+        let metrics = self.metrics(role);
+        FontToken::new(
+            self.family(role.family_role()),
+            metrics.size,
+            metrics.line_height,
+        )
     }
 }
 
