@@ -2,6 +2,8 @@
 
 #![allow(clippy::float_cmp)]
 
+use std::{fs, path::Path};
+
 use stern_core::{
     Color, ControlMetrics, ControlSizeScale, CornerRadius, HandleSizeScale, IconSizeScale,
     RadiusScale, RowSizeScale, SizeScale, SizeToken, SpacingScale, StrokeScale, default_dark_theme,
@@ -125,7 +127,6 @@ fn with_sizes_changes_only_the_size_foundation() {
     baseline.controls = ControlMetrics {
         control_height: 293.0,
         compact_control_height: 307.0,
-        icon_size: 311.0,
         check_size: 313.0,
         padding_x: 317.0,
         padding_y: 331.0,
@@ -152,11 +153,10 @@ fn with_sizes_changes_only_the_size_foundation() {
 }
 
 #[test]
-fn spacing_and_control_customization_do_not_mirror_size_tokens() {
+fn spacing_and_remaining_control_customization_do_not_mirror_size_tokens() {
     let controls = ControlMetrics {
         control_height: 353.0,
         compact_control_height: 359.0,
-        icon_size: 367.0,
         check_size: 373.0,
         padding_x: 379.0,
         padding_y: 383.0,
@@ -176,12 +176,410 @@ fn spacing_and_control_customization_do_not_mirror_size_tokens() {
         customized.controls.control_height,
         customized.sizes.control.md
     );
-    assert_ne!(customized.controls.icon_size, customized.sizes.icon.md);
 
     assert_eq!(default_dark_theme().controls.control_height, 28.0);
     assert_eq!(default_dark_theme().controls.compact_control_height, 22.0);
-    assert_eq!(default_dark_theme().controls.icon_size, 16.0);
     assert_eq!(default_dark_theme().controls.check_size, 14.0);
     assert_eq!(default_dark_theme().controls.padding_x, 8.0);
     assert_eq!(default_dark_theme().controls.padding_y, 4.0);
+}
+
+#[test]
+fn control_metric_field_audit_is_declaration_scoped() {
+    let unrelated_icon_size = r"
+        pub struct IconSizeScale {
+            pub icon_size: f32,
+        }
+
+        pub struct ControlMetrics {
+            pub control_height: f32,
+        }
+    ";
+    assert!(!control_metrics_declares_icon_size(unrelated_icon_size));
+
+    for mutated_control_metrics in [
+        r"
+            pub struct ControlMetrics {
+                icon_size: f32,
+            }
+        ",
+        r"
+            pub struct ControlMetrics {
+                pub(crate) icon_size /* field comment */
+                    : core::primitive::f32,
+            }
+        ",
+    ] {
+        assert!(control_metrics_declares_icon_size(mutated_control_metrics));
+    }
+
+    let comments_and_literals_only = r#"
+        pub struct ControlMetrics {
+            #[doc = "pub(crate) icon_size: core::primitive::f32"]
+            pub control_height: f32,
+            /* pub icon_size: f32 */
+            // pub(crate) icon_size: f32
+        }
+    "#;
+    assert!(!control_metrics_declares_icon_size(
+        comments_and_literals_only
+    ));
+}
+
+#[test]
+fn icon_size_member_access_audit_handles_layout_and_ignores_non_code() {
+    for mutated_consumer in [
+        "theme . controls . icon_size",
+        "theme\n    .controls\n    .icon_size",
+        "theme.controls/* authority hop */.icon_size",
+        "theme /* root */ . controls /* field */ . icon_size",
+        r#"fn inspect<'a>(value: &'a str) {
+            let quote = '"';
+            let byte_quote = b'"';
+            let _ = (value, quote, byte_quote, theme.controls.icon_size);
+        }"#,
+    ] {
+        assert!(has_icon_size_member_access(mutated_consumer));
+    }
+
+    let comments_literals_and_identifiers = r##"
+        let normal = ".controls.icon_size";
+        let raw = r#"theme.controls.icon_size"#;
+        // theme.controls.icon_size
+        /* theme . controls . icon_size */
+        let icon_size = theme.sizes.icon.md;
+        let split = theme.icon_/* token boundary */size;
+        let raster_size = raster_options.icon_size;
+    "##;
+    assert!(!has_icon_size_member_access(
+        comments_literals_and_identifiers
+    ));
+}
+
+#[test]
+fn production_sources_have_no_removed_icon_size_authority() {
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("stern-core must live under the workspace crates directory");
+    let mut sources = Vec::new();
+    for production_root in [workspace_root.join("crates"), workspace_root.join("apps")] {
+        collect_production_rust_sources(&production_root, &mut sources);
+    }
+
+    assert!(
+        sources
+            .iter()
+            .any(|path| path.starts_with(workspace_root.join("crates"))),
+        "workspace crate production sources must be audited"
+    );
+    assert!(
+        sources
+            .iter()
+            .any(|path| path.starts_with(workspace_root.join("apps"))),
+        "workspace application production sources must be audited"
+    );
+    assert!(
+        sources.iter().any(|path| {
+            fs::read_to_string(path).is_ok_and(|source| source.starts_with("// @generated"))
+        }),
+        "checked-in generated Rust sources must be audited"
+    );
+
+    for path in &sources {
+        let source = fs::read_to_string(path).expect("production Rust source must be readable");
+        assert!(
+            !has_icon_size_member_access(&source),
+            "removed icon_size member access remains in {}",
+            path.display()
+        );
+    }
+
+    let tokens_path = crate_root.join("src/theme/tokens.rs");
+    let tokens_source = fs::read_to_string(&tokens_path).expect("theme tokens must be readable");
+    assert!(
+        !control_metrics_declares_icon_size(&tokens_source),
+        "ControlMetrics still declares the removed icon_size field"
+    );
+    for remaining in [
+        "control_height",
+        "compact_control_height",
+        "check_size",
+        "padding_x",
+        "padding_y",
+    ] {
+        assert!(
+            control_metrics_declares_field(&tokens_source, remaining),
+            "remaining ControlMetrics field {remaining} must stay intact"
+        );
+    }
+}
+
+fn control_metrics_declares_icon_size(source: &str) -> bool {
+    control_metrics_declares_field(source, "icon_size")
+}
+
+fn control_metrics_declares_field(source: &str, field: &str) -> bool {
+    let body = control_metrics_body(source);
+    let bytes = body.as_bytes();
+    let field = field.as_bytes();
+    for start in 0..=bytes.len().saturating_sub(field.len()) {
+        if bytes.get(start..start + field.len()) == Some(field)
+            && (start == 0 || !is_rust_identifier_byte(bytes[start - 1]))
+            && bytes
+                .get(start + field.len())
+                .is_none_or(|byte| !is_rust_identifier_byte(*byte))
+        {
+            let colon = skip_ascii_whitespace(bytes, start + field.len());
+            if bytes.get(colon) == Some(&b':') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn has_icon_size_member_access(source: &str) -> bool {
+    let source = mask_rust_comments_and_literals(source);
+    let bytes = source.as_bytes();
+    let controls = b"controls";
+    let icon_size = b"icon_size";
+    for dot in bytes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, byte)| (*byte == b'.').then_some(index))
+    {
+        let controls_start = skip_ascii_whitespace(bytes, dot + 1);
+        if !identifier_matches(bytes, controls_start, controls) {
+            continue;
+        }
+        let separator = skip_ascii_whitespace(bytes, controls_start + controls.len());
+        if bytes.get(separator) != Some(&b'.') {
+            continue;
+        }
+        let icon_size_start = skip_ascii_whitespace(bytes, separator + 1);
+        if identifier_matches(bytes, icon_size_start, icon_size) {
+            return true;
+        }
+    }
+    false
+}
+
+fn identifier_matches(bytes: &[u8], start: usize, identifier: &[u8]) -> bool {
+    bytes.get(start..start + identifier.len()) == Some(identifier)
+        && bytes
+            .get(start + identifier.len())
+            .is_none_or(|byte| !is_rust_identifier_byte(*byte))
+}
+
+fn control_metrics_body(source: &str) -> String {
+    const DECLARATION: &str = "pub struct ControlMetrics";
+    let source = mask_rust_comments_and_literals(source);
+    let declaration_start = source
+        .find(DECLARATION)
+        .expect("ControlMetrics declaration must exist");
+    let opening_brace = source[declaration_start..]
+        .find('{')
+        .map(|offset| declaration_start + offset)
+        .expect("ControlMetrics declaration must have a body");
+    let body_start = opening_brace + 1;
+    let mut depth = 1_usize;
+    for (offset, character) in source[body_start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return source[body_start..body_start + offset].to_owned();
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("ControlMetrics declaration body must close");
+}
+
+fn skip_ascii_whitespace(bytes: &[u8], mut cursor: usize) -> usize {
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn is_rust_identifier_byte(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphanumeric() || !byte.is_ascii()
+}
+
+fn mask_rust_comments_and_literals(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut cursor = 0_usize;
+    while cursor < bytes.len() {
+        if bytes[cursor..].starts_with(b"//") {
+            let end = bytes[cursor + 2..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |offset| cursor + 2 + offset);
+            mask_non_code(&mut masked, cursor, end, false);
+            cursor = end;
+        } else if bytes[cursor..].starts_with(b"/*") {
+            let end = nested_block_comment_end(bytes, cursor);
+            mask_non_code(&mut masked, cursor, end, false);
+            cursor = end;
+        } else if let Some(end) = raw_string_end(bytes, cursor) {
+            mask_non_code(&mut masked, cursor, end, true);
+            cursor = end;
+        } else if bytes[cursor] == b'"' {
+            let end = quoted_string_end(bytes, cursor);
+            mask_non_code(&mut masked, cursor, end, true);
+            cursor = end;
+        } else if bytes[cursor] == b'\'' {
+            if let Some(end) = character_literal_end(source, cursor) {
+                mask_non_code(&mut masked, cursor, end, true);
+                cursor = end;
+            } else {
+                cursor += 1;
+            }
+        } else {
+            cursor += 1;
+        }
+    }
+    String::from_utf8(masked).expect("masking valid Rust source must preserve UTF-8")
+}
+
+fn mask_non_code(masked: &mut [u8], start: usize, end: usize, literal: bool) {
+    for byte in &mut masked[start..end] {
+        if *byte != b'\n' && *byte != b'\r' {
+            *byte = b' ';
+        }
+    }
+    if literal && start < end {
+        masked[start] = b'~';
+    }
+}
+
+fn nested_block_comment_end(bytes: &[u8], start: usize) -> usize {
+    let mut depth = 1_usize;
+    let mut cursor = start + 2;
+    while cursor + 1 < bytes.len() {
+        if bytes[cursor..].starts_with(b"/*") {
+            depth += 1;
+            cursor += 2;
+        } else if bytes[cursor..].starts_with(b"*/") {
+            depth -= 1;
+            cursor += 2;
+            if depth == 0 {
+                return cursor;
+            }
+        } else {
+            cursor += 1;
+        }
+    }
+    bytes.len()
+}
+
+fn raw_string_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut cursor = match bytes.get(start..) {
+        Some([b'r', ..]) => start + 1,
+        Some([b'b' | b'c', b'r', ..]) => start + 2,
+        _ => return None,
+    };
+    let mut hashes = 0_usize;
+    while bytes.get(cursor) == Some(&b'#') {
+        hashes += 1;
+        cursor += 1;
+    }
+    if bytes.get(cursor) != Some(&b'"') {
+        return None;
+    }
+    cursor += 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'"'
+            && bytes
+                .get(cursor + 1..cursor + 1 + hashes)
+                .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#'))
+        {
+            return Some(cursor + 1 + hashes);
+        }
+        cursor += 1;
+    }
+    Some(bytes.len())
+}
+
+fn quoted_string_end(bytes: &[u8], start: usize) -> usize {
+    let mut cursor = start + 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => cursor = (cursor + 2).min(bytes.len()),
+            b'"' => return cursor + 1,
+            _ => cursor += 1,
+        }
+    }
+    bytes.len()
+}
+
+fn character_literal_end(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let value_start = start + 1;
+    if bytes.get(value_start) == Some(&b'\\') {
+        let escape_start = value_start + 1;
+        let value_end = match bytes.get(escape_start) {
+            Some(b'x') => escape_start + 3,
+            Some(b'u') if bytes.get(escape_start + 1) == Some(&b'{') => bytes[escape_start + 2..]
+                .iter()
+                .position(|byte| *byte == b'}')
+                .map(|offset| escape_start + 3 + offset)?,
+            Some(_) => escape_start + 1,
+            None => return None,
+        };
+        return (bytes.get(value_end) == Some(&b'\'')).then_some(value_end + 1);
+    }
+
+    let character = source.get(value_start..)?.chars().next()?;
+    let value_end = value_start + character.len_utf8();
+    (bytes.get(value_end) == Some(&b'\'')).then_some(value_end + 1)
+}
+
+fn collect_production_rust_sources(directory: &Path, output: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(directory).expect("production source directory must be readable") {
+        let path = entry.expect("source entry must be readable").path();
+        if path.is_dir() {
+            if !is_nonproduction_directory(&path) {
+                collect_production_rust_sources(&path, output);
+            }
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+            && !is_nonproduction_rust_file(&path)
+        {
+            output.push(path);
+        }
+    }
+}
+
+fn is_nonproduction_directory(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(
+            "tests"
+                | "test"
+                | "testdata"
+                | "test-data"
+                | "test_data"
+                | "benches"
+                | "benchmarks"
+                | "examples"
+                | "fixtures"
+                | "snapshots"
+                | "goldens"
+                | "target"
+                | ".runway"
+        )
+    )
+}
+
+fn is_nonproduction_rust_file(path: &Path) -> bool {
+    matches!(
+        path.file_stem().and_then(|name| name.to_str()),
+        Some("test" | "tests")
+    )
 }
