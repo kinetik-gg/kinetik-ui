@@ -10,6 +10,15 @@ published, or accepted as an alpha release.
 
 ### Changed
 
+- **Breaking:** Replaced the five resolved `FontToken` values stored by
+  `TypographyScale` with exact UI, Brand, and Mono semantic family roles plus
+  five `TextRoleMetrics` values. `Theme::font` keeps its resolved `FontToken`
+  result, while `Theme::font_family` exposes typed family lookup. Body, Label,
+  Caption, and Title resolve to Inter; Monospace resolves to Space Mono; the
+  exposed Space Grotesk Brand role is intentionally unadopted. External
+  `TypographyScale` struct literals must migrate to the new shape. This change
+  adds no font assets and makes no loading, fallback, renderer, or visual
+  conformance claim. See `docs/typography-migration.md`.
 - **Breaking:** Removed `ControlMetrics::check_size` and made one private exact
   `14.0` component-recipe dimension the sole visible indicator-size authority
   for checkbox and radio controls. `Theme::radio_button` continues to inherit
