@@ -5,9 +5,9 @@
 use std::{fs, path::Path};
 
 use stern_core::{
-    Color, ControlMetrics, CornerRadius, DurationScale, ElevationScale, FontToken, OpacityScale,
-    RadiusScale, SpacingRole, SpacingScale, SpacingStep, StrokeScale, TypographyScale,
-    default_dark_theme,
+    Color, ControlMetrics, CornerRadius, DurationScale, ElevationScale, FontFamilyScale,
+    OpacityScale, RadiusScale, SpacingRole, SpacingScale, SpacingStep, StrokeScale,
+    TextRoleMetrics, TypographyScale, default_dark_theme,
 };
 
 const EXPECTED_STEPS: [SpacingStep; 9] = [
@@ -132,11 +132,16 @@ fn spacing_replacement_preserves_every_non_spacing_theme_field() {
     };
     base.strokes = StrokeScale::from_values(301.0, 302.0, 303.0, 304.0, 305.0);
     base.typography = TypographyScale {
-        body: FontToken::new("spacing-isolation-body", 401.0, 402.0),
-        label: FontToken::new("spacing-isolation-label", 403.0, 404.0),
-        caption: FontToken::new("spacing-isolation-caption", 405.0, 406.0),
-        title: FontToken::new("spacing-isolation-title", 407.0, 408.0),
-        monospace: FontToken::new("spacing-isolation-monospace", 409.0, 410.0),
+        families: FontFamilyScale::new(
+            "spacing-isolation-ui",
+            "spacing-isolation-brand",
+            "spacing-isolation-mono",
+        ),
+        body: TextRoleMetrics::new(401.0, 402.0),
+        label: TextRoleMetrics::new(403.0, 404.0),
+        caption: TextRoleMetrics::new(405.0, 406.0),
+        title: TextRoleMetrics::new(407.0, 408.0),
+        monospace: TextRoleMetrics::new(409.0, 410.0),
     };
     base.opacity = OpacityScale {
         disabled: 0.11,

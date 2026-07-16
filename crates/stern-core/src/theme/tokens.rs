@@ -892,6 +892,70 @@ impl FontToken {
     }
 }
 
+/// Semantic font-family identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FontFamilyRole {
+    /// Dense interface controls, labels, and body copy.
+    Ui,
+    /// Product identity and rare display typography.
+    Brand,
+    /// Code, technical identifiers, and fixed-format values.
+    Mono,
+}
+
+impl FontFamilyRole {
+    /// Every semantic font-family role in normative specification order.
+    pub const ALL: &'static [Self] = &[Self::Ui, Self::Brand, Self::Mono];
+}
+
+/// Exact semantic font-family scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FontFamilyScale {
+    /// Dense interface family.
+    pub ui: &'static str,
+    /// Product identity and display family.
+    pub brand: &'static str,
+    /// Technical and fixed-format family.
+    pub mono: &'static str,
+}
+
+impl FontFamilyScale {
+    /// Creates a semantic font-family scale.
+    #[must_use]
+    pub const fn new(ui: &'static str, brand: &'static str, mono: &'static str) -> Self {
+        Self { ui, brand, mono }
+    }
+
+    /// Resolves a semantic font-family role.
+    #[must_use]
+    pub const fn get(self, role: FontFamilyRole) -> &'static str {
+        match role {
+            FontFamilyRole::Ui => self.ui,
+            FontFamilyRole::Brand => self.brand,
+            FontFamilyRole::Mono => self.mono,
+        }
+    }
+}
+
+/// Logical size and line height stored for a semantic text role.
+///
+/// These values are recipe geometry, not measured visible glyph bounds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextRoleMetrics {
+    /// Font size in logical units.
+    pub size: f32,
+    /// Line height in logical units.
+    pub line_height: f32,
+}
+
+impl TextRoleMetrics {
+    /// Creates logical metrics for a semantic text role.
+    #[must_use]
+    pub const fn new(size: f32, line_height: f32) -> Self {
+        Self { size, line_height }
+    }
+}
+
 /// Semantic text style role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextRole {
@@ -907,25 +971,38 @@ pub enum TextRole {
     Monospace,
 }
 
+impl TextRole {
+    /// Returns the semantic family role used by this text role.
+    #[must_use]
+    pub const fn family_role(self) -> FontFamilyRole {
+        match self {
+            Self::Body | Self::Label | Self::Caption | Self::Title => FontFamilyRole::Ui,
+            Self::Monospace => FontFamilyRole::Mono,
+        }
+    }
+}
+
 /// Typography token scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TypographyScale {
+    /// Semantic font-family authority.
+    pub families: FontFamilyScale,
     /// Body copy and ordinary labels.
-    pub body: FontToken,
+    pub body: TextRoleMetrics,
     /// Compact labels inside controls.
-    pub label: FontToken,
+    pub label: TextRoleMetrics,
     /// Secondary captions.
-    pub caption: FontToken,
+    pub caption: TextRoleMetrics,
     /// Section or panel headings.
-    pub title: FontToken,
+    pub title: TextRoleMetrics,
     /// Monospace values and code-like labels.
-    pub monospace: FontToken,
+    pub monospace: TextRoleMetrics,
 }
 
 impl TypographyScale {
-    /// Returns a font token for a text role.
+    /// Returns the stored metrics for a text role.
     #[must_use]
-    pub const fn get(self, role: TextRole) -> FontToken {
+    pub const fn metrics(self, role: TextRole) -> TextRoleMetrics {
         match role {
             TextRole::Body => self.body,
             TextRole::Label => self.label,
@@ -933,6 +1010,23 @@ impl TypographyScale {
             TextRole::Title => self.title,
             TextRole::Monospace => self.monospace,
         }
+    }
+
+    /// Resolves a semantic font-family role.
+    #[must_use]
+    pub const fn family(self, role: FontFamilyRole) -> &'static str {
+        self.families.get(role)
+    }
+
+    /// Returns a font token for a text role.
+    #[must_use]
+    pub const fn get(self, role: TextRole) -> FontToken {
+        let metrics = self.metrics(role);
+        FontToken::new(
+            self.family(role.family_role()),
+            metrics.size,
+            metrics.line_height,
+        )
     }
 }
 
