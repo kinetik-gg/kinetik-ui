@@ -127,9 +127,9 @@ fn with_sizes_changes_only_the_size_foundation() {
     baseline.controls = ControlMetrics {
         control_height: 293.0,
         compact_control_height: 307.0,
-        check_size: 313.0,
         padding_x: 317.0,
         padding_y: 331.0,
+        ..default_dark_theme().controls
     };
     baseline.radius = CornerRadius::all(337.0);
     baseline.border_width = 347.0;
@@ -157,9 +157,9 @@ fn spacing_and_remaining_control_customization_do_not_mirror_size_tokens() {
     let controls = ControlMetrics {
         control_height: 353.0,
         compact_control_height: 359.0,
-        check_size: 373.0,
         padding_x: 379.0,
         padding_y: 383.0,
+        ..default_dark_theme().controls
     };
     let spacing = SpacingScale::new(
         389.0, 397.0, 401.0, 409.0, 419.0, 421.0, 431.0, 433.0, 439.0,

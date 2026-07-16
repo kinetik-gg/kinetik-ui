@@ -89,9 +89,9 @@ fn size_replacement_is_isolated_from_theme_and_control_metrics() {
     baseline.controls = ControlMetrics {
         control_height: 293.0,
         compact_control_height: 307.0,
-        check_size: 313.0,
         padding_x: 317.0,
         padding_y: 331.0,
+        ..default_dark_theme().controls
     };
     baseline.radius = CornerRadius::all(337.0);
     baseline.border_width = 347.0;
@@ -124,23 +124,18 @@ fn size_replacement_is_isolated_from_theme_and_control_metrics() {
 #[test]
 fn control_metrics_defaults_and_customization_remain_independent() {
     let defaults = default_dark_theme();
-    assert_eq!(
-        defaults.controls,
-        ControlMetrics {
-            control_height: 28.0,
-            compact_control_height: 22.0,
-            check_size: 14.0,
-            padding_x: 8.0,
-            padding_y: 4.0,
-        }
-    );
+    assert_eq!(defaults.controls.control_height, 28.0);
+    assert_eq!(defaults.controls.compact_control_height, 22.0);
+    assert_eq!(defaults.controls.check_size, 14.0);
+    assert_eq!(defaults.controls.padding_x, 8.0);
+    assert_eq!(defaults.controls.padding_y, 4.0);
 
     let controls = ControlMetrics {
         control_height: 409.0,
         compact_control_height: 419.0,
-        check_size: 431.0,
         padding_x: 433.0,
         padding_y: 439.0,
+        ..defaults.controls
     };
     let customized = defaults
         .with_controls(controls)
@@ -200,9 +195,9 @@ fn controls_and_legacy_mirror_cannot_mutate_stroke_authority() {
     let controls = ControlMetrics {
         control_height: 31.0,
         compact_control_height: 19.0,
-        check_size: 17.0,
         padding_x: 9.0,
         padding_y: 5.0,
+        ..default_dark_theme().controls
     };
     let mut theme = default_dark_theme()
         .with_strokes(strokes)

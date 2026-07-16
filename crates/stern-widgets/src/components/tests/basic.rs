@@ -292,9 +292,9 @@ fn remaining_control_metrics_cannot_change_icon_geometry() {
     let customized = baseline.with_controls(stern_core::ControlMetrics {
         control_height: 101.0,
         compact_control_height: 103.0,
-        check_size: 107.0,
         padding_x: 109.0,
         padding_y: 113.0,
+        ..baseline.controls
     });
 
     assert_eq!(unsized_icon_family_primitives(&customized), expected);
