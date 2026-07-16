@@ -12,6 +12,7 @@ use stern_widgets::{
     inspector::{
         PropertyGridAccess, PropertyGridConfig, PropertyGridLayout, PropertyGridOutput,
         PropertyGridRow, PropertyGridRowRect, PropertyGridRowStatus,
+        property_grid_row_affordance_rects,
     },
 };
 
@@ -645,8 +646,21 @@ fn row_access_geometry_callbacks_order_and_semantics_remain_application_owned() 
         ]
     );
     for (value, geometry) in output.values.iter().zip(&expected_geometry) {
+        let row = &rows[geometry.index];
+        let expected_value_rect = property_grid_row_affordance_rects(
+            row,
+            geometry
+                .value_rect
+                .intersection(BOUNDS)
+                .unwrap_or(Rect::ZERO)
+                .inset(2.0)
+                .max_zero(),
+            config.affordances,
+        )
+        .value_rect;
         assert_eq!(value.row, value.value.row);
         assert_eq!(value.value.geometry, *geometry);
+        assert_eq!(value.value.value_rect, expected_value_rect);
         assert_eq!(
             value.value.row_widget_id,
             output.root.child(("property-grid-row", value.row.raw()))
