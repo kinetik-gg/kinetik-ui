@@ -124,6 +124,7 @@ impl CosmicTextEngine {
                         end: source_line_start + glyph.end,
                         width: glyph.w,
                         rtl: glyph.level.is_rtl(),
+                        elided: false,
                     });
                 }
             }

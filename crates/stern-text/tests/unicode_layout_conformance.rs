@@ -116,6 +116,7 @@ fn synthetic_layout(lines: &[LineSpec], cells: &[CellSpec]) -> ShapedTextLayout 
                     end: cell.end,
                     width: cell.right - cell.left,
                     rtl: cell.rtl,
+                    elided: false,
                 })
                 .collect::<Vec<_>>();
             (!glyphs.is_empty()).then(|| ShapedGlyphRun {
