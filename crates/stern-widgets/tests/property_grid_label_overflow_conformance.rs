@@ -111,6 +111,7 @@ fn wheel_input(bounds: Rect, delta_y: f32) -> UiInput {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn label_width_matrix_preserves_exact_operation_order_and_positive_zero() {
     let cases = [
         (
@@ -476,7 +477,10 @@ fn translation_and_scroll_change_origins_without_retained_identity_growth() {
     );
     let scrolled_label = label_text(&scrolled, source);
     assert_eq!(scrolled_label.layout, Some(scroll_id));
-    assert_ne!(scrolled_label.origin.y, unscrolled_label.origin.y);
+    assert_ne!(
+        scrolled_label.origin.y.to_bits(),
+        unscrolled_label.origin.y.to_bits()
+    );
     assert_eq!(
         (
             scroll_store.len(),
@@ -495,8 +499,14 @@ fn icon_label_gap_customization_does_not_enter_property_label_identity() {
     let mut changed_theme = base_theme;
     changed_theme.spacing.two += 37.0;
     assert_ne!(
-        base_theme.spacing.resolve(SpacingRole::IconLabelGap),
-        changed_theme.spacing.resolve(SpacingRole::IconLabelGap)
+        base_theme
+            .spacing
+            .resolve(SpacingRole::IconLabelGap)
+            .to_bits(),
+        changed_theme
+            .spacing
+            .resolve(SpacingRole::IconLabelGap)
+            .to_bits()
     );
 
     let mut store = TextLayoutStore::new();
