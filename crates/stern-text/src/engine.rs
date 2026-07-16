@@ -1,6 +1,6 @@
 use cosmic_text::{
-    Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, Family, FeatureTag, FontFeatures, FontSystem,
-    Metrics, Shaping, Wrap, fontdb,
+    Attrs, BidiParagraphs, Buffer, Ellipsize, EllipsizeHeightLimit, Family, FeatureTag,
+    FontFeatures, FontSystem, Metrics, Shaping, Wrap, fontdb,
 };
 use stern_core::Size;
 
@@ -44,10 +44,7 @@ impl CosmicTextEngine {
             && requested_width.is_finite()
             && requested_width > 0.0
             && !key.wrap
-            && !key
-                .text
-                .chars()
-                .any(|character| matches!(character, '\r' | '\n'));
+            && is_single_bidi_paragraph(&key.text);
         buffer.set_size(
             (end_ellipsis || key.wrap && width > 0.0).then_some(width),
             None,
@@ -180,6 +177,21 @@ impl CosmicTextEngine {
 impl Default for CosmicTextEngine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn is_single_bidi_paragraph(text: &str) -> bool {
+    if text
+        .chars()
+        .any(|character| matches!(character, '\r' | '\n'))
+    {
+        return false;
+    }
+
+    let mut paragraphs = BidiParagraphs::new(text);
+    match paragraphs.next() {
+        Some(paragraph) => paragraph.len() == text.len() && paragraphs.next().is_none(),
+        None => text.is_empty(),
     }
 }
 
