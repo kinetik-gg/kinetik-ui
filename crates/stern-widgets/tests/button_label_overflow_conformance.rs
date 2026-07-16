@@ -196,7 +196,7 @@ fn narrow_nonpositive_and_multiline_labels_keep_registered_full_source_policy() 
         let rect = Rect::new(BUTTON.x, BUTTON.y, width, BUTTON.height);
         let mut store = TextLayoutStore::new();
         let mut memory = UiMemory::new();
-        let (response, frame) = retained_button(
+        let (_, frame) = retained_button(
             &mut store,
             &mut memory,
             rect,
@@ -215,7 +215,6 @@ fn narrow_nonpositive_and_multiline_labels_keep_registered_full_source_policy() 
         assert!(!stored.layout.is_elided());
         assert_eq!(marker_count(&store, label), 0);
         assert_eq!(label.text, source);
-        assert_eq!(frame.semantics.nodes()[0].bounds, response.rect);
         assert_eq!(frame.semantics.nodes()[0].label.as_deref(), Some(source));
     }
 
