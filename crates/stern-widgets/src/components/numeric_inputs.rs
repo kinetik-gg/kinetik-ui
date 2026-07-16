@@ -734,7 +734,11 @@ mod tests {
         assert_eq!(store.len(), 1);
         let retained = store.layouts().next().expect("retained numeric layout");
         assert_eq!(retained.key.text, draft);
-        assert_eq!(retained.key.style.features, TextFeatureSet::TABULAR_NUMBERS);
+        let feature_scale = theme.typography.features;
+        let expected_features =
+            TextFeatureSet::resolve_semantic(feature_scale, FontFeatureToken::Numeric)
+                .expect("default numeric feature token");
+        assert_eq!(retained.key.style.features, expected_features);
         let primitive_layout = output
             .field
             .widget
