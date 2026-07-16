@@ -113,6 +113,43 @@ unverified, and nothing is Accepted. Measured geometry may change with the
 family, but no baseline, overflow, widget-adoption, renderer, browser, GPU, or
 manual visual evidence follows from this loading boundary.
 
+### Qualified tabular-number shaping
+
+The qualified text API exposes `stern::text::TextFeatureSet` as an opaque
+fixed-size low-level shaping authority. Its only public values are `NONE` and
+`TABULAR_NUMBERS`; the latter maps to OpenType `tnum=1` in the production text
+engine. `stern::text::TextStyle::new(...)` remains feature-disabled, while
+`TextStyle::with_features(...)` provides explicit opt-in. None of these items
+is added to the default prelude.
+
+Adding public `TextStyle::features` is a prerelease breaking struct-shape
+change. Feature identity is retained through `TextLayoutKey`, cache/store
+lookup, layout IDs, and renderer text resources through their existing
+composed style fields. The API does not expose arbitrary feature tags, font
+weight, variable coordinates, or a generic registry.
+
+The default theme's existing `FontFeatureScale` remains the sole semantic
+token authority: `FontFeatureToken::Numeric` resolves to `"tabular-nums"`.
+`TextFeatureSet::TABULAR_NUMBERS` is only the low-level mechanism selected
+after that semantic lookup; it is not a second token value.
+
+Focused deterministic evidence proves that exact bundled Inter has unequal
+default numeric advances, then produces equal enabled `0-9` advances and
+equal widths for equivalent-length changing numeric strings within `0.001`
+logical unit. It also proves preserved UTF-8 ranges, layout topology, family
+bytes, bounded cache/store behavior, distinct retained IDs, and renderer
+resource reconciliation.
+
+This advances `STERN-TYP-002` only to bounded Partial. No specified numeric
+component consumes the feature, so the requirement is not Accepted.
+`STERN-TYP-000` and `STERN-TYP-006` preserve their existing Partial evidence;
+`STERN-TYP-001` and `STERN-TYP-003` are preserved only;
+`STERN-TYP-004`, `STERN-TYP-005`, and `STERN-TYP-007` do not advance. All
+typography parity records remain unverified. This evidence makes no component,
+fallback, failed-load, truncation, optical-baseline, overflow, non-Latin, IME,
+DPI, renderer-pixel, browser, GPU, manual, visual, release, or acceptance
+claim.
+
 ### Qualified size foundation
 
 The grouped size foundation remains available through `stern::core` without
