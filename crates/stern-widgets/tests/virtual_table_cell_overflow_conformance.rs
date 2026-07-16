@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use stern_core::{
-    FrameContext, FrameOutput, PhysicalSize, PointerOrder, Primitive, Rect, ScaleFactor,
-    SemanticRole, Size, TextPrimitive, TimeInfo, Transform, UiInput, UiMemory, Vec2, ViewportInfo,
-    WidgetId, default_dark_theme,
+    FrameContext, FrameOutput, PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder,
+    Primitive, Rect, ScaleFactor, SemanticRole, Size, TextPrimitive, TimeInfo, Transform, UiInput,
+    UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow};
 use stern_widgets::{
@@ -150,6 +150,45 @@ fn transforms(frame: &FrameOutput) -> Vec<Transform> {
             _ => None,
         })
         .collect()
+}
+
+fn pointer_input(point: Point, pressed: bool, released: bool) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(point),
+            primary: PointerButtonState::new(pressed, pressed, released),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
+}
+
+fn primitives_without_layout_ids(frame: &FrameOutput) -> Vec<Primitive> {
+    let mut primitives = frame.primitives.clone();
+    for primitive in &mut primitives {
+        if let Primitive::Text(text) = primitive {
+            text.layout = None;
+        }
+    }
+    primitives
+}
+
+fn assert_layout_only_delta(retained: &Run, layoutless: &Run) {
+    assert_eq!(retained.root, layoutless.root);
+    assert_eq!(retained.output, layoutless.output);
+    assert_eq!(retained.callbacks, layoutless.callbacks);
+    assert_eq!(
+        primitives_without_layout_ids(&retained.frame),
+        primitives_without_layout_ids(&layoutless.frame)
+    );
+    assert_eq!(retained.frame.semantics, layoutless.frame.semantics);
+    assert_eq!(retained.frame.repaint, layoutless.frame.repaint);
+    assert_eq!(retained.frame.actions, layoutless.frame.actions);
+    assert_eq!(
+        retained.frame.platform_requests,
+        layoutless.frame.platform_requests
+    );
+    assert_eq!(retained.frame.warnings, layoutless.frame.warnings);
 }
 
 #[test]
@@ -770,5 +809,194 @@ fn vertical_scroll_reuses_overlapping_cell_ids_and_preserves_exact_window_contra
     assert_eq!(
         transforms(&scrolled.frame)[1].dy.to_bits(),
         (-20.0_f32).to_bits()
+    );
+}
+
+#[test]
+fn interaction_states_preserve_body_label_identity_and_layout_only_primitive_delta() {
+    let source = "Complete stateful table body-cell source remains retained";
+    let items = projection(&[1]);
+    let table_config = || config(BOUNDS, [119.3], VirtualTableSelectionMode::Cell);
+    let mut store = TextLayoutStore::new();
+
+    let mut seed_memory = UiMemory::new();
+    let mut seed_selection = VirtualTableSelection::new();
+    let seed = run_table(
+        Some(&mut store),
+        &items,
+        table_config(),
+        &mut seed_selection,
+        &mut seed_memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([source]),
+    );
+    let expected_id = body_texts(&seed.frame, source)[0]
+        .layout
+        .expect("seed stateful body-cell identity");
+    let target = seed.output.selection_responses[0].response;
+    let point = target.rect.center();
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    for input in [
+        UiInput::default(),
+        pointer_input(point, false, false),
+        pointer_input(point, true, false),
+    ] {
+        let mut retained_memory = UiMemory::new();
+        let mut retained_selection = VirtualTableSelection::new();
+        let retained = run_table(
+            Some(&mut store),
+            &items,
+            table_config(),
+            &mut retained_selection,
+            &mut retained_memory,
+            input.clone(),
+            |_| VirtualTableRow::new([source]),
+        );
+        let mut layoutless_memory = UiMemory::new();
+        let mut layoutless_selection = VirtualTableSelection::new();
+        let layoutless = run_table(
+            None,
+            &items,
+            table_config(),
+            &mut layoutless_selection,
+            &mut layoutless_memory,
+            input,
+            |_| VirtualTableRow::new([source]),
+        );
+        assert_eq!(
+            body_texts(&retained.frame, source)[0].layout,
+            Some(expected_id)
+        );
+        assert_layout_only_delta(&retained, &layoutless);
+    }
+
+    let mut retained_memory = UiMemory::new();
+    retained_memory.focus(target.id);
+    let mut retained_selection = VirtualTableSelection::new();
+    let focused = run_table(
+        Some(&mut store),
+        &items,
+        table_config(),
+        &mut retained_selection,
+        &mut retained_memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([source]),
+    );
+    let mut layoutless_memory = UiMemory::new();
+    layoutless_memory.focus(target.id);
+    let mut layoutless_selection = VirtualTableSelection::new();
+    let focused_layoutless = run_table(
+        None,
+        &items,
+        table_config(),
+        &mut layoutless_selection,
+        &mut layoutless_memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([source]),
+    );
+    assert!(focused.output.selection_responses[0].response.state.focused);
+    assert_eq!(
+        body_texts(&focused.frame, source)[0].layout,
+        Some(expected_id)
+    );
+    assert_layout_only_delta(&focused, &focused_layoutless);
+
+    let mut retained_memory = UiMemory::new();
+    let mut retained_selection = VirtualTableSelection::new();
+    let _ = run_table(
+        Some(&mut store),
+        &items,
+        table_config(),
+        &mut retained_selection,
+        &mut retained_memory,
+        pointer_input(point, true, false),
+        |_| VirtualTableRow::new([source]),
+    );
+    let selected = run_table(
+        Some(&mut store),
+        &items,
+        table_config(),
+        &mut retained_selection,
+        &mut retained_memory,
+        pointer_input(point, false, true),
+        |_| VirtualTableRow::new([source]),
+    );
+    let mut layoutless_memory = UiMemory::new();
+    let mut layoutless_selection = VirtualTableSelection::new();
+    let _ = run_table(
+        None,
+        &items,
+        table_config(),
+        &mut layoutless_selection,
+        &mut layoutless_memory,
+        pointer_input(point, true, false),
+        |_| VirtualTableRow::new([source]),
+    );
+    let selected_layoutless = run_table(
+        None,
+        &items,
+        table_config(),
+        &mut layoutless_selection,
+        &mut layoutless_memory,
+        pointer_input(point, false, true),
+        |_| VirtualTableRow::new([source]),
+    );
+    assert!(
+        selected.output.selection_responses[0]
+            .response
+            .state
+            .selected
+    );
+    assert_eq!(
+        body_texts(&selected.frame, source)[0].layout,
+        Some(expected_id)
+    );
+    assert_layout_only_delta(&selected, &selected_layoutless);
+
+    let mut retained_memory = UiMemory::new();
+    let mut retained_selection = VirtualTableSelection::new();
+    let disabled = run_table(
+        Some(&mut store),
+        &items,
+        table_config().disabled(true),
+        &mut retained_selection,
+        &mut retained_memory,
+        pointer_input(point, true, false),
+        |_| VirtualTableRow::new([source]),
+    );
+    let mut layoutless_memory = UiMemory::new();
+    let mut layoutless_selection = VirtualTableSelection::new();
+    let disabled_layoutless = run_table(
+        None,
+        &items,
+        table_config().disabled(true),
+        &mut layoutless_selection,
+        &mut layoutless_memory,
+        pointer_input(point, true, false),
+        |_| VirtualTableRow::new([source]),
+    );
+    assert!(
+        disabled.output.selection_responses[0]
+            .response
+            .state
+            .disabled
+    );
+    assert_eq!(
+        body_texts(&disabled.frame, source)[0].layout,
+        Some(expected_id)
+    );
+    assert_layout_only_delta(&disabled, &disabled_layoutless);
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
     );
 }
