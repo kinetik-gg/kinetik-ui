@@ -318,6 +318,7 @@ fn over_budget_source_rejects_without_store_mutation_or_identity_leak() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn hot_frames_translation_source_and_width_obey_retained_identity_boundaries() {
     let source = "Stable complete button source remains retained across hot frames";
     let mut store = TextLayoutStore::new();
@@ -446,6 +447,7 @@ fn hot_frames_translation_source_and_width_obey_retained_identity_boundaries() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn interaction_states_preserve_label_identity_and_existing_surface_order() {
     let source = "Complete stateful button source retains one presentation identity";
     let mut store = TextLayoutStore::new();
