@@ -110,7 +110,7 @@ fn generic_width(text: &str) -> f32 {
     let mut ui = Ui::new(&input, &mut memory, &theme).with_text_layouts(&mut store);
     let _ = ui.text_field("text", FIELD_RECT, &mut state, false);
     let output = ui.finish_output();
-    assert!(retained_ids(&output).len() == 1);
+    assert_eq!(retained_ids(&output).len(), 1);
     let entry = store.layouts().next().expect("generic layout");
     assert_eq!(entry.key.style.features, TextFeatureSet::NONE);
     entry.layout.size.width
