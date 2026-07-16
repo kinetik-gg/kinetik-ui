@@ -1,14 +1,20 @@
 use super::{
     DEFAULT_NUMERIC_SCRUB_COARSE_FACTOR, DEFAULT_NUMERIC_SCRUB_FINE_FACTOR,
-    DEFAULT_NUMERIC_SCRUB_STEP, NumericInputDraft, NumericInputPolicy, OrderedTextInputResult,
-    Rect, Response, SemanticAction, SemanticActionKind, SemanticValue, TextEditState,
-    TextFieldAccess, TextFieldOutput, TextFieldPointerSource, TextLayoutStore, Theme, UiInput,
-    UiMemory, WidgetId, classify_numeric_input_draft, draggable, restore_text_draft,
-    text_field_with_access_runtime, text_field_with_pointer_runtime,
+    DEFAULT_NUMERIC_SCRUB_STEP, FontFeatureToken, NumericInputDraft, NumericInputPolicy,
+    OrderedTextInputResult, Rect, Response, SemanticAction, SemanticActionKind, SemanticValue,
+    TextEditState, TextFeatureSet, TextFieldAccess, TextFieldOutput, TextFieldPointerSource,
+    TextLayoutStore, Theme, UiInput, UiMemory, WidgetId, classify_numeric_input_draft, draggable,
+    restore_text_draft, text_field_with_access_runtime_and_features,
+    text_field_with_pointer_runtime_and_features,
     text_field_with_resolved_response_and_ordered_result,
     text_field_with_text_layouts_and_caret_visibility_and_ordered_result,
 };
 use stern_core::Ui as CoreUi;
+
+fn numeric_text_features(theme: &Theme) -> TextFeatureSet {
+    TextFeatureSet::resolve_semantic(theme.typography.features, FontFeatureToken::Numeric)
+        .unwrap_or_default()
+}
 
 /// Output emitted by numeric input.
 #[derive(Debug, Clone, PartialEq)]
@@ -228,13 +234,15 @@ pub(crate) fn numeric_input_with_access_runtime(
     text_layouts: Option<&mut TextLayoutStore>,
     caret_visible: bool,
 ) -> NumericInputOutput {
-    let (field, ordered_result) = text_field_with_access_runtime(
+    let features = numeric_text_features(theme);
+    let (field, ordered_result) = text_field_with_access_runtime_and_features(
         runtime,
         id,
         rect,
         state,
         theme,
         access,
+        features,
         text_layouts,
         caret_visible,
     );
@@ -404,19 +412,21 @@ pub(crate) fn numeric_scrub_input_with_runtime(
     let before = *value;
     let resolved = resolve_numeric_scrub_config(config);
     let access = numeric_scrub_access(config);
+    let features = numeric_text_features(theme);
     let final_modifiers = runtime.input().keyboard.modifiers;
 
     let (mut numeric, mut scrub_response, causal_modifiers, transaction_allowed) =
         if access == TextFieldAccess::Editable {
             let gesture = runtime.captured_domain_drag_gesture(id, rect, false);
             let scrub_response = gesture.response;
-            let (field, ordered_result, pointer) = text_field_with_pointer_runtime(
+            let (field, ordered_result, pointer) = text_field_with_pointer_runtime_and_features(
                 runtime,
                 id,
                 rect,
                 state,
                 theme,
                 access,
+                features,
                 text_layouts,
                 caret_visible,
                 TextFieldPointerSource::DomainDrag(gesture),
@@ -436,13 +446,14 @@ pub(crate) fn numeric_scrub_input_with_runtime(
                 pointer.transaction_allowed,
             )
         } else {
-            let (field, ordered_result) = text_field_with_access_runtime(
+            let (field, ordered_result) = text_field_with_access_runtime_and_features(
                 runtime,
                 id,
                 rect,
                 state,
                 theme,
                 access,
+                features,
                 text_layouts,
                 caret_visible,
             );
