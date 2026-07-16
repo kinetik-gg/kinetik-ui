@@ -38,7 +38,7 @@ fn default_theme_has_dense_editor_spacing() {
     assert_eq!(theme.strokes.focus.primary, 1.0);
     assert_eq!(theme.strokes.focus.separator, 1.0);
     assert_eq!(theme.controls.control_height, 28.0);
-    assert_eq!(theme.controls.icon_size, 16.0);
+    assert_eq!(theme.sizes.icon.md, 16.0);
     assert_eq!(theme.font(TextRole::Body).family, "Inter");
     assert_eq!(theme.font(TextRole::Label).family, "Inter");
     assert_eq!(theme.font(TextRole::Caption).family, "Inter");
@@ -89,7 +89,6 @@ fn size_replacement_is_isolated_from_theme_and_control_metrics() {
     baseline.controls = ControlMetrics {
         control_height: 293.0,
         compact_control_height: 307.0,
-        icon_size: 311.0,
         check_size: 313.0,
         padding_x: 317.0,
         padding_y: 331.0,
@@ -130,7 +129,6 @@ fn control_metrics_defaults_and_customization_remain_independent() {
         ControlMetrics {
             control_height: 28.0,
             compact_control_height: 22.0,
-            icon_size: 16.0,
             check_size: 14.0,
             padding_x: 8.0,
             padding_y: 4.0,
@@ -140,7 +138,6 @@ fn control_metrics_defaults_and_customization_remain_independent() {
     let controls = ControlMetrics {
         control_height: 409.0,
         compact_control_height: 419.0,
-        icon_size: 421.0,
         check_size: 431.0,
         padding_x: 433.0,
         padding_y: 439.0,
@@ -203,7 +200,6 @@ fn controls_and_legacy_mirror_cannot_mutate_stroke_authority() {
     let controls = ControlMetrics {
         control_height: 31.0,
         compact_control_height: 19.0,
-        icon_size: 13.0,
         check_size: 17.0,
         padding_x: 9.0,
         padding_y: 5.0,

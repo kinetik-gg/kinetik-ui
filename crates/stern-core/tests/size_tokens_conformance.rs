@@ -125,7 +125,6 @@ fn with_sizes_changes_only_the_size_foundation() {
     baseline.controls = ControlMetrics {
         control_height: 293.0,
         compact_control_height: 307.0,
-        icon_size: 311.0,
         check_size: 313.0,
         padding_x: 317.0,
         padding_y: 331.0,
@@ -152,11 +151,10 @@ fn with_sizes_changes_only_the_size_foundation() {
 }
 
 #[test]
-fn spacing_and_control_customization_do_not_mirror_size_tokens() {
+fn spacing_and_remaining_control_customization_do_not_mirror_size_tokens() {
     let controls = ControlMetrics {
         control_height: 353.0,
         compact_control_height: 359.0,
-        icon_size: 367.0,
         check_size: 373.0,
         padding_x: 379.0,
         padding_y: 383.0,
@@ -176,11 +174,9 @@ fn spacing_and_control_customization_do_not_mirror_size_tokens() {
         customized.controls.control_height,
         customized.sizes.control.md
     );
-    assert_ne!(customized.controls.icon_size, customized.sizes.icon.md);
 
     assert_eq!(default_dark_theme().controls.control_height, 28.0);
     assert_eq!(default_dark_theme().controls.compact_control_height, 22.0);
-    assert_eq!(default_dark_theme().controls.icon_size, 16.0);
     assert_eq!(default_dark_theme().controls.check_size, 14.0);
     assert_eq!(default_dark_theme().controls.padding_x, 8.0);
     assert_eq!(default_dark_theme().controls.padding_y, 4.0);
