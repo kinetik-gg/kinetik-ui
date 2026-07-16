@@ -298,3 +298,131 @@ fn over_budget_source_rejects_without_store_mutation_or_identity_leak() {
     assert!(frame.actions.is_empty());
     assert!(frame.warnings.is_empty());
 }
+
+#[test]
+fn hot_frames_translation_source_and_width_obey_retained_identity_boundaries() {
+    let source = "Stable complete button source remains retained across hot frames";
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (_, first) = retained_button(
+        &mut store,
+        &mut memory,
+        BUTTON,
+        source,
+        false,
+        &UiInput::default(),
+    );
+    let first_label = button_text(&first, source);
+    let first_id = first_label
+        .layout
+        .expect("initial retained button identity");
+    let first_origin = first_label.origin;
+    let first_width_bits = store
+        .stored_layout(first_id)
+        .expect("initial retained button entry")
+        .key
+        .width_bits;
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    for _ in 0..4 {
+        let (_, frame) = retained_button(
+            &mut store,
+            &mut memory,
+            BUTTON,
+            source,
+            false,
+            &UiInput::default(),
+        );
+        assert_eq!(button_text(&frame, source).layout, Some(first_id));
+        assert_eq!(
+            (
+                store.len(),
+                store.retained_payload_bytes(),
+                store.change_cursor()
+            ),
+            accounting
+        );
+    }
+
+    let translated = Rect::new(
+        BUTTON.x + 40.0,
+        BUTTON.y + 20.0,
+        BUTTON.width,
+        BUTTON.height,
+    );
+    let (_, moved) = retained_button(
+        &mut store,
+        &mut memory,
+        translated,
+        source,
+        false,
+        &UiInput::default(),
+    );
+    let moved_label = button_text(&moved, source);
+    assert_eq!(moved_label.layout, Some(first_id));
+    assert_eq!(
+        store
+            .stored_layout(first_id)
+            .expect("translated retained button entry")
+            .key
+            .width_bits,
+        first_width_bits
+    );
+    assert_eq!(
+        (moved_label.origin.x - first_origin.x).to_bits(),
+        40.0_f32.to_bits()
+    );
+    assert_eq!(
+        (moved_label.origin.y - first_origin.y).to_bits(),
+        20.0_f32.to_bits()
+    );
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+
+    let changed_source = "Distinct complete button source receives distinct retained identity";
+    let (_, changed) = retained_button(
+        &mut store,
+        &mut memory,
+        BUTTON,
+        changed_source,
+        false,
+        &UiInput::default(),
+    );
+    let changed_id = button_text(&changed, changed_source)
+        .layout
+        .expect("changed-source button identity");
+    assert_ne!(changed_id, first_id);
+
+    let wider = Rect::new(BUTTON.x, BUTTON.y, BUTTON.width + 20.0, BUTTON.height);
+    let (_, resized) = retained_button(
+        &mut store,
+        &mut memory,
+        wider,
+        source,
+        false,
+        &UiInput::default(),
+    );
+    let resized_id = button_text(&resized, source)
+        .layout
+        .expect("resized button identity");
+    assert_ne!(resized_id, first_id);
+    assert_ne!(resized_id, changed_id);
+    assert_ne!(
+        store
+            .stored_layout(resized_id)
+            .expect("resized retained button entry")
+            .key
+            .width_bits,
+        first_width_bits
+    );
+}
