@@ -671,6 +671,16 @@ fn qualified_facade_constructs_and_resolves_semantic_font_families() {
 }
 
 #[test]
+fn default_theme_mono_family_matches_the_public_text_default() {
+    let family = stern::core::default_dark_theme()
+        .font(stern::core::TextRole::Monospace)
+        .family;
+
+    assert_eq!(family, stern::text::DEFAULT_MONOSPACE_FONT_FAMILY);
+    assert_eq!(family, "Space Mono");
+}
+
+#[test]
 #[allow(clippy::float_cmp)]
 fn qualified_facade_constructs_and_resolves_typography_foundation() {
     use stern::core::{
