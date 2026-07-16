@@ -781,6 +781,51 @@ fn component_recipes_cover_common_states() {
 }
 
 #[test]
+fn selection_indicator_recipe_size_is_exact_across_component_states() {
+    let theme = default_dark_theme();
+    let states = [
+        ComponentState::default(),
+        ComponentState {
+            hovered: true,
+            ..ComponentState::default()
+        },
+        ComponentState {
+            focused: true,
+            ..ComponentState::default()
+        },
+        ComponentState {
+            selected: true,
+            ..ComponentState::default()
+        },
+        ComponentState {
+            hovered: true,
+            focused: true,
+            selected: true,
+            ..ComponentState::default()
+        },
+        ComponentState {
+            disabled: true,
+            ..ComponentState::default()
+        },
+        ComponentState {
+            hovered: true,
+            focused: true,
+            disabled: true,
+            selected: true,
+            ..ComponentState::default()
+        },
+    ];
+
+    for state in states {
+        let checkbox = theme.checkbox(state);
+        let radio = theme.radio_button(state);
+        assert_eq!(checkbox.size, 14.0, "wrong checkbox size for {state:?}");
+        assert_eq!(radio.size, 14.0, "wrong radio size for {state:?}");
+        assert_eq!(radio.size, checkbox.size);
+    }
+}
+
+#[test]
 fn canonical_recipes_route_distinct_stroke_roles_without_focused_state_width_changes() {
     let strokes = StrokeScale::from_values(0.75, 1.25, 2.5, 3.5, 4.5);
     let theme = default_dark_theme().with_strokes(strokes);
