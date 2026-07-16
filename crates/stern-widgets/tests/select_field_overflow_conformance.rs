@@ -569,3 +569,45 @@ fn over_budget_source_rejects_custom_identity_without_store_mutation_or_source_l
         other => panic!("expected complete semantic text, got {other:?}"),
     }
 }
+
+#[test]
+fn nonpositive_and_nonfinite_text_geometry_preserves_visible_complete_source() {
+    let source = "Complete source remains visible when select geometry is ineligible";
+    let model = selected_model(source);
+
+    for width in [0.0, -20.0, f32::NAN, f32::INFINITY] {
+        let rect = Rect::new(FIELD.x, FIELD.y, width, FIELD.height);
+        let theme = default_dark_theme();
+        let recipe = theme.text_field(ComponentState {
+            selected: true,
+            ..ComponentState::default()
+        });
+        let expected_width = expected_text_width(rect, recipe.padding_x);
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let (output, frame) = retained_frame(
+            &mut store,
+            &mut memory,
+            &model,
+            rect,
+            SelectFieldConfig::new("Choose"),
+        );
+        let value = value_text(&output);
+        let id = value.layout.expect("registered ineligible-policy layout");
+        let stored = store
+            .stored_layout(id)
+            .expect("resident ineligible-policy layout");
+
+        assert_eq!(stored.key.width_bits, expected_width.to_bits());
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert!(!stored.layout.is_elided());
+        assert_eq!(stored.key.text, source);
+        assert_eq!(value.text, source);
+        assert_eq!(output.presentation.label, source);
+        assert_eq!(final_value_layout(&frame, source), Some(id));
+        assert_eq!(
+            output.widget.semantics[0].description.as_deref(),
+            Some(source)
+        );
+    }
+}
