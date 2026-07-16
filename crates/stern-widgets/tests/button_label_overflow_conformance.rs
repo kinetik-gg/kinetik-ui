@@ -527,6 +527,7 @@ fn hot_frames_translation_source_and_width_obey_retained_identity_boundaries() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn focused_retained_button_translates_complete_surface_and_focus_geometry_only() {
     let source = "Focused retained button translates without changing label identity";
     let delta = Point::new(40.0, 20.0);
@@ -590,8 +591,14 @@ fn focused_retained_button_translates_complete_surface_and_focus_geometry_only()
         Point::new(translated_response.rect.x, translated_response.rect.y),
         delta,
     );
-    assert_eq!(source_response.rect.width, translated_response.rect.width);
-    assert_eq!(source_response.rect.height, translated_response.rect.height);
+    assert_eq!(
+        source_response.rect.width.to_bits(),
+        translated_response.rect.width.to_bits()
+    );
+    assert_eq!(
+        source_response.rect.height.to_bits(),
+        translated_response.rect.height.to_bits()
+    );
     assert_eq!(source_frame.primitives.len(), 4);
     assert_eq!(translated_frame.primitives.len(), 4);
 
@@ -607,8 +614,11 @@ fn focused_retained_button_translates_complete_surface_and_focus_geometry_only()
                     Point::new(translated.rect.x, translated.rect.y),
                     delta,
                 );
-                assert_eq!(source.rect.width, translated.rect.width);
-                assert_eq!(source.rect.height, translated.rect.height);
+                assert_eq!(source.rect.width.to_bits(), translated.rect.width.to_bits());
+                assert_eq!(
+                    source.rect.height.to_bits(),
+                    translated.rect.height.to_bits()
+                );
                 assert_eq!(source.fill, translated.fill);
                 assert_eq!(source.stroke, translated.stroke);
                 assert_eq!(source.radius, translated.radius);
@@ -665,12 +675,12 @@ fn focused_retained_button_translates_complete_surface_and_focus_geometry_only()
         delta,
     );
     assert_eq!(
-        source_semantic.bounds.width,
-        translated_semantic.bounds.width
+        source_semantic.bounds.width.to_bits(),
+        translated_semantic.bounds.width.to_bits()
     );
     assert_eq!(
-        source_semantic.bounds.height,
-        translated_semantic.bounds.height
+        source_semantic.bounds.height.to_bits(),
+        translated_semantic.bounds.height.to_bits()
     );
     let mut normalized = translated_semantic.clone();
     normalized.bounds = source_semantic.bounds;
@@ -1235,7 +1245,7 @@ fn production_call_graph_bounds_button_adoption_and_absent_split_busy_consumers(
             let count = source
                 .matches("with_overflow(TextOverflow::EndEllipsis)")
                 .count();
-            (count > 0).then(|| (path.as_str(), count))
+            (count > 0).then_some((path.as_str(), count))
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -1257,7 +1267,7 @@ fn production_call_graph_bounds_button_adoption_and_absent_split_busy_consumers(
                         .starts_with("let mut output = button_widget(")
                 })
                 .count();
-            (count > 0).then(|| (path.as_str(), count))
+            (count > 0).then_some((path.as_str(), count))
         })
         .collect::<Vec<_>>();
     assert_eq!(button_widget_calls, vec![("src/ui/basic_controls.rs", 1)]);
@@ -1266,7 +1276,7 @@ fn production_call_graph_bounds_button_adoption_and_absent_split_busy_consumers(
         .iter()
         .filter_map(|(path, source)| {
             let count = source.matches("self.button(").count();
-            (count > 0).then(|| (path.as_str(), count))
+            (count > 0).then_some((path.as_str(), count))
         })
         .collect::<Vec<_>>();
     assert_eq!(
