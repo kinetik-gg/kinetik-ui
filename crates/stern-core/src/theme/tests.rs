@@ -126,7 +126,6 @@ fn control_metrics_defaults_and_customization_remain_independent() {
     let defaults = default_dark_theme();
     assert_eq!(defaults.controls.control_height, 28.0);
     assert_eq!(defaults.controls.compact_control_height, 22.0);
-    assert_eq!(defaults.controls.check_size, 14.0);
     assert_eq!(defaults.controls.padding_x, 8.0);
     assert_eq!(defaults.controls.padding_y, 4.0);
 

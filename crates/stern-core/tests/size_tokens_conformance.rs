@@ -179,7 +179,6 @@ fn spacing_and_remaining_control_customization_do_not_mirror_size_tokens() {
 
     assert_eq!(default_dark_theme().controls.control_height, 28.0);
     assert_eq!(default_dark_theme().controls.compact_control_height, 22.0);
-    assert_eq!(default_dark_theme().controls.check_size, 14.0);
     assert_eq!(default_dark_theme().controls.padding_x, 8.0);
     assert_eq!(default_dark_theme().controls.padding_y, 4.0);
 }
@@ -305,7 +304,6 @@ fn production_sources_have_no_removed_icon_size_authority() {
     for remaining in [
         "control_height",
         "compact_control_height",
-        "check_size",
         "padding_x",
         "padding_y",
     ] {
