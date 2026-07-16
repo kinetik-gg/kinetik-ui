@@ -2,6 +2,8 @@
 
 #![allow(clippy::float_cmp)]
 
+use std::{fs, path::Path};
+
 use stern_core::{
     FontFeatureScale, FontFeatureToken, FontLineHeightScale, FontLineHeightToken, FontSizeScale,
     FontSizeToken, FontWeightScale, FontWeightToken, TextRole, TypographyScale, default_dark_theme,
@@ -169,5 +171,125 @@ fn replacing_any_foundation_scale_preserves_theme_and_resolved_text_roles() {
         assert_eq!(customized.controls, base_theme.controls);
         assert_eq!(customized.radius, base_theme.radius);
         assert_eq!(customized.border_width, base_theme.border_width);
+    }
+}
+
+#[test]
+fn typography_scale_stores_each_foundation_authority_once() {
+    let source = include_str!("../src/theme/tokens.rs");
+    let declaration = struct_declaration(source, "TypographyScale");
+
+    for field in [
+        "pub sizes: FontSizeScale",
+        "pub line_heights: FontLineHeightScale",
+        "pub weights: FontWeightScale",
+        "pub features: FontFeatureScale",
+    ] {
+        assert_eq!(
+            declaration.matches(field).count(),
+            1,
+            "expected one storage authority for {field}"
+        );
+    }
+}
+
+#[test]
+fn foundation_metadata_does_not_expand_resolved_or_transport_shapes() {
+    let token_source = include_str!("../src/theme/tokens.rs");
+    let render_source = include_str!("../src/render.rs");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text_style_source = fs::read_to_string(workspace.join("crates/stern-text/src/style.rs"))
+        .expect("read stern-text TextStyle source");
+    let declarations = [
+        ("FontToken", struct_declaration(token_source, "FontToken")),
+        (
+            "TextRoleMetrics",
+            struct_declaration(token_source, "TextRoleMetrics"),
+        ),
+        (
+            "TextPrimitive",
+            struct_declaration(render_source, "TextPrimitive"),
+        ),
+        (
+            "TextStyle",
+            struct_declaration(&text_style_source, "TextStyle"),
+        ),
+    ];
+
+    for (name, declaration) in declarations {
+        for forbidden in [
+            "FontSizeScale",
+            "FontLineHeightScale",
+            "FontWeightScale",
+            "FontFeatureScale",
+            "pub weight:",
+            "pub feature:",
+            "pub weights:",
+            "pub features:",
+        ] {
+            assert!(
+                !declaration.contains(forbidden),
+                "{name} must not transport foundation metadata through {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
+fn production_consumers_do_not_claim_numeric_feature_adoption() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let roots = [
+        workspace.join("crates/stern-text/src"),
+        workspace.join("crates/stern-render/src"),
+        workspace.join("crates/stern-vello/src"),
+        workspace.join("crates/stern-widgets/src"),
+        workspace.join("apps/stern-demo/src"),
+    ];
+    let mut sources = Vec::new();
+    for root in roots {
+        collect_rust_sources(&root, &mut sources);
+    }
+
+    let mut violations = Vec::new();
+    for path in sources {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        for forbidden in [
+            "tabular-nums",
+            "FontWeightScale",
+            "FontFeatureScale",
+            "FontWeightToken",
+            "FontFeatureToken",
+        ] {
+            if source.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "foundation metadata must not imply production adoption:\n{}",
+        violations.join("\n")
+    );
+}
+
+fn struct_declaration<'a>(source: &'a str, name: &str) -> &'a str {
+    let marker = format!("pub struct {name} {{");
+    let start = source.find(&marker).expect("public struct declaration");
+    let declaration = &source[start..];
+    let end = declaration
+        .find("\n}")
+        .expect("public struct declaration end");
+    &declaration[..end + 2]
+}
+
+fn collect_rust_sources(root: &Path, sources: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(root).expect("read production source directory") {
+        let path = entry.expect("read production source entry").path();
+        if path.is_dir() {
+            collect_rust_sources(&path, sources);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            sources.push(path);
+        }
     }
 }
