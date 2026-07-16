@@ -246,3 +246,55 @@ fn narrow_nonpositive_and_multiline_labels_keep_registered_full_source_policy() 
         assert_eq!(frame.semantics.nodes()[0].label.as_deref(), Some(source));
     }
 }
+
+#[test]
+fn over_budget_source_rejects_without_store_mutation_or_identity_leak() {
+    const RETAINED_PAYLOAD_CEILING: usize = 32 * 1024 * 1024;
+
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let _ = retained_button(
+        &mut store,
+        &mut memory,
+        BUTTON,
+        "Warm retained button label",
+        false,
+        &UiInput::default(),
+    );
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    let source = "x".repeat(RETAINED_PAYLOAD_CEILING + 1);
+    let (response, frame) = retained_button(
+        &mut store,
+        &mut memory,
+        BUTTON,
+        &source,
+        false,
+        &UiInput::default(),
+    );
+    let label = button_text(&frame, &source);
+
+    assert_eq!(label.layout, None);
+    assert_eq!(label.text, source);
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+    assert_eq!(frame.primitives.len(), 2);
+    assert_eq!(frame.semantics.nodes().len(), 1);
+    assert_eq!(frame.semantics.nodes()[0].id, response.id);
+    assert_eq!(
+        frame.semantics.nodes()[0].label.as_deref(),
+        Some(source.as_str())
+    );
+    assert!(frame.actions.is_empty());
+    assert!(frame.warnings.is_empty());
+}
