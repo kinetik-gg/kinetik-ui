@@ -1,8 +1,8 @@
 //! Windowless conformance for retained select-trigger end ellipsis.
 
 use stern_core::{
-    ComponentState, Primitive, Rect, SemanticValue, TextPrimitive, UiInput, UiMemory, WidgetId,
-    default_dark_theme,
+    ComponentState, FrameOutput, Primitive, Rect, SemanticValue, TextLayoutId, TextPrimitive,
+    UiInput, UiMemory, WidgetId, default_dark_theme,
 };
 use stern_text::{TextLayoutStore, TextOverflow};
 use stern_widgets::{
@@ -46,6 +46,31 @@ fn disclosure_text(output: &SelectFieldOutput) -> &TextPrimitive {
 fn expected_text_width(rect: Rect, padding_x: f32) -> f32 {
     let disclosure_width = 16.0_f32.min(rect.width.max(0.0));
     (rect.width - padding_x * 2.0 - disclosure_width).max(0.0)
+}
+
+fn retained_frame(
+    store: &mut TextLayoutStore,
+    memory: &mut UiMemory,
+    model: &DropdownModel,
+    rect: Rect,
+    config: SelectFieldConfig,
+) -> (SelectFieldOutput, FrameOutput) {
+    let theme = default_dark_theme();
+    let input = UiInput::default();
+    let mut ui = Ui::new(&input, memory, &theme).with_text_layouts(store);
+    let output = ui.select_field("retained", rect, "Material", model, config);
+    let frame = ui.finish_output();
+    (output, frame)
+}
+
+fn final_value_layout(frame: &FrameOutput, source: &str) -> Option<TextLayoutId> {
+    frame
+        .primitives
+        .iter()
+        .find_map(|primitive| match primitive {
+            Primitive::Text(text) if text.text == source => text.layout,
+            _ => None,
+        })
 }
 
 #[test]
@@ -362,5 +387,40 @@ fn empty_all_disabled_and_missing_selection_keep_placeholder_model_contracts() {
             Some(SemanticValue::Text(placeholder.to_owned())),
             "{key}"
         );
+    }
+}
+
+#[test]
+fn identical_hot_frames_reuse_value_id_and_retained_accounting() {
+    let source = "Stable selected source remains retained across identical hot frames";
+    let model = selected_model(source);
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (first, first_frame) = retained_frame(
+        &mut store,
+        &mut memory,
+        &model,
+        FIELD,
+        SelectFieldConfig::new("Choose"),
+    );
+    let first_id = value_text(&first).layout.expect("first retained value ID");
+    assert_eq!(final_value_layout(&first_frame, source), Some(first_id));
+    let first_len = store.len();
+    let first_bytes = store.retained_payload_bytes();
+    let first_cursor = store.change_cursor();
+
+    for _ in 0..4 {
+        let (output, frame) = retained_frame(
+            &mut store,
+            &mut memory,
+            &model,
+            FIELD,
+            SelectFieldConfig::new("Choose"),
+        );
+        assert_eq!(value_text(&output).layout, Some(first_id));
+        assert_eq!(final_value_layout(&frame, source), Some(first_id));
+        assert_eq!(store.len(), first_len);
+        assert_eq!(store.retained_payload_bytes(), first_bytes);
+        assert_eq!(store.change_cursor(), first_cursor);
     }
 }
