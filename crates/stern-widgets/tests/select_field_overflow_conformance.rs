@@ -1,12 +1,13 @@
 //! Windowless conformance for retained select-trigger end ellipsis.
 
 use stern_core::{
-    ComponentState, Primitive, Rect, SemanticValue, TextPrimitive, UiInput, UiMemory,
+    ComponentState, Primitive, Rect, SemanticValue, TextPrimitive, UiInput, UiMemory, WidgetId,
     default_dark_theme,
 };
 use stern_text::{TextLayoutStore, TextOverflow};
 use stern_widgets::{
     DropdownItem, DropdownItemId, DropdownModel, SelectFieldConfig, SelectFieldOutput, Ui,
+    select_field,
 };
 
 const FIELD: Rect = Rect::new(7.0, 11.0, 124.0, 24.0);
@@ -149,4 +150,36 @@ fn fitting_selected_value_keeps_explicit_policy_without_elision() {
     );
     assert_eq!(value.text, source);
     assert_eq!(output.presentation.label, source);
+}
+
+#[test]
+fn public_low_level_select_field_remains_layoutless_and_complete_source() {
+    let source = "The direct compatibility helper retains this complete selected value";
+    let model = selected_model(source);
+    let theme = default_dark_theme();
+    let output = select_field(
+        WidgetId::from_key("direct-select"),
+        FIELD,
+        "Material",
+        &model,
+        SelectFieldConfig::new("Choose material"),
+        &UiInput::default(),
+        &mut UiMemory::new(),
+        &theme,
+    );
+    let value = value_text(&output);
+
+    assert_eq!(value.layout, None);
+    assert_eq!(value.text, source);
+    assert_eq!(output.presentation.label, source);
+    assert_eq!(output.presentation.selected_id, Some(ITEM_ID));
+    assert_eq!(
+        output.widget.semantics[0].description.as_deref(),
+        Some(source)
+    );
+    assert_eq!(
+        output.widget.semantics[0].state.value,
+        Some(SemanticValue::Text(source.to_owned()))
+    );
+    assert_eq!(disclosure_text(&output).layout, None);
 }
