@@ -537,7 +537,7 @@ fn checkbox_and_toggle_reflect_selection() {
     assert_eq!(toggle.primitives.len(), 2);
 }
 
-fn choice_indicator_rect(output: &WidgetOutput) -> Rect {
+fn choice_indicator_rect(output: &crate::WidgetOutput) -> Rect {
     let Primitive::Rect(indicator) = output
         .primitives
         .last()
@@ -583,7 +583,7 @@ fn selection_controls_keep_recipe_indicator_and_caller_bounds_across_states() {
                     UiInput::default()
                 };
                 let output = if radio {
-                    radio_button_with_label_target(
+                    crate::radio_button_with_label_target(
                         id,
                         control,
                         label,
@@ -595,7 +595,7 @@ fn selection_controls_keep_recipe_indicator_and_caller_bounds_across_states() {
                         disabled,
                     )
                 } else {
-                    checkbox_with_label_target(
+                    crate::checkbox_with_label_target(
                         id,
                         control,
                         label,
@@ -609,7 +609,10 @@ fn selection_controls_keep_recipe_indicator_and_caller_bounds_across_states() {
                 };
 
                 assert_eq!(choice_indicator_rect(&output), expected_indicator);
-                assert_eq!(output.response.as_ref().expect("choice response").rect, target);
+                assert_eq!(
+                    output.response.as_ref().expect("choice response").rect,
+                    target
+                );
                 assert_eq!(output.semantics[0].bounds, target);
             }
         }
@@ -627,7 +630,7 @@ fn selection_indicator_has_exact_unrounded_four_scale_transport() {
         let id = WidgetId::from_key(("scale-transport", radio));
         let mut memory = UiMemory::new();
         let output = if radio {
-            radio_button_with_label_target(
+            crate::radio_button_with_label_target(
                 id,
                 control,
                 label,
@@ -639,7 +642,7 @@ fn selection_indicator_has_exact_unrounded_four_scale_transport() {
                 false,
             )
         } else {
-            checkbox_with_label_target(
+            crate::checkbox_with_label_target(
                 id,
                 control,
                 label,
@@ -659,7 +662,10 @@ fn selection_indicator_has_exact_unrounded_four_scale_transport() {
             assert_eq!(indicator.width * scale, expected_physical_extent);
             assert_eq!(indicator.height * scale, expected_physical_extent);
         }
-        assert_eq!(output.response.as_ref().expect("choice response").rect, target);
+        assert_eq!(
+            output.response.as_ref().expect("choice response").rect,
+            target
+        );
         assert_eq!(output.semantics[0].bounds, target);
     }
 }
