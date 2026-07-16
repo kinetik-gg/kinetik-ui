@@ -288,3 +288,79 @@ fn open_disabled_and_read_only_states_preserve_value_identity_and_disclosure_iso
         assert_eq!(disclosure_text(&output).layout, None);
     }
 }
+
+#[test]
+fn empty_all_disabled_and_missing_selection_keep_placeholder_model_contracts() {
+    let mut missing = selected_model("Removed selection");
+    missing.replace_items([DropdownItem::new(
+        DropdownItemId::from_raw(99),
+        "Remaining enabled item",
+    )]);
+    let cases = [
+        (
+            "empty",
+            DropdownModel::new(),
+            "Complete empty-model placeholder remains available to semantics",
+            true,
+        ),
+        (
+            "all-disabled",
+            DropdownModel::from_items([
+                DropdownItem::new(DropdownItemId::from_raw(71), "Disabled A").with_enabled(false),
+                DropdownItem::new(DropdownItemId::from_raw(72), "Disabled B").with_enabled(false),
+            ]),
+            "Complete all-disabled placeholder remains available to semantics",
+            true,
+        ),
+        (
+            "missing-selection",
+            missing,
+            "Complete missing-selection placeholder remains available to semantics",
+            false,
+        ),
+    ];
+
+    for (key, model, placeholder, disabled) in cases {
+        let model_before = model.clone();
+        let theme = default_dark_theme();
+        let input = UiInput::default();
+        let mut memory = UiMemory::new();
+        let mut store = TextLayoutStore::new();
+        let mut ui = Ui::new(&input, &mut memory, &theme).with_text_layouts(&mut store);
+        let output = ui.select_field(
+            key,
+            FIELD,
+            "Material",
+            &model,
+            SelectFieldConfig::new(placeholder),
+        );
+        let _ = ui.finish_output();
+        let value = value_text(&output);
+        let stored = store
+            .stored_layout(value.layout.expect("explicit placeholder layout"))
+            .expect("resident placeholder layout");
+        let semantic = &output.widget.semantics[0];
+
+        assert_eq!(model, model_before, "{key}");
+        assert_eq!(model.selected_id(), None, "{key}");
+        assert_eq!(stored.key.text, placeholder, "{key}");
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis, "{key}");
+        assert_eq!(value.text, placeholder, "{key}");
+        assert_eq!(output.presentation.label, placeholder, "{key}");
+        assert_eq!(output.presentation.selected_id, None, "{key}");
+        assert!(output.presentation.placeholder, "{key}");
+        assert_eq!(output.presentation.disabled, disabled, "{key}");
+        assert_eq!(output.response.state.disabled, disabled, "{key}");
+        assert!(!output.response.clicked, "{key}");
+        assert!(!output.response.keyboard_activated, "{key}");
+        assert!(!output.open_requested, "{key}");
+        assert!(!semantic.state.selected, "{key}");
+        assert_eq!(semantic.state.disabled, disabled, "{key}");
+        assert_eq!(semantic.description.as_deref(), Some(placeholder), "{key}");
+        assert_eq!(
+            semantic.state.value,
+            Some(SemanticValue::Text(placeholder.to_owned())),
+            "{key}"
+        );
+    }
+}
