@@ -1,9 +1,9 @@
 use super::{
     ButtonRecipe, ButtonVariant, CheckRecipe, ComponentState, ControlMetrics, DurationScale,
-    ElevationLevel, ElevationScale, FocusRingRecipe, FontToken, OpacityScale, PanelRecipe,
-    RadiusScale, RowRecipe, SemanticColor, SeparatorRecipe, ShadowRecipe, SizeScale, SliderRecipe,
-    SpacingScale, StrokeScale, TabRecipe, TextFieldRecipe, TextRecipe, TextRole, ThemeColors,
-    ToggleRecipe, TypographyScale,
+    ElevationLevel, ElevationScale, FocusRingRecipe, FontFamilyRole, FontToken, OpacityScale,
+    PanelRecipe, RadiusScale, RowRecipe, SemanticColor, SeparatorRecipe, ShadowRecipe, SizeScale,
+    SliderRecipe, SpacingScale, StrokeScale, TabRecipe, TextFieldRecipe, TextRecipe, TextRole,
+    ThemeColors, ToggleRecipe, TypographyScale,
 };
 use crate::{Brush, Color, CornerRadius, Stroke, Vec2};
 
@@ -54,6 +54,12 @@ impl Theme {
     #[must_use]
     pub const fn font(self, role: TextRole) -> FontToken {
         self.typography.get(role)
+    }
+
+    /// Resolves a semantic font-family role.
+    #[must_use]
+    pub const fn font_family(self, role: FontFamilyRole) -> &'static str {
+        self.typography.family(role)
     }
 
     /// Returns this theme with a replaced color scale.
@@ -415,7 +421,7 @@ impl Theme {
             },
             padding_x: self.controls.padding_x * 0.5,
             padding_y: self.controls.padding_y,
-            font: self.typography.body,
+            font: self.typography.get(TextRole::Body),
         }
     }
 

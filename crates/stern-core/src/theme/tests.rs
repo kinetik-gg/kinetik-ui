@@ -1,9 +1,9 @@
 #![allow(clippy::float_cmp)]
 use super::{
     ButtonVariant, ComponentState, ControlMetrics, ControlSizeScale, DurationScale, ElevationLevel,
-    ElevationScale, HandleSizeScale, IconSizeScale, OpacityScale, RadiusScale, RowSizeScale,
-    SemanticColor, SizeScale, SizeToken, SpacingScale, StrokeScale, TextRole, ThemeColors,
-    TypographyScale, default_dark_theme,
+    ElevationScale, FontFamilyRole, HandleSizeScale, IconSizeScale, OpacityScale, RadiusScale,
+    RowSizeScale, SemanticColor, SizeScale, SizeToken, SpacingScale, StrokeScale, TextRole,
+    TextRoleMetrics, ThemeColors, TypographyScale, default_dark_theme,
 };
 use crate::{Brush, Color, CornerRadius};
 
@@ -43,8 +43,54 @@ fn default_theme_has_dense_editor_spacing() {
     assert_eq!(theme.font(TextRole::Label).family, "Inter");
     assert_eq!(theme.font(TextRole::Caption).family, "Inter");
     assert_eq!(theme.font(TextRole::Title).family, "Inter");
-    assert_eq!(theme.font(TextRole::Monospace).family, "Geist Mono");
+    assert_eq!(theme.font(TextRole::Monospace).family, "Space Mono");
     assert_eq!(theme.font(TextRole::Body).line_height, 17.0);
+}
+
+#[test]
+fn default_typography_exposes_exact_semantic_families_and_role_metrics() {
+    let theme = default_dark_theme();
+
+    assert_eq!(
+        FontFamilyRole::ALL,
+        &[
+            FontFamilyRole::Ui,
+            FontFamilyRole::Brand,
+            FontFamilyRole::Mono,
+        ]
+    );
+    assert_eq!(theme.font_family(FontFamilyRole::Ui), "Inter");
+    assert_eq!(theme.font_family(FontFamilyRole::Brand), "Space Grotesk");
+    assert_eq!(theme.font_family(FontFamilyRole::Mono), "Space Mono");
+    assert_ne!(
+        theme.font_family(FontFamilyRole::Ui),
+        theme.font_family(FontFamilyRole::Brand)
+    );
+    assert_ne!(
+        theme.font_family(FontFamilyRole::Ui),
+        theme.font_family(FontFamilyRole::Mono)
+    );
+    assert_ne!(
+        theme.font_family(FontFamilyRole::Brand),
+        theme.font_family(FontFamilyRole::Mono)
+    );
+
+    let expected = [
+        (TextRole::Body, "Inter", 12.0, 17.0),
+        (TextRole::Label, "Inter", 12.0, 16.0),
+        (TextRole::Caption, "Inter", 11.0, 15.0),
+        (TextRole::Title, "Inter", 14.0, 19.0),
+        (TextRole::Monospace, "Space Mono", 12.0, 17.0),
+    ];
+    for (role, family, size, line_height) in expected {
+        let token = theme.font(role);
+        assert_eq!(token.family, family, "wrong family for {role:?}");
+        assert_eq!(token.size, size, "wrong size for {role:?}");
+        assert_eq!(
+            token.line_height, line_height,
+            "wrong line height for {role:?}"
+        );
+    }
 }
 
 fn sentinel_sizes() -> SizeScale {
@@ -269,7 +315,7 @@ fn canonical_component_recipes_use_radius_roles_by_intent() {
 #[test]
 fn token_overrides_are_structural_and_predictable() {
     let typography = TypographyScale {
-        body: super::FontToken::new("sans-serif", 13.0, 18.0),
+        body: TextRoleMetrics::new(13.0, 18.0),
         ..default_dark_theme().typography
     };
     let controls = ControlMetrics {
