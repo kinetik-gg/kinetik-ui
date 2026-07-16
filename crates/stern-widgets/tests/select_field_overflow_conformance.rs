@@ -183,3 +183,45 @@ fn public_low_level_select_field_remains_layoutless_and_complete_source() {
     );
     assert_eq!(disclosure_text(&output).layout, None);
 }
+
+#[test]
+fn long_placeholder_uses_retained_policy_without_becoming_selected() {
+    let placeholder =
+        "Complete placeholder source remains semantic placeholder text even when it must elide";
+    let model = DropdownModel::from_items([DropdownItem::new(ITEM_ID, "Available value")]);
+    let theme = default_dark_theme();
+    let input = UiInput::default();
+    let mut memory = UiMemory::new();
+    let mut store = TextLayoutStore::new();
+    let mut ui = Ui::new(&input, &mut memory, &theme).with_text_layouts(&mut store);
+
+    let output = ui.select_field(
+        "placeholder",
+        FIELD,
+        "Material",
+        &model,
+        SelectFieldConfig::new(placeholder),
+    );
+    let _ = ui.finish_output();
+    let value = value_text(&output);
+    let stored = store
+        .stored_layout(value.layout.expect("explicit placeholder layout"))
+        .expect("resident placeholder layout");
+
+    assert_eq!(stored.key.text, placeholder);
+    assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+    assert!(stored.layout.is_elided());
+    assert_eq!(value.text, placeholder);
+    assert_eq!(output.presentation.label, placeholder);
+    assert_eq!(output.presentation.selected_id, None);
+    assert!(output.presentation.placeholder);
+    assert!(!output.widget.semantics[0].state.selected);
+    assert_eq!(
+        output.widget.semantics[0].description.as_deref(),
+        Some(placeholder)
+    );
+    assert_eq!(
+        output.widget.semantics[0].state.value,
+        Some(SemanticValue::Text(placeholder.to_owned()))
+    );
+}
