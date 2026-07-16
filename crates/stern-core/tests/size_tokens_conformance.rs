@@ -197,13 +197,57 @@ fn control_metric_field_audit_is_declaration_scoped() {
     ";
     assert!(!control_metrics_declares_icon_size(unrelated_icon_size));
 
-    let mutated_control_metrics = r"
+    for mutated_control_metrics in [
+        r"
+            pub struct ControlMetrics {
+                icon_size: f32,
+            }
+        ",
+        r"
+            pub struct ControlMetrics {
+                pub(crate) icon_size /* field comment */
+                    : core::primitive::f32,
+            }
+        ",
+    ] {
+        assert!(control_metrics_declares_icon_size(mutated_control_metrics));
+    }
+
+    let comments_and_literals_only = r#"
         pub struct ControlMetrics {
+            #[doc = "pub(crate) icon_size: core::primitive::f32"]
             pub control_height: f32,
-            pub icon_size : core::primitive::f32,
+            /* pub icon_size: f32 */
+            // pub(crate) icon_size: f32
         }
-    ";
-    assert!(control_metrics_declares_icon_size(mutated_control_metrics));
+    "#;
+    assert!(!control_metrics_declares_icon_size(
+        comments_and_literals_only
+    ));
+}
+
+#[test]
+fn icon_size_member_access_audit_handles_layout_and_ignores_non_code() {
+    for mutated_consumer in [
+        "theme . controls . icon_size",
+        "theme\n    .controls\n    .icon_size",
+        "theme.controls/* authority hop */.icon_size",
+        "theme /* root */ . controls /* field */ . icon_size",
+    ] {
+        assert!(has_icon_size_member_access(mutated_consumer));
+    }
+
+    let comments_literals_and_identifiers = r##"
+        let normal = ".controls.icon_size";
+        let raw = r#"theme.controls.icon_size"#;
+        // theme.controls.icon_size
+        /* theme . controls . icon_size */
+        let icon_size = theme.sizes.icon.md;
+        let split = theme.icon_/* token boundary */size;
+    "##;
+    assert!(!has_icon_size_member_access(
+        comments_literals_and_identifiers
+    ));
 }
 
 #[test]
@@ -240,8 +284,8 @@ fn production_sources_have_no_removed_icon_size_authority() {
     for path in &sources {
         let source = fs::read_to_string(path).expect("production Rust source must be readable");
         assert!(
-            !source.contains(".controls.icon_size"),
-            "removed icon-size consumer remains in {}",
+            !has_icon_size_member_access(&source),
+            "removed icon_size member access remains in {}",
             path.display()
         );
     }
@@ -252,10 +296,6 @@ fn production_sources_have_no_removed_icon_size_authority() {
         !control_metrics_declares_icon_size(&tokens_source),
         "ControlMetrics still declares the removed icon_size field"
     );
-    let compact_body: String = control_metrics_body(&tokens_source)
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
     for remaining in [
         "control_height",
         "compact_control_height",
@@ -264,22 +304,60 @@ fn production_sources_have_no_removed_icon_size_authority() {
         "padding_y",
     ] {
         assert!(
-            compact_body.contains(&format!("pub{remaining}:f32")),
+            control_metrics_declares_field(&tokens_source, remaining),
             "remaining ControlMetrics field {remaining} must stay intact"
         );
     }
 }
 
 fn control_metrics_declares_icon_size(source: &str) -> bool {
-    control_metrics_body(source)
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>()
-        .contains("pubicon_size:")
+    control_metrics_declares_field(source, "icon_size")
 }
 
-fn control_metrics_body(source: &str) -> &str {
+fn control_metrics_declares_field(source: &str, field: &str) -> bool {
+    let body = control_metrics_body(source);
+    let bytes = body.as_bytes();
+    let field = field.as_bytes();
+    for start in 0..=bytes.len().saturating_sub(field.len()) {
+        if bytes.get(start..start + field.len()) == Some(field)
+            && (start == 0 || !is_rust_identifier_byte(bytes[start - 1]))
+            && bytes
+                .get(start + field.len())
+                .is_none_or(|byte| !is_rust_identifier_byte(*byte))
+        {
+            let colon = skip_ascii_whitespace(bytes, start + field.len());
+            if bytes.get(colon) == Some(&b':') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn has_icon_size_member_access(source: &str) -> bool {
+    let source = mask_rust_comments_and_literals(source);
+    let bytes = source.as_bytes();
+    let field = b"icon_size";
+    for dot in bytes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, byte)| (*byte == b'.').then_some(index))
+    {
+        let start = skip_ascii_whitespace(bytes, dot + 1);
+        if bytes.get(start..start + field.len()) == Some(field)
+            && bytes
+                .get(start + field.len())
+                .is_none_or(|byte| !is_rust_identifier_byte(*byte))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn control_metrics_body(source: &str) -> String {
     const DECLARATION: &str = "pub struct ControlMetrics";
+    let source = mask_rust_comments_and_literals(source);
     let declaration_start = source
         .find(DECLARATION)
         .expect("ControlMetrics declaration must exist");
@@ -295,13 +373,125 @@ fn control_metrics_body(source: &str) -> &str {
             '}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return &source[body_start..body_start + offset];
+                    return source[body_start..body_start + offset].to_owned();
                 }
             }
             _ => {}
         }
     }
     panic!("ControlMetrics declaration body must close");
+}
+
+fn skip_ascii_whitespace(bytes: &[u8], mut cursor: usize) -> usize {
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn is_rust_identifier_byte(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphanumeric() || !byte.is_ascii()
+}
+
+fn mask_rust_comments_and_literals(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut cursor = 0_usize;
+    while cursor < bytes.len() {
+        if bytes[cursor..].starts_with(b"//") {
+            let end = bytes[cursor + 2..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |offset| cursor + 2 + offset);
+            mask_non_code(&mut masked, cursor, end, false);
+            cursor = end;
+        } else if bytes[cursor..].starts_with(b"/*") {
+            let end = nested_block_comment_end(bytes, cursor);
+            mask_non_code(&mut masked, cursor, end, false);
+            cursor = end;
+        } else if let Some(end) = raw_string_end(bytes, cursor) {
+            mask_non_code(&mut masked, cursor, end, true);
+            cursor = end;
+        } else if bytes[cursor] == b'"' {
+            let end = quoted_string_end(bytes, cursor);
+            mask_non_code(&mut masked, cursor, end, true);
+            cursor = end;
+        } else {
+            cursor += 1;
+        }
+    }
+    String::from_utf8(masked).expect("masking valid Rust source must preserve UTF-8")
+}
+
+fn mask_non_code(masked: &mut [u8], start: usize, end: usize, literal: bool) {
+    for byte in &mut masked[start..end] {
+        if *byte != b'\n' && *byte != b'\r' {
+            *byte = b' ';
+        }
+    }
+    if literal && start < end {
+        masked[start] = b'~';
+    }
+}
+
+fn nested_block_comment_end(bytes: &[u8], start: usize) -> usize {
+    let mut depth = 1_usize;
+    let mut cursor = start + 2;
+    while cursor + 1 < bytes.len() {
+        if bytes[cursor..].starts_with(b"/*") {
+            depth += 1;
+            cursor += 2;
+        } else if bytes[cursor..].starts_with(b"*/") {
+            depth -= 1;
+            cursor += 2;
+            if depth == 0 {
+                return cursor;
+            }
+        } else {
+            cursor += 1;
+        }
+    }
+    bytes.len()
+}
+
+fn raw_string_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut cursor = match bytes.get(start..) {
+        Some([b'r', ..]) => start + 1,
+        Some([b'b' | b'c', b'r', ..]) => start + 2,
+        _ => return None,
+    };
+    let mut hashes = 0_usize;
+    while bytes.get(cursor) == Some(&b'#') {
+        hashes += 1;
+        cursor += 1;
+    }
+    if bytes.get(cursor) != Some(&b'"') {
+        return None;
+    }
+    cursor += 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'"'
+            && bytes
+                .get(cursor + 1..cursor + 1 + hashes)
+                .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#'))
+        {
+            return Some(cursor + 1 + hashes);
+        }
+        cursor += 1;
+    }
+    Some(bytes.len())
+}
+
+fn quoted_string_end(bytes: &[u8], start: usize) -> usize {
+    let mut cursor = start + 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => cursor = (cursor + 2).min(bytes.len()),
+            b'"' => return cursor + 1,
+            _ => cursor += 1,
+        }
+    }
+    bytes.len()
 }
 
 fn collect_production_rust_sources(directory: &Path, output: &mut Vec<std::path::PathBuf>) {
