@@ -1,10 +1,10 @@
 //! Windowless widget integration for retained text layout generations and churn.
 
 use stern_core::{
-    Brush, Color, FrameContext, Key, KeyEvent, KeyState, Modifiers, MouseButton, PhysicalSize,
-    Point, Primitive, Rect, ScaleFactor, SemanticValue, Size, TextInputEvent, TextLayoutId,
-    TextPrimitive, TimeInfo, Ui as CoreUi, UiInput, UiInputEvent, UiMemory, Vec2, ViewportInfo,
-    WidgetId, default_dark_theme,
+    Brush, Color, ComponentState, FrameContext, Key, KeyEvent, KeyState, Modifiers, MouseButton,
+    PhysicalSize, Point, Primitive, Rect, ScaleFactor, SemanticValue, Size, TextInputEvent,
+    TextLayoutId, TextPrimitive, TimeInfo, Ui as CoreUi, UiInput, UiInputEvent, UiMemory, Vec2,
+    ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_text::{TextEditState, TextFeatureSet, TextLayoutKey, TextLayoutStore, TextStyle};
 use stern_widgets::{NumericScrubInputConfig, Ui, VectorScrubInputConfig};
@@ -219,6 +219,151 @@ fn retained_numeric_widths_are_equal_while_generic_text_remains_proportional() {
             .any(|pair| (pair[0] - pair[1]).abs() > 0.001),
         "generic proportional control unexpectedly matched: {generic:?}"
     );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn retained_numeric_pointer_geometry_uses_the_tabular_navigation_authority() {
+    let theme = default_dark_theme();
+    let text = "11119999";
+    let recipe = theme.text_field(ComponentState::default());
+    let content_width = FIELD_RECT.width - recipe.padding_x * 2.0;
+    let style = TextStyle::new(
+        recipe.font.family,
+        recipe.font.size,
+        recipe.font.line_height,
+    );
+    let mut comparison_store = TextLayoutStore::new();
+    let proportional_layout = comparison_store.shape_transient(&TextLayoutKey::new(
+        text,
+        style.clone(),
+        content_width,
+        false,
+    ));
+    let tabular_layout = comparison_store.shape_transient(&TextLayoutKey::new(
+        text,
+        style.with_features(TextFeatureSet::TABULAR_NUMBERS),
+        content_width,
+        false,
+    ));
+    let proportional_navigation = proportional_layout
+        .navigation(text)
+        .expect("proportional navigation");
+    let tabular_navigation = tabular_layout.navigation(text).expect("tabular navigation");
+    assert!(
+        proportional_navigation
+            .caret_stops()
+            .iter()
+            .chain(tabular_navigation.caret_stops())
+            .all(|stop| stop.visual_line == 0),
+        "the navigation witness requires one unwrapped visual line"
+    );
+
+    let mut decision_boundaries = proportional_navigation
+        .caret_stops()
+        .windows(2)
+        .chain(tabular_navigation.caret_stops().windows(2))
+        .map(|stops| (stops[0].x + stops[1].x) * 0.5)
+        .collect::<Vec<_>>();
+    decision_boundaries.sort_by(f32::total_cmp);
+    decision_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+    let first_caret = tabular_navigation
+        .caret_stops()
+        .first()
+        .expect("tabular caret stop")
+        .caret;
+    let line_rect = tabular_navigation.caret_rect(first_caret);
+    let model_y = line_rect.y + line_rect.height * 0.5;
+    let (model_x, tabular_hit, proportional_hit) = decision_boundaries
+        .windows(2)
+        .find_map(|bounds| {
+            let x = (bounds[0] + bounds[1]) * 0.5;
+            let tabular = tabular_navigation.hit_test_caret(x, model_y);
+            let proportional = proportional_navigation.hit_test_caret(x, model_y);
+            (tabular.offset != proportional.offset).then_some((x, tabular, proportional))
+        })
+        .expect("proportional and tabular hit regions must diverge");
+    assert!((0.0..content_width).contains(&model_x));
+
+    let anchor = if tabular_hit.offset == 0 {
+        text.len()
+    } else {
+        0
+    };
+    let click = Point::new(
+        FIELD_RECT.x + recipe.padding_x + model_x,
+        FIELD_RECT.y + recipe.padding_y + recipe.font.size + model_y,
+    );
+    let input = canonical([
+        UiInputEvent::ModifiersChanged(Modifiers::new(true, false, false, false)),
+        press(click.x, click.y),
+    ]);
+    let mut memory = UiMemory::new();
+    let mut state = TextEditState::new(text);
+    state.set_caret(anchor);
+    let mut store = TextLayoutStore::new();
+    let mut ui = Ui::new(&input, &mut memory, &theme).with_text_layouts(&mut store);
+    let _ = ui.numeric_input("number", FIELD_RECT, &mut state, false);
+    let output = ui.finish_output();
+
+    assert_eq!(state.caret_position(), tabular_hit);
+    assert_ne!(state.caret_position().offset, proportional_hit.offset);
+    assert_eq!(
+        state.selection,
+        stern_text::TextSelection::new(anchor, tabular_hit.offset)
+    );
+
+    let retained = store.layouts().next().expect("retained numeric layout");
+    assert_eq!(store.len(), 1);
+    assert_eq!(retained.key.text, text);
+    assert_eq!(retained.key.style.features, TextFeatureSet::TABULAR_NUMBERS);
+    let emitted_layout = output
+        .primitives
+        .iter()
+        .find_map(|primitive| match primitive {
+            Primitive::Text(text) => text.layout,
+            _ => None,
+        })
+        .expect("retained numeric text primitive");
+    assert_eq!(emitted_layout, retained.id);
+
+    let retained_navigation = retained
+        .layout
+        .navigation(text)
+        .expect("retained numeric navigation");
+    let paint_offset = Vec2::new(
+        FIELD_RECT.x + recipe.padding_x,
+        FIELD_RECT.y + recipe.padding_y + recipe.font.size,
+    );
+    let expected_selection = retained_navigation
+        .selection_rects(state.selection.range())
+        .into_iter()
+        .map(|rect| rect.translate(paint_offset))
+        .collect::<Vec<_>>();
+    let painted_selection = output
+        .primitives
+        .iter()
+        .filter_map(|primitive| match primitive {
+            Primitive::Rect(rect) if rect.fill == Some(recipe.selection) => Some(rect.rect),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(painted_selection, expected_selection);
+
+    let expected_caret = retained_navigation
+        .caret_rect(state.caret_position())
+        .translate(paint_offset);
+    let painted_caret = output
+        .primitives
+        .iter()
+        .find_map(|primitive| match primitive {
+            Primitive::Rect(rect) if rect.fill == Some(Brush::Solid(recipe.caret)) => {
+                Some(rect.rect)
+            }
+            _ => None,
+        })
+        .expect("painted retained caret");
+    assert_eq!(painted_caret, expected_caret);
 }
 
 #[test]
