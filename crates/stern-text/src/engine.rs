@@ -1,12 +1,13 @@
 use cosmic_text::{
-    Attrs, Buffer, Family, FeatureTag, FontFeatures, FontSystem, Metrics, Shaping, Wrap, fontdb,
+    Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, Family, FeatureTag, FontFeatures, FontSystem,
+    Metrics, Shaping, Wrap, fontdb,
 };
 use stern_core::Size;
 
 use crate::fonts::INTER_FONTDB_FAMILY;
 use crate::{
     DEFAULT_FONT_FAMILY, DEFAULT_MONOSPACE_FONT_FAMILY, ShapedGlyph, ShapedGlyphRun,
-    ShapedTextLayout, ShapedTextLine, TextLayoutKey, TextStyle, fonts,
+    ShapedTextLayout, ShapedTextLine, TextLayoutKey, TextOverflow, TextStyle, fonts,
 };
 
 /// Cosmic-text backed engine handle.
@@ -37,13 +38,28 @@ impl CosmicTextEngine {
             style.line_height().max(style.size().max(1.0)),
         );
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
-        let width = key.width().max(0.0);
-        buffer.set_size((key.wrap && width > 0.0).then_some(width), None);
+        let requested_width = key.width();
+        let width = requested_width.max(0.0);
+        let end_ellipsis = key.overflow == TextOverflow::EndEllipsis
+            && requested_width.is_finite()
+            && requested_width > 0.0
+            && !key.wrap
+            && !key
+                .text
+                .chars()
+                .any(|character| matches!(character, '\r' | '\n'));
+        buffer.set_size(
+            (end_ellipsis || key.wrap && width > 0.0).then_some(width),
+            None,
+        );
         buffer.set_wrap(if key.wrap {
             Wrap::WordOrGlyph
         } else {
             Wrap::None
         });
+        if end_ellipsis {
+            buffer.set_ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)));
+        }
         let attrs = attrs_for_style(style);
         buffer.set_text(&key.text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.font_system, false);
@@ -124,7 +140,7 @@ impl CosmicTextEngine {
                         end: source_line_start + glyph.end,
                         width: glyph.w,
                         rtl: glyph.level.is_rtl(),
-                        elided: false,
+                        elided: end_ellipsis && glyph.start == glyph.end,
                     });
                 }
             }
