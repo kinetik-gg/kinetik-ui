@@ -10,6 +10,16 @@ published, or accepted as an alpha release.
 
 ### Changed
 
+- **Breaking:** Added exact customizable font-size, line-height, weight, and
+  feature foundation scales to `TypographyScale`. The defaults are the pinned
+  six-size `12/11/10/14/16/20`, three-line-height `16/15/14`, and four-weight
+  `400/500/600/700` inventories plus the numeric feature value
+  `"tabular-nums"`. Existing text-role family, size, and line-height resolution
+  is unchanged. The new weight and feature values are deterministic metadata
+  only; they are not transported to text, shaping, widgets, or renderers and
+  make no tabular-figure conformance claim. External `TypographyScale` struct
+  literals must initialize the four new scales. See
+  `docs/typography-migration.md`.
 - **Breaking:** Replaced the five resolved `FontToken` values stored by
   `TypographyScale` with exact UI, Brand, and Mono semantic family roles plus
   five `TextRoleMetrics` values. `Theme::font` keeps its resolved `FontToken`

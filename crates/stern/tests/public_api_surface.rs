@@ -639,12 +639,16 @@ fn qualified_facade_stroke_types_construct_and_expose_exact_roles() {
 #[allow(clippy::float_cmp)]
 fn qualified_facade_constructs_and_resolves_semantic_font_families() {
     use stern::core::{
-        FontFamilyRole, FontFamilyScale, FontToken, TextRole, TextRoleMetrics, TypographyScale,
-        default_dark_theme,
+        FontFamilyRole, FontFamilyScale, FontFeatureScale, FontLineHeightScale, FontSizeScale,
+        FontToken, FontWeightScale, TextRole, TextRoleMetrics, TypographyScale, default_dark_theme,
     };
 
     let typography = TypographyScale {
         families: FontFamilyScale::new("facade-ui", "facade-brand", "facade-mono"),
+        sizes: FontSizeScale::new(31.0, 32.0, 33.0, 34.0, 35.0, 36.0),
+        line_heights: FontLineHeightScale::new(41.0, 42.0, 43.0),
+        weights: FontWeightScale::new(401, 402, 403, 404),
+        features: FontFeatureScale::new("facade-numeric"),
         body: TextRoleMetrics::new(11.0, 17.0),
         label: TextRoleMetrics::new(12.0, 18.0),
         caption: TextRoleMetrics::new(13.0, 19.0),
@@ -664,6 +668,44 @@ fn qualified_facade_constructs_and_resolves_semantic_font_families() {
     assert_eq!(monospace.family, "facade-mono");
     assert_eq!((monospace.size, monospace.line_height), (15.0, 21.0));
     assert_eq!(theme.text_size, typography.body.size);
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn qualified_facade_constructs_and_resolves_typography_foundation() {
+    use stern::core::{
+        FontFeatureScale, FontFeatureToken, FontLineHeightScale, FontLineHeightToken,
+        FontSizeScale, FontSizeToken, FontWeightScale, FontWeightToken, TypographyScale,
+        default_dark_theme,
+    };
+
+    let base = default_dark_theme();
+    let typography = TypographyScale {
+        sizes: FontSizeScale::new(101.0, 103.0, 107.0, 109.0, 113.0, 127.0),
+        line_heights: FontLineHeightScale::new(131.0, 137.0, 139.0),
+        weights: FontWeightScale::new(601, 607, 613, 617),
+        features: FontFeatureScale::new("facade-tabular-numeric"),
+        ..base.typography
+    };
+    let theme = base.with_typography(typography);
+
+    assert_eq!(FontSizeToken::ALL.len(), 6);
+    assert_eq!(FontLineHeightToken::ALL.len(), 3);
+    assert_eq!(FontWeightToken::ALL.len(), 4);
+    assert_eq!(FontFeatureToken::ALL.len(), 1);
+    assert_eq!(theme.typography.sizes.get(FontSizeToken::Heading), 127.0);
+    assert_eq!(
+        theme
+            .typography
+            .line_heights
+            .get(FontLineHeightToken::Metadata),
+        139.0
+    );
+    assert_eq!(theme.typography.weights.get(FontWeightToken::Semibold), 613);
+    assert_eq!(
+        theme.typography.features.get(FontFeatureToken::Numeric),
+        "facade-tabular-numeric"
+    );
 }
 
 #[test]

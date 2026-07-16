@@ -5,7 +5,8 @@
 use std::{fs, path::Path};
 
 use stern_core::{
-    FontFamilyRole, FontFamilyScale, TextRole, TextRoleMetrics, TypographyScale, default_dark_theme,
+    FontFamilyRole, FontFamilyScale, FontFeatureScale, FontLineHeightScale, FontSizeScale,
+    FontWeightScale, TextRole, TextRoleMetrics, TypographyScale, default_dark_theme,
 };
 
 const EXPECTED_FAMILY_ROLES: [FontFamilyRole; 3] = [
@@ -19,6 +20,10 @@ const SENTINEL_FAMILIES: FontFamilyScale =
 
 const SENTINEL_TYPOGRAPHY: TypographyScale = TypographyScale {
     families: SENTINEL_FAMILIES,
+    sizes: FontSizeScale::new(151.0, 157.0, 163.0, 167.0, 173.0, 179.0),
+    line_heights: FontLineHeightScale::new(181.0, 191.0, 193.0),
+    weights: FontWeightScale::new(601, 607, 613, 617),
+    features: FontFeatureScale::new("sentinel-numeric"),
     body: TextRoleMetrics::new(101.0, 103.0),
     label: TextRoleMetrics::new(107.0, 109.0),
     caption: TextRoleMetrics::new(113.0, 127.0),
@@ -98,6 +103,10 @@ fn family_customization_preserves_all_text_role_metrics() {
     for role in TEXT_ROLES {
         assert_eq!(customized.metrics(role), defaults.metrics(role));
     }
+    assert_eq!(customized.sizes, defaults.sizes);
+    assert_eq!(customized.line_heights, defaults.line_heights);
+    assert_eq!(customized.weights, defaults.weights);
+    assert_eq!(customized.features, defaults.features);
     assert_eq!(customized.get(TextRole::Body).family, "sentinel-ui");
     assert_eq!(customized.get(TextRole::Label).family, "sentinel-ui");
     assert_eq!(customized.get(TextRole::Caption).family, "sentinel-ui");
@@ -108,12 +117,20 @@ fn family_customization_preserves_all_text_role_metrics() {
 
 #[test]
 fn metric_customization_preserves_all_semantic_family_authority() {
-    let families = default_dark_theme().typography.families;
+    let defaults = default_dark_theme().typography;
     let customized = TypographyScale {
-        families,
-        ..SENTINEL_TYPOGRAPHY
+        body: SENTINEL_TYPOGRAPHY.body,
+        label: SENTINEL_TYPOGRAPHY.label,
+        caption: SENTINEL_TYPOGRAPHY.caption,
+        title: SENTINEL_TYPOGRAPHY.title,
+        monospace: SENTINEL_TYPOGRAPHY.monospace,
+        ..defaults
     };
 
+    assert_eq!(customized.sizes, defaults.sizes);
+    assert_eq!(customized.line_heights, defaults.line_heights);
+    assert_eq!(customized.weights, defaults.weights);
+    assert_eq!(customized.features, defaults.features);
     assert_eq!(customized.family(FontFamilyRole::Ui), "Inter");
     assert_eq!(customized.family(FontFamilyRole::Brand), "Space Grotesk");
     assert_eq!(customized.family(FontFamilyRole::Mono), "Space Mono");
