@@ -537,6 +537,133 @@ fn checkbox_and_toggle_reflect_selection() {
     assert_eq!(toggle.primitives.len(), 2);
 }
 
+fn choice_indicator_rect(output: &WidgetOutput) -> Rect {
+    let Primitive::Rect(indicator) = output
+        .primitives
+        .last()
+        .expect("choice output must end with its indicator")
+    else {
+        panic!("choice indicator must be a rectangle");
+    };
+    indicator.rect
+}
+
+#[test]
+fn selection_controls_keep_recipe_indicator_and_caller_bounds_across_states() {
+    let baseline = default_dark_theme();
+    let sentinel = baseline.with_controls(stern_core::ControlMetrics {
+        control_height: 101.0,
+        compact_control_height: 103.0,
+        padding_x: 107.0,
+        padding_y: 109.0,
+    });
+    let control = Rect::new(10.0, 20.0, 24.0, 18.0);
+    let label = Rect::new(42.0, 18.0, 96.0, 22.0);
+    let target = control.union(label);
+    let expected_indicator = Rect::new(control.x, control.y, 14.0, 14.0);
+    let states = [
+        (false, false, false, false),
+        (true, false, false, false),
+        (true, true, false, false),
+        (true, false, true, false),
+        (true, false, false, true),
+    ];
+
+    for theme in [baseline, sentinel] {
+        for radio in [false, true] {
+            for (selected, hovered, focused, disabled) in states {
+                let id = WidgetId::from_key((radio, selected, hovered, focused, disabled));
+                let mut memory = UiMemory::new();
+                if focused {
+                    memory.focus(id);
+                }
+                let input = if hovered {
+                    input_at(control.x + 1.0, control.y + 1.0)
+                } else {
+                    UiInput::default()
+                };
+                let output = if radio {
+                    radio_button_with_label_target(
+                        id,
+                        control,
+                        label,
+                        "Radio",
+                        selected,
+                        &input,
+                        &mut memory,
+                        &theme,
+                        disabled,
+                    )
+                } else {
+                    checkbox_with_label_target(
+                        id,
+                        control,
+                        label,
+                        "Checkbox",
+                        selected,
+                        &input,
+                        &mut memory,
+                        &theme,
+                        disabled,
+                    )
+                };
+
+                assert_eq!(choice_indicator_rect(&output), expected_indicator);
+                assert_eq!(output.response.as_ref().expect("choice response").rect, target);
+                assert_eq!(output.semantics[0].bounds, target);
+            }
+        }
+    }
+}
+
+#[test]
+fn selection_indicator_has_exact_unrounded_four_scale_transport() {
+    let theme = default_dark_theme();
+    let control = Rect::new(3.0, 5.0, 27.0, 19.0);
+    let label = Rect::new(37.0, 4.0, 81.0, 21.0);
+    let target = control.union(label);
+
+    for radio in [false, true] {
+        let id = WidgetId::from_key(("scale-transport", radio));
+        let mut memory = UiMemory::new();
+        let output = if radio {
+            radio_button_with_label_target(
+                id,
+                control,
+                label,
+                "Radio",
+                false,
+                &UiInput::default(),
+                &mut memory,
+                &theme,
+                false,
+            )
+        } else {
+            checkbox_with_label_target(
+                id,
+                control,
+                label,
+                "Checkbox",
+                false,
+                &UiInput::default(),
+                &mut memory,
+                &theme,
+                false,
+            )
+        };
+        let indicator = choice_indicator_rect(&output);
+        assert_eq!(indicator, Rect::new(control.x, control.y, 14.0, 14.0));
+        for (scale, expected_physical_extent) in
+            [(1.0, 14.0), (1.25, 17.5), (1.5, 21.0), (2.0, 28.0)]
+        {
+            assert_eq!(indicator.width * scale, expected_physical_extent);
+            assert_eq!(indicator.height * scale, expected_physical_extent);
+        }
+        assert_eq!(output.response.as_ref().expect("choice response").rect, target);
+        assert_eq!(output.semantics[0].bounds, target);
+    }
+}
+
 #[test]
 fn controls_emit_stable_response_flags_and_semantic_states() {
     let theme = default_dark_theme();
