@@ -489,8 +489,15 @@ fn source_and_width_change_value_identity_while_open_only_changes_disclosure() {
     assert_eq!(open_id, closed_id);
     assert_eq!(final_value_layout(&open_frame, source), Some(closed_id));
     assert_ne!(open_disclosure_id, closed_disclosure_id);
-    assert_eq!(disclosure_text(&closed).origin.x, FIELD.max_x() - 16.0);
-    assert_eq!(disclosure_text(&open).origin.x, FIELD.max_x() - 16.0);
+    let expected_disclosure_x = (FIELD.max_x() - 16.0).to_bits();
+    assert_eq!(
+        disclosure_text(&closed).origin.x.to_bits(),
+        expected_disclosure_x
+    );
+    assert_eq!(
+        disclosure_text(&open).origin.x.to_bits(),
+        expected_disclosure_x
+    );
 
     let changed_source = "A different complete selected source produces distinct identity";
     let changed_model = selected_model(changed_source);
