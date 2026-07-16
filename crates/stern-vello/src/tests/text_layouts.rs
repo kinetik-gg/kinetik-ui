@@ -127,6 +127,7 @@ fn retained_numeric_widget_encodes_registered_tabular_glyphs_without_fallback() 
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn retained_select_widget_encodes_registered_ellipsis_without_arrow_fallback() {
     let source =
         "Canonical retained select source stays complete while Vello encodes its end ellipsis";
