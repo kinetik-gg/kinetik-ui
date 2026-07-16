@@ -103,17 +103,46 @@ fn feature_shaping_preserves_inter_ranges_and_layout_topology() {
     assert_uses_bundled_inter(&tabular);
     assert_eq!(default.line_count, tabular.line_count);
     assert_eq!(default.lines.len(), tabular.lines.len());
+    assert_eq!(default.runs.len(), tabular.runs.len());
     assert_eq!(default.glyph_count(), tabular.glyph_count());
     assert_eq!(
         default
             .lines
             .iter()
-            .map(|line| (line.text_start, line.text_end, line.source_line_index))
+            .map(|line| {
+                (
+                    line.visual_index,
+                    line.source_line_index,
+                    line.text_start,
+                    line.text_end,
+                    line.rtl,
+                )
+            })
             .collect::<Vec<_>>(),
         tabular
             .lines
             .iter()
-            .map(|line| (line.text_start, line.text_end, line.source_line_index))
+            .map(|line| {
+                (
+                    line.visual_index,
+                    line.source_line_index,
+                    line.text_start,
+                    line.text_end,
+                    line.rtl,
+                )
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        default
+            .runs
+            .iter()
+            .map(|run| (run.line_index, run.visual_line, run.glyphs.len()))
+            .collect::<Vec<_>>(),
+        tabular
+            .runs
+            .iter()
+            .map(|run| (run.line_index, run.visual_line, run.glyphs.len()))
             .collect::<Vec<_>>()
     );
     assert_eq!(
