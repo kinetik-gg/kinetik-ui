@@ -2,6 +2,8 @@
 
 #![allow(clippy::float_cmp)]
 
+use std::{fs, path::Path};
+
 use stern_core::{
     Color, ControlMetrics, ControlSizeScale, CornerRadius, HandleSizeScale, IconSizeScale,
     RadiusScale, RowSizeScale, SizeScale, SizeToken, SpacingScale, StrokeScale, default_dark_theme,
@@ -180,4 +182,167 @@ fn spacing_and_remaining_control_customization_do_not_mirror_size_tokens() {
     assert_eq!(default_dark_theme().controls.check_size, 14.0);
     assert_eq!(default_dark_theme().controls.padding_x, 8.0);
     assert_eq!(default_dark_theme().controls.padding_y, 4.0);
+}
+
+#[test]
+fn control_metric_field_audit_is_declaration_scoped() {
+    let unrelated_icon_size = r"
+        pub struct IconSizeScale {
+            pub icon_size: f32,
+        }
+
+        pub struct ControlMetrics {
+            pub control_height: f32,
+        }
+    ";
+    assert!(!control_metrics_declares_icon_size(unrelated_icon_size));
+
+    let mutated_control_metrics = r"
+        pub struct ControlMetrics {
+            pub control_height: f32,
+            pub icon_size : core::primitive::f32,
+        }
+    ";
+    assert!(control_metrics_declares_icon_size(mutated_control_metrics));
+}
+
+#[test]
+fn production_sources_have_no_removed_icon_size_authority() {
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("stern-core must live under the workspace crates directory");
+    let mut sources = Vec::new();
+    for production_root in [workspace_root.join("crates"), workspace_root.join("apps")] {
+        collect_production_rust_sources(&production_root, &mut sources);
+    }
+
+    assert!(
+        sources
+            .iter()
+            .any(|path| path.starts_with(workspace_root.join("crates"))),
+        "workspace crate production sources must be audited"
+    );
+    assert!(
+        sources
+            .iter()
+            .any(|path| path.starts_with(workspace_root.join("apps"))),
+        "workspace application production sources must be audited"
+    );
+    assert!(
+        sources.iter().any(|path| {
+            fs::read_to_string(path).is_ok_and(|source| source.starts_with("// @generated"))
+        }),
+        "checked-in generated Rust sources must be audited"
+    );
+
+    for path in &sources {
+        let source = fs::read_to_string(path).expect("production Rust source must be readable");
+        assert!(
+            !source.contains(".controls.icon_size"),
+            "removed icon-size consumer remains in {}",
+            path.display()
+        );
+    }
+
+    let tokens_path = crate_root.join("src/theme/tokens.rs");
+    let tokens_source = fs::read_to_string(&tokens_path).expect("theme tokens must be readable");
+    assert!(
+        !control_metrics_declares_icon_size(&tokens_source),
+        "ControlMetrics still declares the removed icon_size field"
+    );
+    let compact_body: String = control_metrics_body(&tokens_source)
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    for remaining in [
+        "control_height",
+        "compact_control_height",
+        "check_size",
+        "padding_x",
+        "padding_y",
+    ] {
+        assert!(
+            compact_body.contains(&format!("pub{remaining}:f32")),
+            "remaining ControlMetrics field {remaining} must stay intact"
+        );
+    }
+}
+
+fn control_metrics_declares_icon_size(source: &str) -> bool {
+    control_metrics_body(source)
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .contains("pubicon_size:")
+}
+
+fn control_metrics_body(source: &str) -> &str {
+    const DECLARATION: &str = "pub struct ControlMetrics";
+    let declaration_start = source
+        .find(DECLARATION)
+        .expect("ControlMetrics declaration must exist");
+    let opening_brace = source[declaration_start..]
+        .find('{')
+        .map(|offset| declaration_start + offset)
+        .expect("ControlMetrics declaration must have a body");
+    let body_start = opening_brace + 1;
+    let mut depth = 1_usize;
+    for (offset, character) in source[body_start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &source[body_start..body_start + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("ControlMetrics declaration body must close");
+}
+
+fn collect_production_rust_sources(directory: &Path, output: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(directory).expect("production source directory must be readable") {
+        let path = entry.expect("source entry must be readable").path();
+        if path.is_dir() {
+            if !is_nonproduction_directory(&path) {
+                collect_production_rust_sources(&path, output);
+            }
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+            && !is_nonproduction_rust_file(&path)
+        {
+            output.push(path);
+        }
+    }
+}
+
+fn is_nonproduction_directory(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(
+            "tests"
+                | "test"
+                | "testdata"
+                | "test-data"
+                | "test_data"
+                | "benches"
+                | "benchmarks"
+                | "examples"
+                | "fixtures"
+                | "snapshots"
+                | "goldens"
+                | "target"
+                | ".runway"
+        )
+    )
+}
+
+fn is_nonproduction_rust_file(path: &Path) -> bool {
+    matches!(
+        path.file_stem().and_then(|name| name.to_str()),
+        Some("test" | "tests")
+    )
 }
