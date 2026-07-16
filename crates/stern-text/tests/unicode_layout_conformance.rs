@@ -296,6 +296,22 @@ fn elided_navigation_fails_before_cluster_validation() {
         elided.navigation(source),
         Err(TextNavigationError::ElidedLayout)
     );
+    let mut malformed_elided = elided.clone();
+    malformed_elided.lines.clear();
+    assert_ne!(malformed_elided.line_count, malformed_elided.lines.len());
+    assert_eq!(
+        malformed_elided
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .filter(|glyph| glyph.elided)
+            .count(),
+        1
+    );
+    assert_eq!(
+        malformed_elided.navigation(source),
+        Err(TextNavigationError::ElidedLayout)
+    );
 
     let visible_source = "e\u{301}👩‍🚀";
     let visible = engine.shape_text(&TextLayoutKey::new(
