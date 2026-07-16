@@ -302,8 +302,8 @@ fn retained_standard_and_action_buttons_encode_exact_ellipsis_resources_at_all_s
         assert_eq!(encoded_ids, expected_ids);
         let effective = snap_axis_aligned_translation(root_transform(device_scale));
         assert_eq!(
-            effective.as_coeffs(),
-            [device_scale, 0.0, 0.0, device_scale, 0.0, 0.0]
+            effective.as_coeffs().map(f64::to_bits),
+            [device_scale, 0.0, 0.0, device_scale, 0.0, 0.0].map(f64::to_bits)
         );
         for (encoded, logical) in encoding.resources.glyphs.iter().zip(&logical_points) {
             let expected = project_text_point_to_device(effective, *logical);
