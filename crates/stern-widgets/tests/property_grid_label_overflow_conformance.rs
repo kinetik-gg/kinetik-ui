@@ -1,5 +1,7 @@
 //! Windowless conformance for retained property-label end ellipsis.
 
+use std::collections::BTreeMap;
+
 use stern_core::{
     FrameOutput, PointerInput, Primitive, Rect, SemanticRole, SpacingRole, TextLayoutId,
     TextPrimitive, Theme, UiInput, UiMemory, Vec2, WidgetId, default_dark_theme,
@@ -530,5 +532,157 @@ fn icon_label_gap_customization_does_not_enter_property_label_identity() {
             .key
             .width_bits,
         width_bits
+    );
+}
+
+#[test]
+fn hot_frames_reuse_identity_and_source_width_or_suffix_changes_do_not() {
+    let source = "Stable property source remains retained across identical hot frames";
+    let row = PropertyGridRow::property(ItemId::from_raw(61), source, 0);
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (_, first) = retained_default(&mut store, &mut memory, std::slice::from_ref(&row));
+    let stable_id = label_id(&first, source);
+    let stable_accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    for _ in 0..4 {
+        let (_, frame) = retained_default(&mut store, &mut memory, std::slice::from_ref(&row));
+        assert_eq!(label_id(&frame, source), stable_id);
+        assert_eq!(
+            (
+                store.len(),
+                store.retained_payload_bytes(),
+                store.change_cursor()
+            ),
+            stable_accounting
+        );
+    }
+
+    let changed_source = "A distinct complete property source has distinct retained identity";
+    let (_, changed) = retained_default(
+        &mut store,
+        &mut memory,
+        &[PropertyGridRow::property(
+            ItemId::from_raw(61),
+            changed_source,
+            0,
+        )],
+    );
+    assert_ne!(label_id(&changed, changed_source), stable_id);
+
+    let (_, resized) = retained_grid(
+        &mut store,
+        &mut memory,
+        std::slice::from_ref(&row),
+        BOUNDS,
+        PropertyGridConfig::new(layout(133.25)),
+        &UiInput::default(),
+        &default_dark_theme(),
+    );
+    assert_ne!(label_id(&resized, source), stable_id);
+
+    let required_source = format!("{source} *");
+    let (_, required) = retained_default(
+        &mut store,
+        &mut memory,
+        &[row.with_required(true)],
+    );
+    assert_ne!(label_id(&required, &required_source), stable_id);
+}
+
+#[test]
+fn row_access_geometry_callbacks_order_and_semantics_remain_application_owned() {
+    let rows = vec![
+        PropertyGridRow::property(ItemId::from_raw(71), "Editable", 2),
+        PropertyGridRow::property(ItemId::from_raw(72), "Read only", 1).with_read_only(true),
+        PropertyGridRow::property(ItemId::from_raw(73), "Disabled", 0).with_disabled(true),
+        PropertyGridRow::property(ItemId::from_raw(74), "Required", 0)
+            .with_required(true)
+            .with_resettable(true, false)
+            .with_keyframeable(true, false),
+    ];
+    let rows_before = rows.clone();
+    let config = PropertyGridConfig::default().with_overscan(0);
+    let expected_geometry = config.layout.visible_row_rects(BOUNDS, &rows, 0.0, 0);
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (output, frame) = retained_grid(
+        &mut store,
+        &mut memory,
+        &rows,
+        BOUNDS,
+        config,
+        &UiInput::default(),
+        &default_dark_theme(),
+    );
+
+    assert_eq!(rows, rows_before);
+    assert_eq!(output.visible_rows, expected_geometry);
+    assert_eq!(output.values.len(), rows.len());
+    assert!(output.intents.is_empty());
+    assert_eq!(
+        output
+            .values
+            .iter()
+            .map(|value| value.value.access)
+            .collect::<Vec<_>>(),
+        vec![
+            PropertyGridAccess::Editable,
+            PropertyGridAccess::ReadOnly,
+            PropertyGridAccess::Disabled,
+            PropertyGridAccess::Editable,
+        ]
+    );
+    for (value, geometry) in output.values.iter().zip(&expected_geometry) {
+        assert_eq!(value.row, value.value.row);
+        assert_eq!(value.value.geometry, *geometry);
+        assert_eq!(value.value.row_widget_id, output.root.child(("property-grid-row", value.row.raw())));
+        assert_eq!(value.value.value_widget_id, value.value.row_widget_id.child("value"));
+    }
+    for (row, geometry) in rows.iter().zip(&expected_geometry) {
+        let presentation = if row.state.required {
+            format!("{} *", row.label)
+        } else {
+            row.label.clone()
+        };
+        assert_eq!(
+            label_text(&frame, &presentation).origin.x.to_bits(),
+            (geometry.label_rect.x + 6.0_f32).to_bits()
+        );
+        assert!(frame.semantics.nodes().iter().any(|node| {
+            node.id == output.root.child(("property-grid-row", row.id.raw()))
+                && node.label.as_deref() == Some(row.label.as_str())
+                && node.state.disabled
+                    == matches!(row.id.raw(), 73)
+        }));
+    }
+
+    let original_ids = output
+        .values
+        .iter()
+        .map(|value| (value.row, (value.value.row_widget_id, value.value.value_widget_id)))
+        .collect::<BTreeMap<_, _>>();
+    let reordered = rows.iter().rev().cloned().collect::<Vec<_>>();
+    let mut reorder_memory = UiMemory::new();
+    let (reordered_output, _) = retained_grid(
+        &mut store,
+        &mut reorder_memory,
+        &reordered,
+        BOUNDS,
+        config,
+        &UiInput::default(),
+        &default_dark_theme(),
+    );
+    assert_eq!(
+        reordered_output
+            .values
+            .iter()
+            .map(|value| (value.row, (value.value.row_widget_id, value.value.value_widget_id)))
+            .collect::<BTreeMap<_, _>>(),
+        original_ids
     );
 }
