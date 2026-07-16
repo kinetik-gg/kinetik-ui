@@ -80,7 +80,10 @@ fn generated_marker_uses_the_bundled_ellipsis_glyph_identity() {
 
     assert_eq!(generated_glyph.id, direct_glyph.id);
     assert_eq!(generated_run.font, direct_run.font);
-    assert_eq!(generated_run.font_size, direct_run.font_size);
+    assert_eq!(
+        generated_run.font_size.to_bits(),
+        direct_run.font_size.to_bits()
+    );
     assert!(!direct_glyph.elided);
     assert_eq!(
         (direct_glyph.start, direct_glyph.end),
