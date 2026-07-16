@@ -57,6 +57,13 @@ fn pointer_transition(down: bool) -> UiInput {
     input
 }
 
+fn assert_rect_bits(left: Rect, right: Rect) {
+    assert_eq!(left.x.to_bits(), right.x.to_bits());
+    assert_eq!(left.y.to_bits(), right.y.to_bits());
+    assert_eq!(left.width.to_bits(), right.width.to_bits());
+    assert_eq!(left.height.to_bits(), right.height.to_bits());
+}
+
 #[test]
 fn exact_width_matrix_preserves_formula_bits_and_positive_endpoint_equality() {
     let theme = default_dark_theme();
@@ -733,4 +740,90 @@ fn delegated_action_button_preserves_visibility_metadata_and_exact_activation_ro
     assert_eq!(rich_frame.semantics, plain_frame.semantics);
     assert_eq!(button_text(&rich_frame, source).layout, Some(expected_id));
     assert!(rich_frame.actions.is_empty());
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn invalid_and_nonfinite_rects_preserve_preexisting_output_and_interaction_topology() {
+    let source = "Complete invalid-geometry button source";
+    let theme = default_dark_theme();
+    for rect in [
+        Rect::new(BUTTON.x, BUTTON.y, f32::NAN, BUTTON.height),
+        Rect::new(BUTTON.x, BUTTON.y, f32::INFINITY, BUTTON.height),
+        Rect::new(BUTTON.x, BUTTON.y, f32::NEG_INFINITY, BUTTON.height),
+        Rect::new(f32::NAN, BUTTON.y, BUTTON.width, BUTTON.height),
+        Rect::new(BUTTON.x, f32::INFINITY, BUTTON.width, BUTTON.height),
+    ] {
+        let input = UiInput::default();
+        let mut layoutless_memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut layoutless_memory, &theme);
+        let layoutless_response = ui.button("invalid", rect, source, false);
+        let layoutless = ui.finish_output();
+
+        let mut store = TextLayoutStore::new();
+        let mut retained_memory = UiMemory::new();
+        let mut ui = Ui::new(&input, &mut retained_memory, &theme).with_text_layouts(&mut store);
+        let retained_response = ui.button("invalid", rect, source, false);
+        let retained = ui.finish_output();
+
+        assert_eq!(retained_response.id, layoutless_response.id);
+        assert_rect_bits(retained_response.rect, layoutless_response.rect);
+        assert_eq!(retained_response.state, layoutless_response.state);
+        assert_eq!(retained_response.clicked, layoutless_response.clicked);
+        assert_eq!(
+            retained_response.keyboard_activated,
+            layoutless_response.keyboard_activated
+        );
+        assert_eq!(retained.primitives.len(), layoutless.primitives.len());
+        for (retained_primitive, layoutless_primitive) in
+            retained.primitives.iter().zip(&layoutless.primitives)
+        {
+            match (retained_primitive, layoutless_primitive) {
+                (Primitive::Rect(retained), Primitive::Rect(layoutless)) => {
+                    assert_rect_bits(retained.rect, layoutless.rect);
+                    assert_eq!(retained.fill, layoutless.fill);
+                    assert_eq!(retained.stroke, layoutless.stroke);
+                    assert_eq!(retained.radius, layoutless.radius);
+                }
+                (Primitive::Text(retained), Primitive::Text(layoutless)) => {
+                    assert!(retained.layout.is_some());
+                    assert_eq!(layoutless.layout, None);
+                    assert_eq!(retained.origin.x.to_bits(), layoutless.origin.x.to_bits());
+                    assert_eq!(retained.origin.y.to_bits(), layoutless.origin.y.to_bits());
+                    assert_eq!(retained.text, layoutless.text);
+                    assert_eq!(retained.family, layoutless.family);
+                    assert_eq!(retained.size.to_bits(), layoutless.size.to_bits());
+                    assert_eq!(
+                        retained.line_height.to_bits(),
+                        layoutless.line_height.to_bits()
+                    );
+                    assert_eq!(retained.brush, layoutless.brush);
+                }
+                other => panic!("button primitive topology changed: {other:?}"),
+            }
+        }
+
+        assert_eq!(retained.semantics.nodes().len(), 1);
+        assert_eq!(layoutless.semantics.nodes().len(), 1);
+        let mut retained_semantic = retained.semantics.nodes()[0].clone();
+        let mut layoutless_semantic = layoutless.semantics.nodes()[0].clone();
+        assert_rect_bits(retained_semantic.bounds, layoutless_semantic.bounds);
+        retained_semantic.bounds = Rect::ZERO;
+        layoutless_semantic.bounds = Rect::ZERO;
+        assert_eq!(retained_semantic, layoutless_semantic);
+        assert_eq!(retained.repaint, layoutless.repaint);
+        assert_eq!(retained.actions, layoutless.actions);
+        assert_eq!(retained.platform_requests, layoutless.platform_requests);
+        assert_eq!(retained.warnings, layoutless.warnings);
+
+        let label = button_text(&retained, source);
+        let stored = store
+            .stored_layout(label.layout.expect("registered invalid-geometry policy"))
+            .expect("resident invalid-geometry policy");
+        let raw_span = rect.width - theme.controls.padding_x * 2.0_f32;
+        assert_eq!(stored.key.width_bits, raw_span.max(0.0_f32).to_bits());
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert_eq!(stored.key.text, source);
+        assert_eq!(label.text, source);
+    }
 }
