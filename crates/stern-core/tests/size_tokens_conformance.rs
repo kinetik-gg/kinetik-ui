@@ -248,9 +248,7 @@ fn control_metric_field_audit_is_declaration_scoped() {
             }
         ",
     ] {
-        assert!(control_metrics_declares_check_size(
-            mutated_control_metrics
-        ));
+        assert!(control_metrics_declares_check_size(mutated_control_metrics));
     }
 }
 
