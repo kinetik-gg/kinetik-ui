@@ -10,12 +10,17 @@ published, or accepted as an alpha release.
 
 ### Changed
 
+- **Breaking:** Removed `ControlMetrics::icon_size` and made
+  `Theme::sizes.icon.md` the sole default icon-size authority for unsized
+  bitmap, selectable-bitmap, vector-library, and missing-vector icon buttons.
+  Invalid explicit bitmap sizes now use that same themed fallback, while valid
+  explicit sizes and the remaining five `ControlMetrics` fields are unchanged.
+  See `docs/size-migration.md`.
 - **Breaking:** Added the exact grouped 14-token `SizeScale` foundation at
   `Theme::sizes`, with typed `SizeToken` lookup and replacement through
   `Theme::with_sizes`. External `Theme` struct literals must initialize the new
-  field. This prerelease foundation adds no aliases and does not mirror values
-  into or from the provisional independent `ControlMetrics`; widget consumers
-  remain unchanged pending a separate inventoried migration. See
+  field. This prerelease foundation adds no aliases or mirrored values; the
+  medium icon token now owns default icon-button geometry. See
   `docs/size-migration.md`.
 - **Breaking:** Replaced `SpacingScale::{xs, sm, md, lg, xl}` and its
   five-value constructor with the exact nine-step `zero` through `eight`
