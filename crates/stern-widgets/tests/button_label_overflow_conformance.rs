@@ -827,3 +827,46 @@ fn invalid_and_nonfinite_rects_preserve_preexisting_output_and_interaction_topol
         assert_eq!(label.text, source);
     }
 }
+
+#[test]
+fn end_ellipsis_adoption_is_limited_to_standard_and_delegated_action_buttons() {
+    let standard = "Complete standard button adoption source";
+    let action_source = "Complete delegated action button adoption source";
+    let tab = "Neighboring tab source keeps generic retained policy";
+    let row = "Neighboring list row source keeps generic retained policy";
+    let action = ActionDescriptor::new("adoption.action", action_source);
+    let theme = default_dark_theme();
+    let input = UiInput::default();
+    let mut memory = UiMemory::new();
+    let mut store = TextLayoutStore::new();
+    let mut ui = Ui::new(&input, &mut memory, &theme).with_text_layouts(&mut store);
+
+    let _ = ui.button("standard", BUTTON, standard, false);
+    let _ = ui.action_button("action", BUTTON, &action, ActionContext::Global);
+    let _ = ui.tab_button("tab", BUTTON, tab, false, false);
+    let _ = ui.list_row("row", BUTTON, row, false, false);
+    let frame = ui.finish_output();
+
+    for source in [standard, action_source] {
+        let label = button_text(&frame, source);
+        let stored = store
+            .stored_layout(label.layout.expect("explicit button adoption identity"))
+            .expect("resident button adoption identity");
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert_eq!(
+            stored.key.width_bits,
+            (BUTTON.width - theme.controls.padding_x * 2.0_f32).to_bits()
+        );
+    }
+
+    for source in [tab, row] {
+        let label = button_text(&frame, source);
+        let stored = store
+            .stored_layout(label.layout.expect("generic neighboring identity"))
+            .expect("resident neighboring identity");
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.overflow, TextOverflow::Visible);
+        assert_eq!(stored.key.width_bits, 0.0_f32.to_bits());
+    }
+}
