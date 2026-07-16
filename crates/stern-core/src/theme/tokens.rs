@@ -1082,12 +1082,7 @@ pub enum FontWeightToken {
 
 impl FontWeightToken {
     /// Every font-weight token in normative specification order.
-    pub const ALL: &'static [Self] = &[
-        Self::Regular,
-        Self::Medium,
-        Self::Semibold,
-        Self::Bold,
-    ];
+    pub const ALL: &'static [Self] = &[Self::Regular, Self::Medium, Self::Semibold, Self::Bold];
 }
 
 /// Exact customizable font-weight scale.

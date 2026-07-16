@@ -674,8 +674,9 @@ fn qualified_facade_constructs_and_resolves_semantic_font_families() {
 #[allow(clippy::float_cmp)]
 fn qualified_facade_constructs_and_resolves_typography_foundation() {
     use stern::core::{
-        FontFeatureScale, FontFeatureToken, FontLineHeightScale, FontLineHeightToken, FontSizeScale,
-        FontSizeToken, FontWeightScale, FontWeightToken, TypographyScale, default_dark_theme,
+        FontFeatureScale, FontFeatureToken, FontLineHeightScale, FontLineHeightToken,
+        FontSizeScale, FontSizeToken, FontWeightScale, FontWeightToken, TypographyScale,
+        default_dark_theme,
     };
 
     let base = default_dark_theme();
@@ -700,10 +701,7 @@ fn qualified_facade_constructs_and_resolves_typography_foundation() {
             .get(FontLineHeightToken::Metadata),
         139.0
     );
-    assert_eq!(
-        theme.typography.weights.get(FontWeightToken::Semibold),
-        613
-    );
+    assert_eq!(theme.typography.weights.get(FontWeightToken::Semibold), 613);
     assert_eq!(
         theme.typography.features.get(FontFeatureToken::Numeric),
         "facade-tabular-numeric"

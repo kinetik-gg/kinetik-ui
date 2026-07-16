@@ -68,18 +68,13 @@ fn default_foundation_values_and_storage_types_are_exact() {
     assert_eq!(typography.sizes.get(FontSizeToken::Dialog), 16.0);
     assert_eq!(typography.sizes.get(FontSizeToken::Heading), 20.0);
 
-    assert_eq!(
-        typography.line_heights.get(FontLineHeightToken::Ui),
-        16.0
-    );
+    assert_eq!(typography.line_heights.get(FontLineHeightToken::Ui), 16.0);
     assert_eq!(
         typography.line_heights.get(FontLineHeightToken::Dense),
         15.0
     );
     assert_eq!(
-        typography
-            .line_heights
-            .get(FontLineHeightToken::Metadata),
+        typography.line_heights.get(FontLineHeightToken::Metadata),
         14.0
     );
 
@@ -106,10 +101,7 @@ fn typed_lookups_route_every_independent_sentinel() {
     let line_heights = FontLineHeightScale::new(131.0, 137.0, 139.0);
     assert_eq!(line_heights.get(FontLineHeightToken::Ui), 131.0);
     assert_eq!(line_heights.get(FontLineHeightToken::Dense), 137.0);
-    assert_eq!(
-        line_heights.get(FontLineHeightToken::Metadata),
-        139.0
-    );
+    assert_eq!(line_heights.get(FontLineHeightToken::Metadata), 139.0);
 
     let weights = FontWeightScale::new(601, 607, 613, 617);
     assert_eq!(weights.get(FontWeightToken::Regular), 601);
