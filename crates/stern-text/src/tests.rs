@@ -141,6 +141,25 @@ fn named_default_families_shape_with_bundled_fonts() {
 }
 
 #[test]
+fn named_space_grotesk_family_shapes_with_bundled_font() {
+    let mut engine = CosmicTextEngine::new();
+    let brand = engine.shape_text(&TextLayoutKey::new(
+        "Stern",
+        TextStyle::new("Space Grotesk", 20.0, 24.0),
+        200.0,
+        false,
+    ));
+
+    assert!(!brand.runs.is_empty());
+    assert!(
+        brand
+            .runs
+            .iter()
+            .all(|run| run.font.data.data() == fonts::SPACE_GROTESK_VARIABLE)
+    );
+}
+
+#[test]
 fn cosmic_text_engine_shapes_owned_glyph_runs() {
     let mut engine = CosmicTextEngine::new();
     let key = TextLayoutKey::new(
