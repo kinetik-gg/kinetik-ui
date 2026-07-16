@@ -31,6 +31,15 @@ fn space_mono_asset_authority_is_exact() {
 }
 
 #[test]
+fn space_grotesk_asset_authority_is_exact() {
+    assert_eq!(
+        fonts::SPACE_GROTESK_UPSTREAM_COMMIT,
+        "03507d024a01282884232081fc6011c09ff4e849"
+    );
+    assert_eq!(fonts::SPACE_GROTESK_VARIABLE.len(), 136_676);
+}
+
+#[test]
 fn bundled_font_database_sets_default_family_aliases() {
     let mut engine = CosmicTextEngine::new();
 
