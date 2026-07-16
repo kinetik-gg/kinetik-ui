@@ -686,3 +686,75 @@ fn row_access_geometry_callbacks_order_and_semantics_remain_application_owned() 
         original_ids
     );
 }
+
+#[test]
+fn offscreen_rows_do_not_register_layouts_and_sections_keep_generic_policy() {
+    let rows = (0..6)
+        .map(|index| {
+            PropertyGridRow::property(
+                ItemId::from_raw(80 + index),
+                format!("Virtual property {index}"),
+                0,
+            )
+        })
+        .collect::<Vec<_>>();
+    let viewport = Rect::new(0.0, 0.0, 300.0, 24.0);
+    let config = PropertyGridConfig::default().with_overscan(0);
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (output, frame) = retained_grid(
+        &mut store,
+        &mut memory,
+        &rows,
+        viewport,
+        config,
+        &wheel_input(viewport, -1_000.0),
+        &default_dark_theme(),
+    );
+    assert_eq!(output.values.len(), 1);
+    assert_eq!(output.values[0].row, ItemId::from_raw(85));
+    assert_eq!(label_text(&frame, "Virtual property 5").text, "Virtual property 5");
+    let retained_sources = store
+        .layouts()
+        .map(|entry| entry.key.text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(retained_sources, vec!["Virtual property 5"]);
+
+    let section_source = "Long section title remains on its existing generic visible path";
+    let section = PropertyGridRow::section(ItemId::from_raw(90), section_source)
+        .with_required(true);
+    let mut section_store = TextLayoutStore::new();
+    let mut section_memory = UiMemory::new();
+    let (section_output, section_frame) = retained_default(
+        &mut section_store,
+        &mut section_memory,
+        std::slice::from_ref(&section),
+    );
+    assert!(section_output.values.is_empty());
+    let section_text = label_text(&section_frame, section_source);
+    assert_eq!(
+        section_text.origin.x.to_bits(),
+        (section_output.visible_rows[0].label_rect.x + 8.0_f32).to_bits()
+    );
+    let section_layout = section_store
+        .stored_layout(section_text.layout.expect("generic retained section layout"))
+        .expect("resident section layout");
+    assert_eq!(section_layout.key.text, section_source);
+    assert_eq!(section_layout.key.overflow, TextOverflow::Visible);
+
+    let input = UiInput::default();
+    let theme = default_dark_theme();
+    let mut layoutless_memory = UiMemory::new();
+    let mut ui = Ui::new(&input, &mut layoutless_memory, &theme);
+    let _ = ui
+        .property_grid(
+            "grid",
+            BOUNDS,
+            &[section],
+            PropertyGridConfig::default(),
+            |_, _| (),
+        )
+        .expect("valid layoutless section");
+    let layoutless_frame = ui.finish_output();
+    assert_eq!(label_text(&layoutless_frame, section_source).layout, None);
+}
