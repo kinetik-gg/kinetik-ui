@@ -3,15 +3,15 @@
 use std::time::Duration;
 
 use stern_core::{
-    FrameContext, FrameOutput, PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder,
-    Primitive, Rect, ScaleFactor, SemanticRole, Size, TextPrimitive, TimeInfo, Transform, UiInput,
-    UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
+    FrameContext, FrameOutput, MouseButton, PhysicalSize, Point, PointerButtonState, PointerInput,
+    PointerOrder, Primitive, Rect, ScaleFactor, SemanticRole, Size, TextPrimitive, TimeInfo,
+    Transform, UiInput, UiInputEvent, UiMemory, Vec2, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow};
 use stern_widgets::{
-    CollectionProjectedItem, CollectionProjection, ItemId, TableColumn, TableColumnConstraints,
-    TableLayout, Ui, VirtualTableConfig, VirtualTableOutput, VirtualTableRow,
-    VirtualTableSelection, VirtualTableSelectionMode,
+    CollectionProjectedItem, CollectionProjection, ItemId, SortDirection, TableColumn,
+    TableColumnConstraints, TableLayout, TableSort, Ui, VirtualTableConfig, VirtualTableOutput,
+    VirtualTableRow, VirtualTableSelection, VirtualTableSelectionMode,
 };
 
 const BOUNDS: Rect = Rect::new(7.0, 11.0, 320.0, 88.0);
@@ -129,6 +129,17 @@ fn body_semantics<'a>(frame: &'a FrameOutput, source: &str) -> Vec<&'a stern_cor
         .collect()
 }
 
+fn exact_text<'a>(frame: &'a FrameOutput, source: &str) -> &'a TextPrimitive {
+    frame
+        .primitives
+        .iter()
+        .find_map(|primitive| match primitive {
+            Primitive::Text(text) if text.text == source => Some(text),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing text primitive for {source:?}"))
+}
+
 fn marker_count(store: &TextLayoutStore, text: &TextPrimitive) -> usize {
     store
         .stored_layout(text.layout.expect("registered body-cell label"))
@@ -161,6 +172,35 @@ fn pointer_input(point: Point, pressed: bool, released: bool) -> UiInput {
         },
         ..UiInput::default()
     }
+}
+
+fn drag_input(point: Point, pressed: bool, delta_x: f32) -> UiInput {
+    let mut input = UiInput::default();
+    if pressed {
+        input.push_event(UiInputEvent::PointerButton {
+            button: MouseButton::Primary,
+            down: true,
+            click_count: 1,
+            position: Some(point),
+        });
+    } else {
+        input.pointer.primary = PointerButtonState::new(true, false, false);
+        input.push_event(UiInputEvent::PointerMoved {
+            position: point,
+            delta: Vec2::new(delta_x, 0.0),
+        });
+    }
+    input
+}
+
+fn assert_header_visible_policy(store: &TextLayoutStore, frame: &FrameOutput, source: &str) {
+    let text = exact_text(frame, source);
+    let stored = store
+        .stored_layout(text.layout.expect("generic retained header layout"))
+        .expect("resident generic retained header layout");
+    assert_eq!(stored.key.text, source);
+    assert_eq!(stored.key.width_bits, 0.0_f32.to_bits());
+    assert_eq!(stored.key.overflow, TextOverflow::Visible);
 }
 
 fn primitives_without_layout_ids(frame: &FrameOutput) -> Vec<Primitive> {
@@ -999,4 +1039,122 @@ fn interaction_states_preserve_body_label_identity_and_layout_only_primitive_del
         ),
         accounting
     );
+}
+
+#[test]
+fn headers_remain_complete_source_visible_consumers_through_focus_sort_narrow_and_resize() {
+    let body = "Complete body-cell source stays separate from header policy";
+    let items = projection(&[1]);
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let mut selection = VirtualTableSelection::new();
+    let idle = run_table(
+        Some(&mut store),
+        &items,
+        config(BOUNDS, [119.3], VirtualTableSelectionMode::Cell),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([body]),
+    );
+    assert_header_visible_policy(&store, &idle.frame, "Header 0");
+    let body_text = exact_text(&idle.frame, body);
+    let body_layout = store
+        .stored_layout(body_text.layout.expect("retained body-cell layout"))
+        .expect("resident retained body-cell layout");
+    assert_eq!(body_layout.key.overflow, TextOverflow::EndEllipsis);
+
+    let header_id = idle.output.headers[0].response.id;
+    memory.focus(header_id);
+    let focused = run_table(
+        Some(&mut store),
+        &items,
+        config(BOUNDS, [119.3], VirtualTableSelectionMode::Cell),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([body]),
+    );
+    assert!(focused.output.headers[0].response.state.focused);
+    assert_header_visible_policy(&store, &focused.frame, "Header 0");
+
+    memory.clear_focus();
+    let mut sorted_config = config(BOUNDS, [119.3], VirtualTableSelectionMode::Cell);
+    sorted_config.layout.sort = Some(TableSort {
+        column: id(10),
+        direction: SortDirection::Ascending,
+    });
+    let sorted = run_table(
+        Some(&mut store),
+        &items,
+        sorted_config,
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([body]),
+    );
+    assert_header_visible_policy(&store, &sorted.frame, "Header 0 ↑");
+    assert_eq!(sorted.output.sort_requested, None);
+
+    let narrow = run_table(
+        Some(&mut store),
+        &items,
+        config(BOUNDS, [1.0], VirtualTableSelectionMode::Cell),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([body]),
+    );
+    assert_header_visible_policy(&store, &narrow.frame, "Header 0");
+
+    let resize_config = config(BOUNDS, [119.3], VirtualTableSelectionMode::Cell).resizable(true);
+    let resize_seed = run_table(
+        Some(&mut store),
+        &items,
+        resize_config.clone(),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([body]),
+    );
+    let handle = resize_seed.output.headers[0]
+        .resize_response
+        .expect("resize handle response");
+    let point = handle.rect.center();
+    let pressed = run_table(
+        Some(&mut store),
+        &items,
+        resize_config.clone(),
+        &mut selection,
+        &mut memory,
+        drag_input(point, true, 0.0),
+        |_| VirtualTableRow::new([body]),
+    );
+    assert!(
+        pressed.output.headers[0]
+            .resize_response
+            .expect("pressed resize response")
+            .state
+            .pressed
+    );
+    assert_header_visible_policy(&store, &pressed.frame, "Header 0");
+    let moved = run_table(
+        Some(&mut store),
+        &items,
+        resize_config,
+        &mut selection,
+        &mut memory,
+        drag_input(Point::new(point.x + 12.0, point.y), false, 12.0),
+        |_| VirtualTableRow::new([body]),
+    );
+    assert_eq!(
+        moved.output.resize_requested.map(|request| request.column),
+        Some(id(10))
+    );
+    assert_eq!(
+        moved.output.resize_requested.map(|request| request.delta),
+        Some(12.0)
+    );
+    assert_eq!(moved.output.sort_requested, None);
+    assert_header_visible_policy(&store, &moved.frame, "Header 0");
 }
