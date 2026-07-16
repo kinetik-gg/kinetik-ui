@@ -259,8 +259,18 @@ impl Ui<'_> {
     }
 
     fn paint_property_grid_text(&mut self, origin: Point, text: String, color: Color) {
+        let primitive = self.property_grid_text_primitive(origin, text, color);
+        self.primitive(primitive);
+    }
+
+    fn property_grid_text_primitive(
+        &self,
+        origin: Point,
+        text: String,
+        color: Color,
+    ) -> Primitive {
         let font = self.theme.font(TextRole::Label);
-        self.primitive(Primitive::Text(TextPrimitive {
+        Primitive::Text(TextPrimitive {
             layout: None,
             origin,
             text,
@@ -268,7 +278,7 @@ impl Ui<'_> {
             size: font.size,
             line_height: font.line_height,
             brush: Brush::Solid(color),
-        }));
+        })
     }
 
     fn push_property_grid_row_semantics(
