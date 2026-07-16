@@ -516,3 +516,56 @@ fn source_and_width_change_value_identity_while_open_only_changes_disclosure() {
         .to_bits()
     );
 }
+
+#[test]
+fn over_budget_source_rejects_custom_identity_without_store_mutation_or_source_loss() {
+    const RETAINED_PAYLOAD_CEILING: usize = 32 * 1024 * 1024;
+
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let warm_model = selected_model("Warm the stable disclosure layout");
+    let _ = retained_frame(
+        &mut store,
+        &mut memory,
+        &warm_model,
+        FIELD,
+        SelectFieldConfig::new("Choose"),
+    );
+    let len_before = store.len();
+    let bytes_before = store.retained_payload_bytes();
+    let cursor_before = store.change_cursor();
+
+    let source = "x".repeat(RETAINED_PAYLOAD_CEILING + 1);
+    let model = selected_model(&source);
+    let (output, frame) = retained_frame(
+        &mut store,
+        &mut memory,
+        &model,
+        FIELD,
+        SelectFieldConfig::new("Choose"),
+    );
+    let value = value_text(&output);
+
+    assert_eq!(value.layout, None, "custom admission must reject");
+    if let Some(final_id) = final_value_layout(&frame, &source) {
+        let stored = store
+            .stored_layout(final_id)
+            .expect("generic attachment may emit only a registered ID");
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.overflow, TextOverflow::Visible);
+    }
+    assert_eq!(store.len(), len_before);
+    assert_eq!(store.retained_payload_bytes(), bytes_before);
+    assert_eq!(store.change_cursor(), cursor_before);
+    assert_eq!(value.text, source);
+    assert_eq!(output.presentation.label, source);
+    assert_eq!(output.presentation.selected_id, Some(ITEM_ID));
+    assert_eq!(
+        output.widget.semantics[0].description.as_deref(),
+        Some(source.as_str())
+    );
+    match output.widget.semantics[0].state.value.as_ref() {
+        Some(SemanticValue::Text(value)) => assert_eq!(value, &source),
+        other => panic!("expected complete semantic text, got {other:?}"),
+    }
+}
