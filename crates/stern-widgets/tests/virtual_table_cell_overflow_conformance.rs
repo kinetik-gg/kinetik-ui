@@ -7,7 +7,7 @@ use stern_core::{
     SemanticRole, Size, TextPrimitive, TimeInfo, UiInput, UiMemory, ViewportInfo, WidgetId,
     default_dark_theme,
 };
-use stern_text::{TextLayoutStore, TextOverflow};
+use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow};
 use stern_widgets::{
     CollectionProjectedItem, CollectionProjection, ItemId, TableColumn, TableLayout, Ui,
     VirtualTableConfig, VirtualTableOutput, VirtualTableRow, VirtualTableSelection,
@@ -198,5 +198,175 @@ fn exact_prepared_cell_width_matrix_preserves_formula_bits_and_pinned_endpoints(
         } else {
             assert_eq!(label_width.to_bits(), 0.0_f32.to_bits());
         }
+    }
+}
+
+#[test]
+fn long_body_cells_in_both_selection_modes_keep_complete_source_and_one_marker() {
+    let source = "Complete virtual-table body-cell source remains intact while presentation elides";
+
+    for mode in [
+        VirtualTableSelectionMode::Row,
+        VirtualTableSelectionMode::Cell,
+    ] {
+        let items = projection(&[1]);
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let mut selection = VirtualTableSelection::new();
+        let run = run_table(
+            Some(&mut store),
+            &items,
+            config(BOUNDS, [80.0], mode),
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+            |_| VirtualTableRow::new([source]),
+        );
+        let texts = body_texts(&run.frame, source);
+        let semantics = body_semantics(&run.frame, source);
+        assert_eq!(texts.len(), 1);
+        assert_eq!(semantics.len(), 1);
+        let text = texts[0];
+        let stored = store
+            .stored_layout(text.layout.expect("explicit body-cell layout"))
+            .expect("resident body-cell layout");
+
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.style.family, text.family);
+        assert_eq!(stored.key.style.size_bits, text.size.to_bits());
+        assert_eq!(
+            stored.key.style.line_height_bits,
+            text.line_height.to_bits()
+        );
+        assert_eq!(stored.key.style.features, TextFeatureSet::NONE);
+        assert!(!stored.key.wrap);
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert!(stored.layout.is_elided());
+        assert_eq!(marker_count(&store, text), 1);
+        assert_eq!(text.text, source);
+        assert_eq!(semantics[0].label.as_deref(), Some(source));
+        assert_eq!(selection.target(), None);
+        assert_eq!(run.output.sort_requested, None);
+        assert_eq!(run.output.resize_requested, None);
+    }
+}
+
+#[test]
+fn fitting_empty_and_layoutless_body_cells_keep_complete_sources() {
+    for source in ["Fit", ""] {
+        let items = projection(&[1]);
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let mut selection = VirtualTableSelection::new();
+        let run = run_table(
+            Some(&mut store),
+            &items,
+            config(BOUNDS, [119.3], VirtualTableSelectionMode::Cell),
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+            |_| VirtualTableRow::new([source]),
+        );
+        let texts = body_texts(&run.frame, source);
+        let semantics = body_semantics(&run.frame, source);
+        assert_eq!(texts.len(), 1);
+        assert_eq!(semantics.len(), 1);
+        let stored = store
+            .stored_layout(texts[0].layout.expect("explicit fitting body-cell policy"))
+            .expect("resident fitting body-cell policy");
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert!(!stored.layout.is_elided());
+        assert_eq!(marker_count(&store, texts[0]), 0);
+        assert_eq!(texts[0].text, source);
+        assert_eq!(semantics[0].label.as_deref(), Some(source));
+    }
+
+    let source = "Layoutless table facade keeps the complete body-cell source";
+    let items = projection(&[1]);
+    let mut memory = UiMemory::new();
+    let mut selection = VirtualTableSelection::new();
+    let run = run_table(
+        None,
+        &items,
+        config(BOUNDS, [80.0], VirtualTableSelectionMode::Cell),
+        &mut selection,
+        &mut memory,
+        UiInput::default(),
+        |_| VirtualTableRow::new([source]),
+    );
+    let texts = body_texts(&run.frame, source);
+    let semantics = body_semantics(&run.frame, source);
+    assert_eq!(texts.len(), 1);
+    assert_eq!(texts[0].layout, None);
+    assert_eq!(texts[0].text, source);
+    assert_eq!(semantics.len(), 1);
+    assert_eq!(semantics[0].label.as_deref(), Some(source));
+}
+
+#[test]
+fn narrow_nonpositive_spans_and_paragraphs_keep_registered_full_source_policy() {
+    for width in [16.0_f32, 15.999, 1.0] {
+        let source = "Complete narrow table body-cell source remains present";
+        let items = projection(&[1]);
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let mut selection = VirtualTableSelection::new();
+        let run = run_table(
+            Some(&mut store),
+            &items,
+            config(BOUNDS, [width], VirtualTableSelectionMode::Cell),
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+            |_| VirtualTableRow::new([source]),
+        );
+        let text = body_texts(&run.frame, source)[0];
+        let stored = store
+            .stored_layout(text.layout.expect("registered zero-span body-cell policy"))
+            .expect("resident zero-span body-cell policy");
+        assert_eq!(stored.key.width_bits, 0.0_f32.to_bits());
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert_eq!(stored.key.text, source);
+        assert!(!stored.layout.is_elided());
+        assert_eq!(marker_count(&store, text), 0);
+        assert_eq!(text.text, source);
+        assert_eq!(
+            body_semantics(&run.frame, source)[0].label.as_deref(),
+            Some(source)
+        );
+    }
+
+    for source in [
+        "First complete line\nSecond complete line",
+        "First complete line\r\nSecond complete line",
+        "First complete paragraph\u{2029}Second complete paragraph",
+    ] {
+        let items = projection(&[1]);
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let mut selection = VirtualTableSelection::new();
+        let run = run_table(
+            Some(&mut store),
+            &items,
+            config(BOUNDS, [119.3], VirtualTableSelectionMode::Row),
+            &mut selection,
+            &mut memory,
+            UiInput::default(),
+            |_| VirtualTableRow::new([source]),
+        );
+        let text = body_texts(&run.frame, source)[0];
+        let stored = store
+            .stored_layout(text.layout.expect("registered paragraph body-cell policy"))
+            .expect("resident paragraph body-cell policy");
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert!(!stored.layout.is_elided());
+        assert_eq!(marker_count(&store, text), 0);
+        assert_eq!(text.text, source);
+        assert_eq!(
+            body_semantics(&run.frame, source)[0].label.as_deref(),
+            Some(source)
+        );
     }
 }
