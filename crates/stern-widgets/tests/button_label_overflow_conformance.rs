@@ -1,8 +1,8 @@
 //! Windowless conformance for retained standard-button label end ellipsis.
 
 use stern_core::{
-    FrameOutput, Point, Primitive, Rect, Response, SemanticRole, TextPrimitive, UiInput, UiMemory,
-    WidgetId, default_dark_theme,
+    CursorShape, FrameOutput, PlatformRequest, Point, PointerButtonState, PointerInput, Primitive,
+    Rect, Response, SemanticRole, TextPrimitive, UiInput, UiMemory, WidgetId, default_dark_theme,
 };
 use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow};
 use stern_widgets::{Ui, button};
@@ -424,5 +424,131 @@ fn hot_frames_translation_source_and_width_obey_retained_identity_boundaries() {
             .key
             .width_bits,
         first_width_bits
+    );
+}
+
+#[test]
+fn interaction_states_preserve_label_identity_and_existing_surface_order() {
+    let source = "Complete stateful button source retains one presentation identity";
+    let mut store = TextLayoutStore::new();
+
+    let mut default_memory = UiMemory::new();
+    let (default_response, default_frame) = retained_button(
+        &mut store,
+        &mut default_memory,
+        BUTTON,
+        source,
+        false,
+        &UiInput::default(),
+    );
+    let expected_id = button_text(&default_frame, source)
+        .layout
+        .expect("default button label identity");
+
+    let hover_input = UiInput {
+        pointer: PointerInput {
+            position: Some(BUTTON.center()),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    };
+    let mut hover_memory = UiMemory::new();
+    let (hover_response, hover_frame) = retained_button(
+        &mut store,
+        &mut hover_memory,
+        BUTTON,
+        source,
+        false,
+        &hover_input,
+    );
+
+    let pressed_input = UiInput {
+        pointer: PointerInput {
+            position: Some(BUTTON.center()),
+            primary: PointerButtonState::new(true, true, false),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    };
+    let mut pressed_memory = UiMemory::new();
+    let (pressed_response, pressed_frame) = retained_button(
+        &mut store,
+        &mut pressed_memory,
+        BUTTON,
+        source,
+        false,
+        &pressed_input,
+    );
+
+    let mut focused_memory = UiMemory::new();
+    focused_memory.focus(default_response.id);
+    let (focused_response, focused_frame) = retained_button(
+        &mut store,
+        &mut focused_memory,
+        BUTTON,
+        source,
+        false,
+        &UiInput::default(),
+    );
+
+    let mut disabled_memory = UiMemory::new();
+    let (disabled_response, disabled_frame) = retained_button(
+        &mut store,
+        &mut disabled_memory,
+        BUTTON,
+        source,
+        true,
+        &hover_input,
+    );
+
+    assert!(!default_response.state.hovered);
+    assert!(hover_response.state.hovered);
+    assert!(pressed_response.state.pressed);
+    assert!(focused_response.state.focused);
+    assert!(disabled_response.state.disabled);
+    assert!(!disabled_response.state.hovered);
+    assert!(!disabled_response.state.focused);
+
+    for frame in [
+        &default_frame,
+        &hover_frame,
+        &pressed_frame,
+        &focused_frame,
+        &disabled_frame,
+    ] {
+        let label = button_text(frame, source);
+        assert_eq!(label.layout, Some(expected_id));
+        assert_eq!(label.text, source);
+        assert!(matches!(frame.primitives.first(), Some(Primitive::Rect(_))));
+        assert!(matches!(frame.primitives.last(), Some(Primitive::Text(_))));
+        assert_eq!(frame.semantics.nodes().len(), 1);
+        assert_eq!(frame.semantics.nodes()[0].label.as_deref(), Some(source));
+    }
+
+    for frame in [
+        &default_frame,
+        &hover_frame,
+        &pressed_frame,
+        &disabled_frame,
+    ] {
+        assert_eq!(frame.primitives.len(), 2);
+    }
+    assert_eq!(focused_frame.primitives.len(), 4);
+    assert!(matches!(focused_frame.primitives[1], Primitive::Path(_)));
+    assert!(matches!(focused_frame.primitives[2], Primitive::Path(_)));
+    assert!(
+        hover_frame
+            .platform_requests
+            .contains(&PlatformRequest::SetCursor(CursorShape::PointingHand))
+    );
+    assert!(
+        pressed_frame
+            .platform_requests
+            .contains(&PlatformRequest::SetCursor(CursorShape::PointingHand))
+    );
+    assert!(
+        !disabled_frame
+            .platform_requests
+            .contains(&PlatformRequest::SetCursor(CursorShape::PointingHand))
     );
 }
