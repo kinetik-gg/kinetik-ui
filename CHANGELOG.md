@@ -10,6 +10,16 @@ published, or accepted as an alpha release.
 
 ### Changed
 
+- **Breaking:** Added the opaque fixed-size `TextFeatureSet` and public
+  `TextStyle::features` field. `TextStyle::new(...)` remains feature-disabled;
+  explicit `TABULAR_NUMBERS` opt-in now maps to OpenType `tnum=1` during
+  production shaping and participates in layout, cache/store, retained ID, and
+  renderer-resource identity. Deterministic bundled-Inter evidence proves
+  unequal default digit advances and equal enabled digit/changing-string
+  advances within `0.001` logical unit. `FontFeatureScale` remains the sole
+  semantic token authority, no component adopts the feature, and
+  `STERN-TYP-002` advances only to bounded Partial. See
+  `docs/typography-migration.md`.
 - **Breaking:** The semantic Brand family now resolves through the exact
   bundled Space Grotesk variable face from revision
   `03507d024a01282884232081fc6011c09ff4e849`. Qualified public
