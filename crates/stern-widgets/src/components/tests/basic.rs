@@ -619,6 +619,7 @@ fn selection_controls_keep_recipe_indicator_and_caller_bounds_across_states() {
 }
 
 #[test]
+#[allow(clippy::float_cmp)]
 fn selection_indicator_has_exact_unrounded_four_scale_transport() {
     let theme = default_dark_theme();
     let control = Rect::new(3.0, 5.0, 27.0, 19.0);
