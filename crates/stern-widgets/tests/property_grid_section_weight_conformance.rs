@@ -1,8 +1,8 @@
 //! Windowless conformance for retained property-grid section typography.
 
 use stern_core::{
-    FrameOutput, Primitive, Rect, SemanticRole, TextPrimitive, Theme, UiInput, UiMemory,
-    default_dark_theme,
+    FontWeightScale, FontWeightToken, FrameOutput, Primitive, Rect, SemanticRole, TextLayoutId,
+    TextPrimitive, TextRoleMetrics, Theme, UiInput, UiMemory, default_dark_theme,
 };
 use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow, fonts};
 use stern_widgets::{
@@ -42,6 +42,12 @@ fn text<'a>(frame: &'a FrameOutput, source: &str) -> &'a TextPrimitive {
             _ => None,
         })
         .expect("text primitive")
+}
+
+fn layout_id(frame: &FrameOutput, source: &str) -> TextLayoutId {
+    text(frame, source)
+        .layout
+        .expect("registered text layout identity")
 }
 
 #[test]
@@ -130,4 +136,150 @@ fn default_section_uses_exact_title_metrics_weight_and_selected_inter_face() {
     assert!(frame.semantics.nodes().iter().any(|node| {
         node.role == SemanticRole::Row && node.label.as_deref() == Some(property_source)
     }));
+}
+
+#[test]
+fn customized_typography_drives_title_family_metrics_and_semibold_request() {
+    let source = "Custom semantic section";
+    let mut typography = default_dark_theme().typography;
+    typography.families.ui = "Space Grotesk";
+    typography.families.brand = "Inter";
+    typography.title = TextRoleMetrics::new(17.0, 23.0);
+    typography.weights = FontWeightScale::new(410, 450, 500, 750);
+    let theme = default_dark_theme().with_typography(typography);
+    assert_eq!(theme.typography.weights.get(FontWeightToken::Semibold), 500);
+
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (output, frame) = retained_grid(
+        &mut store,
+        &mut memory,
+        &[PropertyGridRow::section(ItemId::from_raw(11), source)],
+        BOUNDS,
+        &theme,
+    );
+    let section = text(&frame, source);
+    assert_eq!(section.family, "Space Grotesk");
+    assert_ne!(section.family, theme.typography.families.brand);
+    assert_eq!(section.size.to_bits(), 17.0_f32.to_bits());
+    assert_eq!(section.line_height.to_bits(), 23.0_f32.to_bits());
+    assert_eq!(
+        section.origin.y.to_bits(),
+        (output.visible_rows[0].label_rect.y + 21.5).to_bits()
+    );
+
+    let retained = store
+        .stored_layout(layout_id(&frame, source))
+        .expect("custom retained section");
+    assert_eq!(retained.key.style.family, "Space Grotesk");
+    assert_eq!(retained.key.style.size().to_bits(), 17.0_f32.to_bits());
+    assert_eq!(
+        retained.key.style.line_height().to_bits(),
+        23.0_f32.to_bits()
+    );
+    assert_eq!(retained.key.style.weight, 500);
+    assert!(retained.layout.runs.iter().all(|run| {
+        run.font.data.data() == fonts::SPACE_GROTESK_VARIABLE && run.normalized_coords == [10_650]
+    }));
+}
+
+#[test]
+fn hot_translation_and_disabled_frames_reuse_section_identity() {
+    let source = "Stable section identity";
+    let row = PropertyGridRow::section(ItemId::from_raw(21), source);
+    let theme = default_dark_theme();
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let (_, first) = retained_grid(
+        &mut store,
+        &mut memory,
+        std::slice::from_ref(&row),
+        BOUNDS,
+        &theme,
+    );
+    let stable_id = layout_id(&first, source);
+    let stable_origin = text(&first, source).origin;
+    let stable_brush = text(&first, source).brush;
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    for _ in 0..4 {
+        let (_, hot) = retained_grid(
+            &mut store,
+            &mut memory,
+            std::slice::from_ref(&row),
+            BOUNDS,
+            &theme,
+        );
+        assert_eq!(layout_id(&hot, source), stable_id);
+        assert_eq!(
+            (
+                store.len(),
+                store.retained_payload_bytes(),
+                store.change_cursor()
+            ),
+            accounting
+        );
+    }
+
+    let translated_bounds = Rect::new(47.25, 91.5, BOUNDS.width, BOUNDS.height);
+    let (_, translated) = retained_grid(
+        &mut store,
+        &mut memory,
+        std::slice::from_ref(&row),
+        translated_bounds,
+        &theme,
+    );
+    assert_eq!(layout_id(&translated, source), stable_id);
+    assert_ne!(text(&translated, source).origin, stable_origin);
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+
+    let disabled_row = row.clone().with_disabled(true);
+    let (_, disabled) = retained_grid(&mut store, &mut memory, &[disabled_row], BOUNDS, &theme);
+    assert_eq!(layout_id(&disabled, source), stable_id);
+    assert_ne!(text(&disabled, source).brush, stable_brush);
+    assert!(
+        disabled
+            .semantics
+            .nodes()
+            .iter()
+            .any(|node| { node.label.as_deref() == Some(source) && node.state.disabled })
+    );
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+
+    let changed_source = "Changed section source";
+    let (_, changed) = retained_grid(
+        &mut store,
+        &mut memory,
+        &[PropertyGridRow::section(
+            ItemId::from_raw(21),
+            changed_source,
+        )],
+        BOUNDS,
+        &theme,
+    );
+    assert_ne!(layout_id(&changed, changed_source), stable_id);
+
+    let mut changed_typography = theme.typography;
+    changed_typography.title = TextRoleMetrics::new(15.0, 20.0);
+    let changed_theme = theme.with_typography(changed_typography);
+    let (_, restyled) = retained_grid(&mut store, &mut memory, &[row], BOUNDS, &changed_theme);
+    assert_ne!(layout_id(&restyled, source), stable_id);
 }
