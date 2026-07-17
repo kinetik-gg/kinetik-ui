@@ -237,7 +237,7 @@ fn features_and_end_ellipsis_preserve_weight_source_and_navigation_policy() {
 
 #[test]
 fn explicit_regular_is_exactly_equivalent_to_constructor_default() {
-    let default = key("Inter", 400);
+    let default = TextLayoutKey::new(SOURCE, TextStyle::new("Inter", 20.0, 24.0), 400.0, false);
     let explicit = TextLayoutKey::new(
         SOURCE,
         TextStyle::new("Inter", 20.0, 24.0).with_weight(400),
