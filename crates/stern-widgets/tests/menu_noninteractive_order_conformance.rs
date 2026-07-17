@@ -22,34 +22,20 @@ fn action(id: &str, label: &str) -> ActionDescriptor {
     ActionDescriptor::new(id, label)
 }
 
-fn disabled_action(id: &str, label: &str) -> ActionDescriptor {
-    let mut action = action(id, label);
-    action.state.enabled = false;
-    action
-}
-
-fn hidden_action(id: &str, label: &str) -> ActionDescriptor {
-    let mut action = action(id, label);
-    action.state.visible = false;
-    action
-}
-
 fn mixed_menu() -> Menu {
     let mut menu = Menu::new();
     menu.push(MenuItem::Label("Heading Match".to_owned()));
     menu.push(MenuItem::Action(action("file.open", "Open")));
     menu.push(MenuItem::Separator);
-    menu.push(MenuItem::Action(disabled_action(
-        "file.disabled",
-        "Disabled Match",
-    )));
+    let mut disabled = action("file.disabled", "Disabled Match");
+    disabled.state.enabled = false;
+    menu.push(MenuItem::Action(disabled));
     menu.push(MenuItem::Action(action("file.save", "Save")));
     menu.push(MenuItem::Label("Section Match".to_owned()));
     menu.push(MenuItem::Separator);
-    menu.push(MenuItem::Action(hidden_action(
-        "file.hidden",
-        "Hidden Match",
-    )));
+    let mut hidden = action("file.hidden", "Hidden Match");
+    hidden.state.visible = false;
+    menu.push(MenuItem::Action(hidden));
     menu.push(MenuItem::Action(action("file.share", "Share")));
     menu
 }
@@ -78,21 +64,6 @@ fn context(input: UiInput) -> FrameContext {
         input,
         TimeInfo::new(Duration::from_millis(500), Duration::from_millis(16), 1),
     )
-}
-
-fn run_frame(
-    scene: &mut OverlayScene,
-    memory: &mut UiMemory,
-    input: UiInput,
-) -> (OverlaySceneOutput, stern_core::FrameOutput) {
-    let theme = default_dark_theme();
-    let mut ui = Ui::begin_frame(context(input), memory, &theme);
-    ui.resolve_pointer_targets(|plan| {
-        scene.declare_pointer_targets(plan, PointerOrder::new(100));
-    })
-    .expect("valid pointer plan");
-    let output = ui.overlay_scene(scene);
-    (output, ui.finish_output())
 }
 
 fn pointer_input(position: Point, pressed: bool) -> UiInput {
@@ -124,7 +95,7 @@ fn key_sequence(keys: &[Key]) -> UiInput {
     }
 }
 
-fn row_id(action_id: &str) -> WidgetId {
+fn rid(action_id: &str) -> WidgetId {
     WidgetId::from_raw(OVERLAY_ID.raw())
         .child("overlay-scene")
         .child(("overlay-action", action_id))
@@ -141,7 +112,6 @@ impl ShortcutLabelLocalizer for RecordingLocalizer {
         self.0.set(self.0.get() + 1);
         Some("localized".to_owned())
     }
-
     #[allow(clippy::unnecessary_literal_bound)]
     fn separator(&self, _platform: ShortcutPlatform) -> &str {
         self.0.set(self.0.get() + 1);
@@ -149,7 +119,7 @@ impl ShortcutLabelLocalizer for RecordingLocalizer {
     }
 }
 
-fn run_observed(
+fn run(
     scene: &mut OverlayScene,
     memory: &mut UiMemory,
     input: UiInput,
@@ -171,25 +141,29 @@ fn run_observed(
     (route, output, ui.finish_output())
 }
 
-fn passive_nodes(frame: &stern_core::FrameOutput) -> Vec<(WidgetId, SemanticRole, Rect)> {
-    frame
+fn passives(frame: &stern_core::FrameOutput) -> Vec<(WidgetId, SemanticRole, Rect)> {
+    let surface = frame
         .semantics
-        .nodes()
+        .get(WidgetId::from_raw(OVERLAY_ID.raw()))
+        .expect("menu surface");
+    surface
+        .children
         .iter()
-        .filter(|node| {
-            node.role == SemanticRole::Label
-                || node.role == SemanticRole::Custom("separator".to_owned())
+        .filter_map(|id| {
+            let node = frame.semantics.get(*id).expect("surface child");
+            (node.role == SemanticRole::Label
+                || node.role == SemanticRole::Custom("separator".to_owned()))
+            .then(|| (node.id, node.role.clone(), node.bounds))
         })
-        .map(|node| (node.id, node.role.clone(), node.bounds))
         .collect()
 }
 
-fn assert_passive_isolation(
+fn assert_passive(
     route: PointerRoute,
     output: &OverlaySceneOutput,
     frame: &stern_core::FrameOutput,
 ) {
-    let passive = passive_nodes(frame);
+    let passive = passives(frame);
     assert!(!passive.is_empty());
     for (id, _, _) in &passive {
         let node = frame.semantics.get(*id).expect("passive semantics");
@@ -216,7 +190,6 @@ fn passive_rows_are_excluded_from_navigation_and_typeahead_order() {
         assert_eq!(menu.move_highlight(input), Some(ActionId::new(expected)));
         assert_eq!(menu.highlighted_visible_index(), Some(visible_index));
     }
-
     for prefix in ["heading", "section", "separator", "disabled", "hidden"] {
         menu.clear_highlight();
         let mut typeahead = TypeaheadBuffer::default();
@@ -240,25 +213,19 @@ fn passive_rows_are_excluded_from_navigation_and_typeahead_order() {
 fn passive_rows_cannot_activate_or_enqueue_actions() {
     let mut scene = menu_scene(mixed_menu());
     let mut memory = UiMemory::new();
-    let (_, initial) = run_frame(&mut scene, &mut memory, UiInput::default());
-    let passive_rows = initial
-        .semantics
-        .nodes()
-        .iter()
-        .filter(|node| {
-            node.role == stern_core::SemanticRole::Label
-                || node.role == stern_core::SemanticRole::Custom("separator".to_owned())
-        })
-        .map(|node| (node.id, node.bounds.center()))
-        .collect::<Vec<_>>();
+    let (_, _, initial) = run(&mut scene, &mut memory, UiInput::default(), None);
+    let passive_rows = passives(&initial);
     assert_eq!(passive_rows.len(), 4);
-
-    let focused = row_id("file.save");
+    let focused = rid("file.save");
     memory.focus(focused);
-    for (passive_id, center) in passive_rows {
+    for (passive_id, _, bounds) in passive_rows {
         for pressed in [true, false] {
-            let (output, frame) =
-                run_frame(&mut scene, &mut memory, pointer_input(center, pressed));
+            let (_, output, frame) = run(
+                &mut scene,
+                &mut memory,
+                pointer_input(bounds.center(), pressed),
+                None,
+            );
             assert_eq!(memory.focused(), Some(focused));
             assert!(output.intents.is_empty());
             assert!(frame.actions.is_empty());
@@ -270,11 +237,11 @@ fn passive_rows_cannot_activate_or_enqueue_actions() {
             }));
         }
     }
-
-    let (output, mut frame) = run_frame(
+    let (_, output, mut frame) = run(
         &mut scene,
         &mut memory,
         key_sequence(&[Key::End, Key::Enter]),
+        None,
     );
     let expected = ActionInvocation::new(
         ActionId::new("file.share"),
@@ -291,33 +258,46 @@ fn passive_rows_cannot_activate_or_enqueue_actions() {
 #[test]
 fn passive_rows_have_no_pointer_targets_responses_or_semantic_actions() {
     let mut scene = menu_scene(mixed_menu());
-    let (_, output, frame) =
-        run_observed(&mut scene, &mut UiMemory::new(), UiInput::default(), None);
-    assert_passive_isolation(PointerRoute::Blocked, &output, &frame);
+    let (_, output, frame) = run(&mut scene, &mut UiMemory::new(), UiInput::default(), None);
+    assert_passive(PointerRoute::Blocked, &output, &frame);
     let surface = frame
         .semantics
         .get(WidgetId::from_raw(73))
         .expect("surface");
     assert_eq!(surface.children.len(), 8);
-    let enabled = [
-        row_id("file.open"),
-        row_id("file.save"),
-        row_id("file.share"),
-    ];
+    let read = surface
+        .children
+        .iter()
+        .map(|id| {
+            let node = frame.semantics.get(*id).expect("child");
+            format!("{:?}:{}", node.role, node.label.as_deref().unwrap_or(""))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        read,
+        [
+            "Label:Heading Match",
+            "MenuItem:Open",
+            "Custom(\"separator\"):Separator",
+            "MenuItem:Disabled Match",
+            "MenuItem:Save",
+            "Label:Section Match",
+            "Custom(\"separator\"):Separator",
+            "MenuItem:Share"
+        ]
+    );
+    let enabled = [rid("file.open"), rid("file.save"), rid("file.share")];
     for child in &surface.children {
         let node = frame.semantics.get(*child).expect("child semantics");
         assert_eq!(node.focusable, enabled.contains(child));
-        if enabled.contains(child) {
-            assert!(node.actions.iter().any(|action| {
-                matches!(
-                    action.kind,
-                    SemanticActionKind::Invoke | SemanticActionKind::Open
-                )
-            }));
-        } else {
-            assert!(node.actions.is_empty());
-        }
-        let (route, probe, _) = run_observed(
+        let operates = node.actions.iter().any(|action| {
+            matches!(
+                action.kind,
+                SemanticActionKind::Invoke | SemanticActionKind::Open
+            )
+        });
+        assert_eq!(operates, enabled.contains(child));
+        let (route, probe, _) = run(
             &mut scene,
             &mut UiMemory::new(),
             pointer_input(node.bounds.center(), true),
@@ -360,13 +340,13 @@ fn legacy_and_presented_paths_preserve_passive_scene_isolation() {
     let mut legacy_memory = UiMemory::new();
     let mut presented_memory = UiMemory::new();
     let localizer = RecordingLocalizer(Cell::new(0));
-    let (legacy_route, legacy_output, legacy_frame) = run_observed(
+    let (legacy_route, legacy_output, legacy_frame) = run(
         &mut legacy_scene,
         &mut legacy_memory,
         UiInput::default(),
         None,
     );
-    let (presented_route, presented_output, presented_frame) = run_observed(
+    let (presented_route, presented_output, presented_frame) = run(
         &mut presented_scene,
         &mut presented_memory,
         UiInput::default(),
@@ -376,12 +356,9 @@ fn legacy_and_presented_paths_preserve_passive_scene_isolation() {
     assert_eq!(legacy_output, presented_output);
     assert_eq!(legacy_frame.semantics, presented_frame.semantics);
     assert_eq!(legacy_memory.focused(), presented_memory.focused());
-    assert_eq!(
-        passive_nodes(&legacy_frame),
-        passive_nodes(&presented_frame)
-    );
-    assert_passive_isolation(legacy_route, &legacy_output, &legacy_frame);
-    assert_passive_isolation(presented_route, &presented_output, &presented_frame);
+    assert_eq!(passives(&legacy_frame), passives(&presented_frame));
+    assert_passive(legacy_route, &legacy_output, &legacy_frame);
+    assert_passive(presented_route, &presented_output, &presented_frame);
     assert!(localizer.0.get() > 0);
     assert!(presented_frame.primitives.iter().any(
         |primitive| matches!(primitive, Primitive::Text(text) if text.text.contains("localized"))
@@ -392,11 +369,11 @@ fn legacy_and_presented_paths_preserve_passive_scene_isolation() {
             .iter()
             .any(|primitive| matches!(primitive, Primitive::Text(text) if text.text == "›"))
     );
-    for (_, _, bounds) in passive_nodes(&legacy_frame) {
+    for (_, _, bounds) in passives(&legacy_frame) {
         let input = pointer_input(bounds.center(), true);
         let (legacy_route, legacy_output, legacy_frame) =
-            run_observed(&mut legacy_scene, &mut legacy_memory, input.clone(), None);
-        let (presented_route, presented_output, presented_frame) = run_observed(
+            run(&mut legacy_scene, &mut legacy_memory, input.clone(), None);
+        let (presented_route, presented_output, presented_frame) = run(
             &mut presented_scene,
             &mut presented_memory,
             input,
@@ -406,6 +383,8 @@ fn legacy_and_presented_paths_preserve_passive_scene_isolation() {
         assert_eq!(legacy_route, presented_route);
         assert_eq!(legacy_output, presented_output);
         assert_eq!(legacy_frame.semantics, presented_frame.semantics);
+        assert_eq!(legacy_memory.focused(), presented_memory.focused());
+        assert!(legacy_frame.actions.is_empty() && presented_frame.actions.is_empty());
     }
 }
 
@@ -427,24 +406,47 @@ fn repeated_evaluation_and_visibility_changes_preserve_passive_identity_and_orde
         panic!("menu surface");
     };
     overlay.menu.replace_items(items(false));
-    let final_id = row_id("file.final");
+    let final_id = rid("file.final");
     let mut memory = UiMemory::new();
     memory.focus(final_id);
-    let (route_a, output_a, frame_a) =
-        run_observed(&mut scene, &mut memory, UiInput::default(), None);
-    let (route_b, output_b, frame_b) =
-        run_observed(&mut scene, &mut memory, UiInput::default(), None);
+    let (route_a, output_a, frame_a) = run(&mut scene, &mut memory, UiInput::default(), None);
+    let (route_b, output_b, frame_b) = run(&mut scene, &mut memory, UiInput::default(), None);
     assert_eq!(frame_a.semantics, frame_b.semantics);
     assert_eq!(output_a, output_b);
-    assert_eq!(passive_nodes(&frame_a), passive_nodes(&frame_b));
+    assert_eq!(passives(&frame_a), passives(&frame_b));
+    let old_center = frame_b
+        .semantics
+        .get(final_id)
+        .expect("final action")
+        .bounds
+        .center();
+    let (target_route, target_output, target_frame) = run(
+        &mut scene,
+        &mut UiMemory::new(),
+        pointer_input(old_center, true),
+        None,
+    );
+    assert_eq!(target_route, PointerRoute::Target(final_id));
+    assert!(
+        target_output
+            .responses
+            .iter()
+            .any(|response| response.id == final_id)
+    );
+    assert_passive(target_route, &target_output, &target_frame);
     let OverlaySceneSurface::Menu { overlay, .. } = &mut scene.surfaces_mut()[0] else {
         panic!("menu surface");
     };
     overlay.menu.replace_items(items(true));
-    let (route_c, output_c, frame_c) =
-        run_observed(&mut scene, &mut memory, UiInput::default(), None);
-    let before = passive_nodes(&frame_b);
-    let after = passive_nodes(&frame_c);
+    let (route_c, output_c, frame_c) = run(
+        &mut scene,
+        &mut memory,
+        pointer_input(old_center, true),
+        None,
+    );
+    assert_ne!(route_c, PointerRoute::Target(final_id));
+    let before = passives(&frame_b);
+    let after = passives(&frame_c);
     assert_eq!(
         before
             .iter()
@@ -462,10 +464,11 @@ fn repeated_evaluation_and_visibility_changes_preserve_passive_identity_and_orde
     for (route, output, frame) in [
         (route_a, &output_a, &frame_a),
         (route_b, &output_b, &frame_b),
+        (target_route, &target_output, &target_frame),
         (route_c, &output_c, &frame_c),
     ] {
-        assert_passive_isolation(route, output, frame);
-        assert!(!passive_nodes(frame).iter().any(|row| row.0 == final_id));
+        assert_passive(route, output, frame);
+        assert!(!passives(frame).iter().any(|row| row.0 == final_id));
     }
     assert_eq!(memory.focused(), Some(final_id));
     assert_eq!(
