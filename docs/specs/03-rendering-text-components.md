@@ -819,7 +819,7 @@ semantic outer bounds remain caller-owned, while registered and fallback
 primitives remain contained in the public medium-icon optical box. Idle,
 hover, press, and disabled presentation do not move those bounds. Explicit
 accessible names and the semantic invoke declaration remain independent of
-vector identity, vector content, missing fallback, and bitmap content.
+vector identity, vector content, missing fallback, and bitmap-backed presentation.
 
 This advances only `STERN-ICON-COMP-002` and `STERN-ICON-COMP-004` to bounded
 Partial automated headless evidence; Candidate remains Candidate and nothing

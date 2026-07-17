@@ -101,6 +101,15 @@ fn fresh_frame(icons: &IconLibrary, input: &UiInput, disabled: bool) -> (Respons
     render_frame(icons, input, &mut UiMemory::new(), disabled)
 }
 
+fn pointer_cycle(icons: &IconLibrary) -> (Response, FrameOutput, FrameOutput) {
+    let mut memory = UiMemory::new();
+    let press = pointer_input(true, true, false);
+    let (_, pressed) = render_frame(icons, &press, &mut memory, false);
+    let release = pointer_input(false, false, true);
+    let (released, finished) = render_frame(icons, &release, &mut memory, false);
+    (released, pressed, finished)
+}
+
 fn assert_outer_contract(output: &WidgetOutput) {
     let response = output.response.expect("icon response");
     assert_eq!(response.id, widget_id());
@@ -313,23 +322,31 @@ fn icon_presentation_never_queues_an_action_without_activation() {
         vec![PlatformRequest::SetCursor(CursorShape::PointingHand)]
     );
     assert!(registered_hover_frame.actions.is_empty());
+    assert!(missing_hover_frame.actions.is_empty());
 
     let mut pointer_memory = UiMemory::new();
-    let (_, pressed_frame) = render_frame(
+    let (_, down) = render_frame(
         &registered,
         &pointer_input(true, true, false),
         &mut pointer_memory,
         false,
     );
-    let (released, released_frame) = render_frame(
+    let (up, finished) = render_frame(
         &registered,
         &pointer_input(false, false, true),
         &mut pointer_memory,
         false,
     );
-    assert!(released.clicked);
-    assert!(!released.keyboard_activated);
-    assert!(pressed_frame.actions.is_empty() && released_frame.actions.is_empty());
+    assert!(up.clicked);
+    assert!(!up.keyboard_activated);
+    assert!(down.actions.is_empty() && finished.actions.is_empty());
+    let fallback = pointer_cycle(&missing);
+    assert_eq!(fallback.0.clicked, up.clicked);
+    assert_eq!(fallback.0.keyboard_activated, up.keyboard_activated);
+    assert_eq!(fallback.1.platform_requests, down.platform_requests);
+    assert_eq!(fallback.2.platform_requests, finished.platform_requests);
+    assert_eq!(fallback.1.actions, down.actions);
+    assert_eq!(fallback.2.actions, finished.actions);
 
     let mut disabled_memory = UiMemory::new();
     let (_, disabled_press_frame) = render_frame(
