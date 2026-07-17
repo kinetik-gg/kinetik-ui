@@ -142,6 +142,7 @@ impl ShortcutLabelLocalizer for RecordingLocalizer {
         Some("localized".to_owned())
     }
 
+    #[allow(clippy::unnecessary_literal_bound)]
     fn separator(&self, _platform: ShortcutPlatform) -> &str {
         self.0.set(self.0.get() + 1);
         "+"
@@ -454,8 +455,8 @@ fn repeated_evaluation_and_visibility_changes_preserve_passive_identity_and_orde
     assert_eq!(before[0].2, after[0].2);
     for index in 1..before.len() {
         assert_eq!(
-            before[index].2.y - scene.metrics().row_height,
-            after[index].2.y
+            (before[index].2.y - scene.metrics().row_height).to_bits(),
+            after[index].2.y.to_bits()
         );
     }
     for (route, output, frame) in [
