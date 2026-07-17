@@ -383,8 +383,10 @@ controls are unchanged.
 Admitted nonpositive-width and multiline requests retain a complete-source
 `EndEllipsis` key and ID but shape visibly without a marker. Actual store
 rejection falls through to complete-source generic visible or layoutless
-attachment. Section titles retain their generic visible/layoutless behavior
-and existing `label_rect.x + 8` origin. This is a prerelease breaking rendering
+attachment. Admitted section titles use the separately documented retained
+Title + Semibold path; no-store or rejected generic fallback stays
+complete-source Regular at the existing `label_rect.x + 8` origin. This is a
+prerelease breaking rendering
 policy change without a public signature or export change. Registered
 property-label-to-Vello CPU evidence at `1.0`, `1.25`, `1.5`, and `2.0` proves
 resource/topology transport and separate help/status glyphs, not pixels,
