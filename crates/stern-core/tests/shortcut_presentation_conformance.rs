@@ -1,6 +1,6 @@
 //! Deterministic conformance evidence for shortcut presentation policy.
 
-use stern_core::{Key, Modifiers, Shortcut, ShortcutPlatform};
+use stern_core::{Key, Modifiers, PhysicalKey, Shortcut, ShortcutPlatform};
 
 const PLATFORMS: [ShortcutPlatform; 3] = [
     ShortcutPlatform::Windows,
@@ -10,6 +10,10 @@ const PLATFORMS: [ShortcutPlatform; 3] = [
 
 fn logical(key: Key) -> Shortcut {
     Shortcut::new(Modifiers::default(), key)
+}
+
+fn physical(key: PhysicalKey) -> Shortcut {
+    Shortcut::physical(Modifiers::default(), key)
 }
 
 fn assert_labels(shortcut: &Shortcut, expected: [Option<&str>; 3]) {
@@ -105,5 +109,159 @@ fn logical_character_labels_normalize_only_one_ascii_letter() {
 
     for (source, expected) in cases {
         assert_labels(&logical(Key::Character(source.into())), [expected; 3]);
+    }
+}
+
+#[test]
+fn physical_letters_and_bounded_numbers_have_exact_labels() {
+    let letters = [
+        PhysicalKey::KeyA,
+        PhysicalKey::KeyB,
+        PhysicalKey::KeyC,
+        PhysicalKey::KeyD,
+        PhysicalKey::KeyE,
+        PhysicalKey::KeyF,
+        PhysicalKey::KeyG,
+        PhysicalKey::KeyH,
+        PhysicalKey::KeyI,
+        PhysicalKey::KeyJ,
+        PhysicalKey::KeyK,
+        PhysicalKey::KeyL,
+        PhysicalKey::KeyM,
+        PhysicalKey::KeyN,
+        PhysicalKey::KeyO,
+        PhysicalKey::KeyP,
+        PhysicalKey::KeyQ,
+        PhysicalKey::KeyR,
+        PhysicalKey::KeyS,
+        PhysicalKey::KeyT,
+        PhysicalKey::KeyU,
+        PhysicalKey::KeyV,
+        PhysicalKey::KeyW,
+        PhysicalKey::KeyX,
+        PhysicalKey::KeyY,
+        PhysicalKey::KeyZ,
+    ];
+    for (key, label) in letters.into_iter().zip('A'..='Z') {
+        let expected = label.to_string();
+        for platform in PLATFORMS {
+            assert_eq!(
+                physical(key).english_label(platform),
+                Some(expected.clone())
+            );
+        }
+    }
+
+    for number in 0..=9 {
+        for platform in PLATFORMS {
+            assert_eq!(
+                physical(PhysicalKey::Digit(number)).english_label(platform),
+                Some(number.to_string())
+            );
+            assert_eq!(
+                physical(PhysicalKey::NumpadDigit(number)).english_label(platform),
+                Some(format!("Numpad {number}"))
+            );
+        }
+    }
+    for number in [10, u8::MAX] {
+        assert_labels(&physical(PhysicalKey::Digit(number)), [None; 3]);
+        assert_labels(&physical(PhysicalKey::NumpadDigit(number)), [None; 3]);
+    }
+}
+
+#[test]
+fn every_other_physical_key_has_exact_platform_label_or_rejection() {
+    let cases = [
+        (
+            PhysicalKey::Enter,
+            [Some("Enter"), Some("Return"), Some("Enter")],
+        ),
+        (
+            PhysicalKey::NumpadEnter,
+            [
+                Some("Numpad Enter"),
+                Some("Numpad Return"),
+                Some("Numpad Enter"),
+            ],
+        ),
+        (PhysicalKey::Escape, [Some("Esc"); 3]),
+        (PhysicalKey::Tab, [Some("Tab"); 3]),
+        (PhysicalKey::Space, [Some("Space"); 3]),
+        (
+            PhysicalKey::Backspace,
+            [Some("Backspace"), Some("Delete"), Some("Backspace")],
+        ),
+        (
+            PhysicalKey::Delete,
+            [Some("Delete"), Some("Forward Delete"), Some("Delete")],
+        ),
+        (PhysicalKey::Insert, [Some("Insert"); 3]),
+        (PhysicalKey::Home, [Some("Home"); 3]),
+        (PhysicalKey::End, [Some("End"); 3]),
+        (PhysicalKey::PageUp, [Some("Page Up"); 3]),
+        (PhysicalKey::PageDown, [Some("Page Down"); 3]),
+        (PhysicalKey::ArrowLeft, [Some("Left"); 3]),
+        (PhysicalKey::ArrowRight, [Some("Right"); 3]),
+        (PhysicalKey::ArrowUp, [Some("Up"); 3]),
+        (PhysicalKey::ArrowDown, [Some("Down"); 3]),
+        (PhysicalKey::Function(1), [Some("F1"); 3]),
+        (PhysicalKey::Function(u8::MAX), [Some("F255"); 3]),
+        (PhysicalKey::Function(0), [None; 3]),
+        (PhysicalKey::Minus, [Some("-"); 3]),
+        (PhysicalKey::Equal, [Some("="); 3]),
+        (PhysicalKey::BracketLeft, [Some("["); 3]),
+        (PhysicalKey::BracketRight, [Some("]"); 3]),
+        (PhysicalKey::Backslash, [Some("\\"); 3]),
+        (PhysicalKey::Semicolon, [Some(";"); 3]),
+        (PhysicalKey::Quote, [Some("'"); 3]),
+        (PhysicalKey::Backquote, [Some("`"); 3]),
+        (PhysicalKey::Comma, [Some(","); 3]),
+        (PhysicalKey::Period, [Some("."); 3]),
+        (PhysicalKey::Slash, [Some("/"); 3]),
+        (PhysicalKey::NumpadAdd, [Some("Numpad +"); 3]),
+        (PhysicalKey::NumpadSubtract, [Some("Numpad -"); 3]),
+        (PhysicalKey::NumpadMultiply, [Some("Numpad *"); 3]),
+        (PhysicalKey::NumpadDivide, [Some("Numpad /"); 3]),
+        (PhysicalKey::NumpadDecimal, [Some("Numpad ."); 3]),
+        (PhysicalKey::ShiftLeft, [Some("Left Shift"); 3]),
+        (PhysicalKey::ShiftRight, [Some("Right Shift"); 3]),
+        (
+            PhysicalKey::ControlLeft,
+            [Some("Left Ctrl"), Some("Left Control"), Some("Left Ctrl")],
+        ),
+        (
+            PhysicalKey::ControlRight,
+            [
+                Some("Right Ctrl"),
+                Some("Right Control"),
+                Some("Right Ctrl"),
+            ],
+        ),
+        (
+            PhysicalKey::AltLeft,
+            [Some("Left Alt"), Some("Left Option"), Some("Left Alt")],
+        ),
+        (
+            PhysicalKey::AltRight,
+            [Some("Right Alt"), Some("Right Option"), Some("Right Alt")],
+        ),
+        (
+            PhysicalKey::SuperLeft,
+            [Some("Left Win"), Some("Left Command"), Some("Left Super")],
+        ),
+        (
+            PhysicalKey::SuperRight,
+            [
+                Some("Right Win"),
+                Some("Right Command"),
+                Some("Right Super"),
+            ],
+        ),
+        (PhysicalKey::Unidentified, [None; 3]),
+    ];
+
+    for (key, expected) in cases {
+        assert_labels(&physical(key), expected);
     }
 }
