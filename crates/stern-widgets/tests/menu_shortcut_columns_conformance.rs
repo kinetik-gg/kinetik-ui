@@ -5,15 +5,15 @@ use std::{cell::RefCell, time::Duration};
 use stern_core::{
     ActionContext, ActionDescriptor, ActionIcon, ActionSource, FrameContext, Key, KeyEvent,
     KeyState, KeyboardInput, Modifiers, PhysicalSize, Point, PointerButtonState, PointerInput,
-    PointerOrder, Primitive, Rect, Shortcut, ShortcutLabelLocalizer, ShortcutLabelToken,
-    ShortcutModifier, ShortcutPlatform, Size, TextPrimitive, TimeInfo, UiInput, UiMemory,
-    ViewportInfo, WidgetId, default_dark_theme,
+    PointerOrder, Primitive, Rect, SemanticActionKind, Shortcut, ShortcutLabelLocalizer,
+    ShortcutLabelToken, ShortcutModifier, ShortcutPlatform, Size, TextPrimitive, TimeInfo, UiInput,
+    UiMemory, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_widgets::{
     CommandPaletteOverlay, DropdownItem, DropdownItemId, DropdownModel, DropdownOverlay, Menu,
     MenuItem, MenuOverlay, ModalAction, ModalActionRole, ModalDialog, ModalDialogOverlay,
-    OverlayDismissal, OverlayEntry, OverlayId, OverlayKind, OverlayScene, OverlaySceneMetrics,
-    OverlaySceneOutput, OverlaySceneSurface, Ui,
+    OverlayDismissal, OverlayEntry, OverlayId, OverlayKind, OverlayScene, OverlaySceneIntent,
+    OverlaySceneMetrics, OverlaySceneOutput, OverlaySceneSurface, Ui,
 };
 
 const SURFACE_RECT: Rect = Rect::new(20.0, 20.0, 280.0, 184.0);
@@ -116,6 +116,29 @@ fn action_with_shortcut(id: &str, label: &str, shortcut: Shortcut) -> ActionDesc
     action
 }
 
+fn checked_submenu_fixture() -> (Menu, ActionDescriptor) {
+    let mut trigger =
+        action_with_shortcut("menu.checked-submenu", "Checked submenu", shortcut("s"));
+    trigger.state.checked = Some(true);
+    let expected = trigger.clone();
+    let mut menu = Menu::new();
+    menu.push_submenu(
+        trigger,
+        Menu::from_actions([ActionDescriptor::new("submenu.child", "Child")]),
+    );
+    (menu, expected)
+}
+
+fn only_menu_descriptor(scene: &OverlayScene) -> &ActionDescriptor {
+    let Some(OverlaySceneSurface::Menu { overlay, .. }) = scene.surfaces().first() else {
+        panic!("menu surface");
+    };
+    let Some(MenuItem::Action(action)) = overlay.visible_items_iter().next() else {
+        panic!("menu action");
+    };
+    action
+}
+
 fn menu_scene(rect: Rect, menu: Menu) -> OverlayScene {
     let mut scene = OverlayScene::new();
     scene.push(OverlaySceneSurface::menu(
@@ -185,6 +208,24 @@ fn text_primitives(frame: &stern_core::FrameOutput) -> Vec<&TextPrimitive> {
         .collect()
 }
 
+fn text_contents(frame: &stern_core::FrameOutput) -> Vec<&str> {
+    text_primitives(frame)
+        .into_iter()
+        .map(|text| text.text.as_str())
+        .collect()
+}
+
+fn declaration_shape(source: &str, start: &str, end: &str) -> String {
+    let source = source.replace("\r\n", "\n");
+    let (_, tail) = source.split_once(start).expect("declaration start");
+    let (body, _) = tail.split_once(end).expect("declaration end");
+    format!("{start}{body}")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("///"))
+        .collect()
+}
+
 fn mixed_menu() -> (Menu, Vec<Shortcut>) {
     let primary = shortcut("p");
     let icon = shortcut("i");
@@ -251,7 +292,7 @@ fn key_sequence(keys: &[Key]) -> UiInput {
 }
 
 #[test]
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::float_cmp, clippy::too_many_lines)]
 fn wide_mixed_menu_emits_stable_clipped_columns_and_decorative_semantics() {
     let (menu, eligible_shortcuts) = mixed_menu();
     let mut scene = menu_scene(SURFACE_RECT, menu);
@@ -264,7 +305,6 @@ fn wide_mixed_menu_emits_stable_clipped_columns_and_decorative_semantics() {
         ShortcutPlatform::Windows,
         &localizer,
     );
-
     assert_eq!(
         scene, original_scene,
         "presentation does not mutate descriptors"
@@ -278,7 +318,6 @@ fn wide_mixed_menu_emits_stable_clipped_columns_and_decorative_semantics() {
             .collect::<Vec<_>>(),
         [24.0, 52.0, 80.0, 108.0].map(|y| Rect::new(24.0, y, 272.0, 28.0))
     );
-
     let texts = text_primitives(&frame);
     assert_eq!(texts.len(), 11);
     let label_texts = texts
@@ -317,7 +356,6 @@ fn wide_mixed_menu_emits_stable_clipped_columns_and_decorative_semantics() {
     );
     assert!(texts.iter().all(|text| text.text != "symbolic-save-icon"));
     assert!(texts.iter().all(|text| text.text != "Hidden"));
-
     let begins = frame
         .primitives
         .iter()
@@ -344,7 +382,6 @@ fn wide_mixed_menu_emits_stable_clipped_columns_and_decorative_semantics() {
             .count(),
         4
     );
-
     let mut clip_stack = Vec::new();
     for primitive in &frame.primitives {
         match primitive {
@@ -362,7 +399,6 @@ fn wide_mixed_menu_emits_stable_clipped_columns_and_decorative_semantics() {
         }
     }
     assert!(clip_stack.is_empty());
-
     let surface = frame
         .semantics
         .get(WidgetId::from_raw(41))
@@ -406,7 +442,6 @@ fn wide_mixed_menu_emits_stable_clipped_columns_and_decorative_semantics() {
         })
         .collect::<Vec<_>>();
     assert_eq!(separator.len(), 1);
-
     let mut expected_callbacks = Vec::new();
     for shortcut in &eligible_shortcuts {
         let direct = RecordingLocalizer::new("::", Failure::None);
@@ -418,7 +453,6 @@ fn wide_mixed_menu_emits_stable_clipped_columns_and_decorative_semantics() {
         expected_callbacks.extend(direct.callbacks());
     }
     assert_eq!(localizer.callbacks(), expected_callbacks);
-
     let repeat_localizer = RecordingLocalizer::new("::", Failure::None);
     let (_, repeated_frame) = run_presented(
         &mut scene,
@@ -518,13 +552,7 @@ fn rejected_or_empty_tokens_fail_closed_without_separator_or_routing_changes() {
         assert_eq!(scene, before);
         assert_eq!(output.responses.len(), 1);
         assert_eq!(output.responses[0].rect, Rect::new(24.0, 24.0, 272.0, 28.0));
-        assert_eq!(
-            text_primitives(&frame)
-                .iter()
-                .map(|text| text.text.as_str())
-                .collect::<Vec<_>>(),
-            ["Rejected shortcut"]
-        );
+        assert_eq!(text_contents(&frame), ["Rejected shortcut"]);
         let row_id = WidgetId::from_raw(41)
             .child("overlay-scene")
             .child(("overlay-action", "menu.rejected"));
@@ -544,13 +572,9 @@ fn rejected_or_empty_tokens_fail_closed_without_separator_or_routing_changes() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn narrow_rows_and_non_menu_surfaces_remain_value_equal_to_legacy_presentation() {
-    let shortcut = shortcut("n");
-    let narrow_menu = Menu::from_actions([action_with_shortcut(
-        "menu.narrow",
-        "Narrow",
-        shortcut.clone(),
-    )]);
+    let (narrow_menu, _) = checked_submenu_fixture();
     let mut legacy_scene = menu_scene(Rect::new(20.0, 20.0, 272.0, 40.0), narrow_menu.clone());
     let mut presented_scene = legacy_scene.clone();
     let (legacy_output, legacy_frame) =
@@ -566,20 +590,15 @@ fn narrow_rows_and_non_menu_surfaces_remain_value_equal_to_legacy_presentation()
     assert!(localizer.callbacks().is_empty());
     assert_eq!(presented_output, legacy_output);
     assert_eq!(presented_frame, legacy_frame);
-    assert!(
-        text_primitives(&presented_frame)
-            .iter()
-            .all(|text| text.text != "›")
-    );
-
+    assert_eq!(text_contents(&presented_frame), ["Checked submenu"]);
     let below = f32::from_bits(272.0_f32.to_bits() - 1);
     for width in [below, 271.0, 120.0] {
         let metrics = OverlaySceneMetrics {
             inset: 0.0,
             ..OverlaySceneMetrics::default()
         };
-        let mut scene = OverlayScene::with_metrics(metrics);
-        scene.push(OverlaySceneSurface::menu(
+        let mut presented_scene = OverlayScene::with_metrics(metrics);
+        presented_scene.push(OverlaySceneSurface::menu(
             "Narrow",
             MenuOverlay::new(
                 OverlayEntry::new(
@@ -592,17 +611,23 @@ fn narrow_rows_and_non_menu_surfaces_remain_value_equal_to_legacy_presentation()
                 ActionContext::Global,
             ),
         ));
+        let mut legacy_scene = presented_scene.clone();
+        let (legacy_output, legacy_frame) =
+            run_legacy(&mut legacy_scene, &mut UiMemory::new(), UiInput::default());
         let localizer = RecordingLocalizer::new("::", Failure::None);
-        let (_, frame) = run_presented(
-            &mut scene,
+        let (presented_output, presented_frame) = run_presented(
+            &mut presented_scene,
             &mut UiMemory::new(),
             UiInput::default(),
             ShortcutPlatform::Linux,
             &localizer,
         );
         assert!(localizer.callbacks().is_empty());
+        assert_eq!(presented_output, legacy_output);
+        assert_eq!(presented_frame, legacy_frame);
+        assert_eq!(text_contents(&presented_frame), ["Checked submenu"]);
         assert_eq!(
-            frame
+            presented_frame
                 .primitives
                 .iter()
                 .filter(|primitive| matches!(primitive, Primitive::ClipBegin { .. }))
@@ -632,7 +657,11 @@ fn narrow_rows_and_non_menu_surfaces_remain_value_equal_to_legacy_presentation()
                 OverlayKind::CommandPalette,
                 Rect::new(200.0, 10.0, 200.0, 70.0),
             ),
-            &[action_with_shortcut("palette.action", "Palette", shortcut)],
+            &[action_with_shortcut(
+                "palette.action",
+                "Palette",
+                shortcut("n"),
+            )],
             ActionContext::Global,
         ),
     ));
@@ -677,18 +706,31 @@ fn narrow_rows_and_non_menu_surfaces_remain_value_equal_to_legacy_presentation()
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn presentation_preserves_full_row_pointer_keyboard_and_fifo_action_routing() {
-    let (menu, _) = mixed_menu();
+    let (menu, expected_descriptor) = checked_submenu_fixture();
     let mut legacy_scene = menu_scene(SURFACE_RECT, menu);
     let mut presented_scene = legacy_scene.clone();
     let mut legacy_memory = UiMemory::new();
     let mut presented_memory = UiMemory::new();
     let localizer = RecordingLocalizer::new("::", Failure::None);
+    let expected_shortcut = expected_descriptor
+        .shortcut
+        .as_ref()
+        .expect("submenu shortcut")
+        .localized_label(
+            ShortcutPlatform::Windows,
+            &RecordingLocalizer::new("::", Failure::None),
+        )
+        .expect("localized submenu shortcut");
+    let row_id = WidgetId::from_raw(41)
+        .child("overlay-scene")
+        .child(("overlay-action", "menu.checked-submenu"));
     for pressed in [true, false] {
-        let input = pointer_input(Point::new(200.0, 30.0), pressed);
-        let (legacy_output, mut legacy_frame) =
+        let input = pointer_input(Point::new(280.0, 30.0), pressed);
+        let (legacy_output, legacy_frame) =
             run_legacy(&mut legacy_scene, &mut legacy_memory, input.clone());
-        let (presented_output, mut presented_frame) = run_presented(
+        let (presented_output, presented_frame) = run_presented(
             &mut presented_scene,
             &mut presented_memory,
             input,
@@ -697,16 +739,88 @@ fn presentation_preserves_full_row_pointer_keyboard_and_fifo_action_routing() {
         );
         assert_eq!(presented_output.intents, legacy_output.intents);
         assert_eq!(presented_output.responses, legacy_output.responses);
-        assert_eq!(presented_frame.actions, legacy_frame.actions);
+        assert_eq!(presented_output.responses.len(), 1);
+        assert_eq!(
+            presented_output.responses[0].rect,
+            Rect::new(24.0, 24.0, 272.0, 28.0)
+        );
+        assert!(legacy_frame.actions.is_empty());
+        assert!(presented_frame.actions.is_empty());
+        assert_eq!(only_menu_descriptor(&legacy_scene), &expected_descriptor);
+        assert_eq!(only_menu_descriptor(&presented_scene), &expected_descriptor);
+        let legacy_surface = legacy_frame
+            .semantics
+            .get(WidgetId::from_raw(41))
+            .expect("legacy surface semantics");
+        let presented_surface = presented_frame
+            .semantics
+            .get(WidgetId::from_raw(41))
+            .expect("presented surface semantics");
+        assert_eq!(legacy_surface.children, vec![row_id]);
+        assert_eq!(presented_surface.children, legacy_surface.children);
+        let legacy_node = legacy_frame
+            .semantics
+            .get(row_id)
+            .expect("legacy row semantics");
+        let presented_node = presented_frame
+            .semantics
+            .get(row_id)
+            .expect("presented row semantics");
+        assert_eq!(presented_node, legacy_node);
+        assert_eq!(presented_node.state.checked, Some(true));
+        assert_eq!(presented_node.state.expanded, Some(false));
+        assert!(presented_node.focusable);
+        assert!(
+            presented_node
+                .actions
+                .iter()
+                .any(|action| action.kind == SemanticActionKind::Open)
+        );
+        let focus_order = vec![WidgetId::from_raw(41), row_id];
+        assert_eq!(legacy_frame.semantics.focus_order(), focus_order);
+        assert_eq!(presented_frame.semantics.focus_order(), focus_order);
+        assert_eq!(presented_node.label.as_deref(), Some("Checked submenu"));
+        assert!(presented_node.description.is_none());
+        assert!(presented_node.state.value.is_none());
+        for node in [legacy_node, presented_node] {
+            assert!(
+                !node
+                    .label
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains(&expected_shortcut)
+            );
+            assert!(!node.label.as_deref().unwrap_or_default().contains('›'));
+            assert!(node.actions.iter().all(|action| {
+                !action.label.contains(&expected_shortcut) && !action.label.contains('›')
+            }));
+        }
         if !pressed {
-            let invocation = presented_frame.actions.pop_front().expect("menu action");
-            assert_eq!(invocation.action_id.as_str(), "menu.primary");
-            assert_eq!(invocation.source, ActionSource::Menu);
+            let [OverlaySceneIntent::OpenSubmenu(intent)] = presented_output.intents.as_slice()
+            else {
+                panic!("one submenu intent");
+            };
+            assert_eq!(intent.parent_overlay, OverlayId::from_raw(41));
+            assert_eq!(intent.trigger_action.as_str(), "menu.checked-submenu");
+            assert_eq!(intent.visible_index, 0);
+            assert_eq!(intent.source, ActionSource::Menu);
             assert_eq!(
-                invocation.context,
+                intent.context,
                 ActionContext::Frame(WidgetId::from_key("document:alpha"))
             );
-            assert!(legacy_frame.actions.pop_front().is_some());
+            assert_eq!(text_contents(&legacy_frame), ["Checked submenu"]);
+            let presented_texts = text_primitives(&presented_frame);
+            assert_eq!(
+                text_contents(&presented_frame),
+                ["Checked submenu", expected_shortcut.as_str(), "›"]
+            );
+            assert_eq!(
+                presented_texts
+                    .iter()
+                    .filter(|text| text.text == "›")
+                    .count(),
+                1
+            );
         }
     }
 
@@ -782,4 +896,33 @@ fn widget_source_uses_the_core_policy_without_public_shape_or_naming_duplication
     }
     assert!(scene.contains("pub(crate) menu_columns: bool"));
     assert!(scene.contains("pub(crate) shortcut: Option<Shortcut>"));
+
+    assert_eq!(
+        declaration_shape(
+            menu,
+            "pub enum MenuItem {",
+            "#[derive(Debug, Clone, PartialEq, Eq)]\nstruct MenuEntry {"
+        ),
+        "pub enum MenuItem {Label(String),Separator,Action(ActionDescriptor),}"
+    );
+    assert_eq!(
+        declaration_shape(menu, "pub struct Menu {", "impl Menu {"),
+        "pub struct Menu {entries: Vec<MenuEntry>,highlighted: Option<ActionId>,}"
+    );
+    assert_eq!(
+        declaration_shape(menu, "pub struct MenuOverlay {", "impl MenuOverlay {"),
+        "pub struct MenuOverlay {pub entry: OverlayEntry,pub menu: Menu,pub source: ActionSource,pub context: ActionContext,}"
+    );
+    assert_eq!(
+        declaration_shape(
+            scene,
+            "pub struct OverlaySceneMetrics {",
+            "impl Default for OverlaySceneMetrics {"
+        ),
+        "pub struct OverlaySceneMetrics {pub inset: f32,pub row_height: f32,pub separator_height: f32,}"
+    );
+    assert_eq!(
+        declaration_shape(scene, "pub struct OverlayScene {", "impl OverlayScene {"),
+        "pub struct OverlayScene {surfaces: Vec<OverlaySceneSurface>,metrics: OverlaySceneMetrics,}"
+    );
 }
