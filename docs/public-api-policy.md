@@ -384,8 +384,8 @@ navigation, descriptor values, action source/context, and FIFO routing are
 unchanged. `STERN-MENU-COMP-002` and `STERN-MENU-001` gain only bounded Partial
 evidence; shortcut dispositions stay bounded Partial. Unverified areas are
 active-platform and locale discovery, non-English translation quality,
-sequential chords,
-check/radio/icon/status/destructive painting, mixed state, right-to-left layout,
+sequential chords, check/radio/icon/status/destructive painting, mixed state,
+right-to-left layout,
 narrow-menu columns, work-area fitting and scrolling, platform-menu entry,
 context-menu convergence, browser/raster/GPU output, manual review, and
 reference-image equivalence. Maturity does not advance beyond bounded Partial.
