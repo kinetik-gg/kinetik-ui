@@ -1,6 +1,9 @@
 //! Deterministic conformance evidence for shortcut presentation policy.
 
-use stern_core::{Key, Modifiers, PhysicalKey, Shortcut, ShortcutPlatform};
+use stern_core::{
+    Key, Modifiers, PhysicalKey, Shortcut, ShortcutLabelLocalizer, ShortcutLabelToken,
+    ShortcutModifier, ShortcutPlatform,
+};
 
 const PLATFORMS: [ShortcutPlatform; 3] = [
     ShortcutPlatform::Windows,
@@ -23,6 +26,59 @@ fn assert_labels(shortcut: &Shortcut, expected: [Option<&str>; 3]) {
             expected.map(str::to_owned),
             "unexpected {platform:?} label for {shortcut:?}"
         );
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LocalizerFailure {
+    None,
+    RejectAlt,
+    EmptyKey,
+}
+
+struct SymbolLocalizer {
+    separator: String,
+    failure: LocalizerFailure,
+}
+
+impl ShortcutLabelLocalizer for SymbolLocalizer {
+    fn token_label(
+        &self,
+        _platform: ShortcutPlatform,
+        token: ShortcutLabelToken<'_>,
+    ) -> Option<String> {
+        if matches!(
+            (self.failure, token),
+            (
+                LocalizerFailure::RejectAlt,
+                ShortcutLabelToken::Modifier(ShortcutModifier::Alt)
+            )
+        ) {
+            return None;
+        }
+        if matches!(
+            (self.failure, token),
+            (
+                LocalizerFailure::EmptyKey,
+                ShortcutLabelToken::LogicalKey(_) | ShortcutLabelToken::PhysicalKey(_)
+            )
+        ) {
+            return Some(String::new());
+        }
+
+        Some(match token {
+            ShortcutLabelToken::Modifier(ShortcutModifier::Control) => "⌃".into(),
+            ShortcutLabelToken::Modifier(ShortcutModifier::Alt) => "⌥".into(),
+            ShortcutLabelToken::Modifier(ShortcutModifier::Shift) => "⇧".into(),
+            ShortcutLabelToken::Modifier(ShortcutModifier::Super) => "⌘".into(),
+            ShortcutLabelToken::LogicalKey(Key::Character(value)) => format!("key:{value}"),
+            ShortcutLabelToken::LogicalKey(key) => format!("logical:{key:?}"),
+            ShortcutLabelToken::PhysicalKey(key) => format!("physical:{key:?}"),
+        })
+    }
+
+    fn separator(&self, _platform: ShortcutPlatform) -> &str {
+        &self.separator
     }
 }
 
@@ -263,5 +319,67 @@ fn every_other_physical_key_has_exact_platform_label_or_rejection() {
 
     for (key, expected) in cases {
         assert_labels(&physical(key), expected);
+    }
+}
+
+#[test]
+fn caller_localizer_can_supply_symbols_and_an_empty_separator() {
+    let localizer = SymbolLocalizer {
+        separator: String::new(),
+        failure: LocalizerFailure::None,
+    };
+    let shortcut = Shortcut::new(
+        Modifiers::new(true, true, true, true),
+        Key::Character("k".into()),
+    );
+
+    assert_eq!(
+        shortcut.localized_label(ShortcutPlatform::MacOs, &localizer),
+        Some("⌃⌥⇧⌘key:k".into())
+    );
+}
+
+#[test]
+fn logical_display_wins_and_unidentified_shortcuts_fail_closed() {
+    let localizer = SymbolLocalizer {
+        separator: "/".into(),
+        failure: LocalizerFailure::None,
+    };
+    let logical_and_physical =
+        logical(Key::Character("q".into())).with_physical_key(PhysicalKey::KeyA);
+
+    assert_eq!(
+        logical_and_physical.localized_label(ShortcutPlatform::Linux, &localizer),
+        Some("key:q".into())
+    );
+    assert_eq!(
+        physical(PhysicalKey::KeyB).localized_label(ShortcutPlatform::Linux, &localizer),
+        Some("physical:KeyB".into())
+    );
+    assert_eq!(
+        logical(Key::Unidentified).localized_label(ShortcutPlatform::Linux, &localizer),
+        None
+    );
+    assert_eq!(
+        physical(PhysicalKey::Unidentified).localized_label(ShortcutPlatform::Linux, &localizer),
+        None
+    );
+}
+
+#[test]
+fn a_missing_or_empty_required_token_rejects_the_complete_label() {
+    let shortcut = Shortcut::new(
+        Modifiers::new(false, false, true, false),
+        Key::Character("x".into()),
+    );
+    for failure in [LocalizerFailure::RejectAlt, LocalizerFailure::EmptyKey] {
+        let localizer = SymbolLocalizer {
+            separator: "+".into(),
+            failure,
+        };
+        assert_eq!(
+            shortcut.localized_label(ShortcutPlatform::Windows, &localizer),
+            None
+        );
     }
 }
