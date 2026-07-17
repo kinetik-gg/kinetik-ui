@@ -355,17 +355,20 @@ and semantic bounds remain unchanged. See
 
 Selection context targets own sorted, deduplicated item IDs, and collection
 action metadata and requests retain the target acquired when a menu opens.
-Bounded public headless evidence proves Asset Browser and Outliner retain that
-snapshot when live selection changes after opening and before command display.
+Bounded public headless evidence from issue #740/PR #743 separately proves
+Asset Browser and Outliner retain stable target and selection snapshots through
+command display and invocation when live selection changes after opening.
+That evidence does not prove command-close focus restoration.
 This advances only `STERN-CONTEXT-001` to bounded Partial; Candidate remains
 Candidate.
 
-Additional bounded public headless evidence proves that Asset Browser and
-Outliner Escape dismissal clears the retained context, restores focus to the
-exact selected invoking item or row, preserves cursor and selected item IDs,
-emits no context request or frame action, requests a following frame, and
-remains closed and selection-stable on that idle frame. Together with the
-collection command-close snapshot evidence above, this advances only the
+The two new Asset Browser and Outliner tests in issue #746 alone prove that
+Escape dismissal clears the retained context, restores focus to the exact
+selected invoking item or row without implicit selection mutation: cursor and
+selected item IDs remain byte-for-byte unchanged; no context request or frame
+action is emitted; a following frame is requested; the context menu then
+remains closed and selection-stable on that idle frame. The issue #746
+tests alone advance only the
 covered Asset Browser and Outliner portion of `STERN-CONTEXT-003` to bounded
 Partial. Candidate remains Candidate.
 
