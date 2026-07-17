@@ -196,9 +196,10 @@ vector in axis order. Static faces therefore carry an empty vector. Run
 grouping distinguishes coordinates, store and renderer payload metrics count
 their owned capacity with checked arithmetic, and both Vello transform paths
 submit the same slice without synthetic emboldening or a second shape.
-`TextPrimitive` and layoutless compatibility text remain regular; semantic
-role/component adoption, fallback policy, optical baselines, raster output,
-and visual acceptance are separate work.
+The public `TextPrimitive` shape is unchanged. A registered primitive obtains
+weight only from its referenced `ShapedTextLayout`; layoutless/generic fallback
+remains Regular `400`. Component and semantic-role adoption, fallback policy,
+optical baselines, raster output, and visual acceptance are separate work.
 
 Vello classifies text from the exact raw composed framebuffer-root and command
 transform. An exactly positive axis-aligned transform uses the shared snapped
