@@ -14,7 +14,7 @@ const WHEEL_NEXT_PANEL: Rect = Rect::new(40.0, 30.0, 40.0, 10.0);
 
 const OUTER_RECT: Rect = Rect::new(0.0, 0.0, 100.0, 80.0);
 const INNER_RECT: Rect = Rect::new(20.0, 40.0, 60.0, 50.0);
-const CLIPPED_RECT: Rect = Rect::new(30.0, 120.0, 20.0, 20.0);
+const CLIPPED_RECT: Rect = Rect::new(30.0, 100.0, 20.0, 20.0);
 const ONSCREEN_RECT: Rect = Rect::new(30.0, 60.0, 20.0, 20.0);
 
 fn fixed_item(width: f32, height: f32) -> LayoutItem {
@@ -30,6 +30,18 @@ fn wheel_input(delta: Vec2) -> UiInput {
         pointer: PointerInput {
             position: Some(Point::new(10.0, 10.0)),
             wheel_delta: delta,
+            ..PointerInput::default()
+        },
+        window_focused: true,
+        ..UiInput::default()
+    }
+}
+
+fn click_input(position: Point) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(position),
+            primary: PointerButtonState::new(false, true, true),
             ..PointerInput::default()
         },
         window_focused: true,
@@ -325,20 +337,11 @@ fn nested_scroll_areas_keep_independent_extents_clips_and_semantics() {
     let outer_offset = Vec2::new(10.0, 20.0);
     let inner_offset = Vec2::new(5.0, 7.0);
     let onscreen_bounds = Rect::new(15.0, 33.0, 20.0, 20.0);
-    let clipped_bounds = Rect::new(15.0, 93.0, 20.0, 20.0);
+    let clipped_bounds = Rect::new(15.0, 73.0, 20.0, 20.0);
     let mut memory = UiMemory::new();
     memory.set_scroll_offset(outer_id, outer_offset);
     memory.set_scroll_offset(inner_id, inner_offset);
-    let input = UiInput {
-        pointer: PointerInput {
-            position: Some(Point::new(25.0, 43.0)),
-            primary: PointerButtonState::new(false, true, true),
-            ..PointerInput::default()
-        },
-        window_focused: true,
-        ..UiInput::default()
-    };
-
+    let input = click_input(Point::new(25.0, 43.0));
     let (nested, frame) = nested_frame(&mut memory, &input);
     assert_eq!(nested.scroll.response.id, outer_id);
     assert_eq!(nested.scroll.offset, outer_offset);
@@ -349,7 +352,6 @@ fn nested_scroll_areas_keep_independent_extents_clips_and_semantics() {
     assert_eq!(nested.inner.inner.0, outer_offset);
     assert_eq!(nested.inner.inner.1, inner_offset);
     assert_eq!(nested.inner.inner.2.id, clipped_id);
-    assert!(!nested.inner.inner.2.clicked);
     assert_eq!(nested.inner.inner.3.id, onscreen_id);
     assert!(nested.inner.inner.3.clicked);
     assert_eq!(memory.scroll_offset(outer_id), outer_offset);
@@ -414,26 +416,24 @@ fn nested_scroll_areas_keep_independent_extents_clips_and_semantics() {
     assert!(onscreen_semantic.focusable);
     assert!(frame.warnings.is_empty());
 
-    let (stable, stable_frame) = nested_frame(&mut memory, &UiInput::default());
-    assert_eq!(stable.scroll.response.id, outer_id);
-    assert_eq!(stable.inner.scroll.response.id, inner_id);
-    assert_eq!(stable.inner.inner.2.id, clipped_id);
-    assert_eq!(stable.inner.inner.3.id, onscreen_id);
-    assert_eq!(
-        stable_frame
-            .semantics
-            .get(clipped_id)
-            .expect("stable clipped semantics")
-            .bounds,
-        Rect::ZERO
-    );
-    assert_eq!(
-        stable_frame
-            .semantics
-            .get(onscreen_id)
-            .expect("stable onscreen semantics")
-            .bounds,
-        onscreen_bounds
-    );
-    assert!(stable_frame.warnings.is_empty());
+    let clipped_probe = Point::new(25.0, 75.0);
+    assert!(clipped_bounds.contains_point(clipped_probe));
+    assert!(OUTER_RECT.contains_point(clipped_probe));
+    assert!(!Rect::new(10.0, 20.0, 60.0, 50.0).contains_point(clipped_probe));
+    let (probe, probe_frame) = nested_frame(&mut memory, &click_input(clipped_probe));
+    let probe_clipped = &probe.inner.inner.2;
+    assert_eq!(probe.scroll.response.id, outer_id);
+    assert_eq!(probe.inner.scroll.response.id, inner_id);
+    assert_eq!(probe_clipped.id, clipped_id);
+    assert!(!probe_clipped.state.hovered);
+    assert!(!probe_clipped.state.pressed);
+    assert!(!probe_clipped.clicked);
+    assert_eq!(probe.inner.inner.3.id, onscreen_id);
+    assert!(probe_frame.actions.is_empty());
+    let probe_semantics = &probe_frame.semantics;
+    let clipped_node = probe_semantics.get(clipped_id).expect("stable clipped");
+    let onscreen_node = probe_semantics.get(onscreen_id).expect("stable onscreen");
+    assert_eq!(clipped_node.bounds, Rect::ZERO);
+    assert_eq!(onscreen_node.bounds, onscreen_bounds);
+    assert!(probe_frame.warnings.is_empty());
 }
