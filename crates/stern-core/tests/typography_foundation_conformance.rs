@@ -260,6 +260,14 @@ fn text_style_transports_exactly_the_bounded_low_level_weight_and_feature_set() 
 #[test]
 fn production_weight_adoption_is_exactly_one_semantic_property_section() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let weight_use_indicators = [
+        "FontWeightToken",
+        "FontWeightScale",
+        ".with_weight(",
+        "typography.weights",
+        "weight:",
+        ".weight",
+    ];
     let roots = [
         workspace.join("crates/stern-widgets/src"),
         workspace.join("apps/stern-demo/src"),
@@ -279,7 +287,10 @@ fn production_weight_adoption_is_exactly_one_semantic_property_section() {
             .expect("workspace production path")
             .to_string_lossy()
             .replace('\\', "/");
-        if executable.contains("FontWeightToken") {
+        if weight_use_indicators
+            .iter()
+            .any(|indicator| executable.contains(indicator))
+        {
             adopters.insert(relative.clone());
         }
         for forbidden in [
@@ -316,7 +327,16 @@ fn production_weight_adoption_is_exactly_one_semantic_property_section() {
         1
     );
     assert_eq!(property.matches(".with_weight(").count(), 1);
-    assert!(!property.contains("600"));
+    let compact_property = property
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    for forbidden in [".weights.semibold", ".weight=", "weight:", "600"] {
+        assert!(
+            !compact_property.contains(forbidden),
+            "property-grid weight adoption must not contain {forbidden}"
+        );
+    }
 }
 
 #[test]
