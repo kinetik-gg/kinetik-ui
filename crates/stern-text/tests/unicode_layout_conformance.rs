@@ -122,6 +122,7 @@ fn synthetic_layout(lines: &[LineSpec], cells: &[CellSpec]) -> ShapedTextLayout 
                 .collect::<Vec<_>>();
             (!glyphs.is_empty()).then(|| ShapedGlyphRun {
                 font: font.clone(),
+                normalized_coords: Vec::new(),
                 font_size: 18.0,
                 line_index: spec.source_line,
                 visual_line,

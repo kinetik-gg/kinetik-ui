@@ -120,6 +120,7 @@ impl CosmicTextEngine {
                     }
                     current = Some(ShapedGlyphRun {
                         font: font.clone(),
+                        normalized_coords: Vec::new(),
                         font_size: glyph.font_size,
                         line_index: run.line_i,
                         visual_line,
