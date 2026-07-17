@@ -3,14 +3,16 @@
 use std::time::Duration;
 
 use stern_core::{
-    ActionContext, ActionDescriptor, ActionIcon, FrameContext, FrameOutput, Key, Modifiers,
-    MouseButton, PhysicalSize, Point, PointerOrder, Primitive, Rect, ScaleFactor, Shortcut, Size,
-    TextPrimitive, TimeInfo, UiInput, UiMemory, ViewportInfo, WidgetId, default_dark_theme,
+    ActionContext, ActionDescriptor, ActionIcon, ActionId, ActionSource, FrameContext, FrameOutput,
+    Key, KeyEvent, KeyState, KeyboardInput, Modifiers, MouseButton, PhysicalSize, Point,
+    PointerOrder, Primitive, Rect, ScaleFactor, Shortcut, Size, TextPrimitive, TimeInfo, UiInput,
+    UiMemory, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow};
 use stern_widgets::{
-    ChromeScene, ChromeSceneConfig, ChromeSceneItemKey, ChromeSceneOutput, MenuBar, StatusBar,
-    TabStrip, Toolbar, ToolbarGroup, ToolbarGroupId, Ui,
+    ChromeScene, ChromeSceneConfig, ChromeSceneIntent, ChromeSceneItemKey, ChromeSceneOutput,
+    FrameTab, MenuBar, MenuBarMenu, MenuBarMenuId, PanelId, StatusBar, StatusItem, StatusItemId,
+    StatusItemKind, TabStrip, Toolbar, ToolbarGroup, ToolbarGroupId, Ui,
 };
 
 const GROUP: ToolbarGroupId = ToolbarGroupId::from_raw(41);
@@ -128,6 +130,21 @@ fn pointer_input(point: Point, down: Option<bool>) -> UiInput {
             .apply_button_transition(MouseButton::Primary, down);
     }
     input
+}
+
+fn keyboard_input(key: Key) -> UiInput {
+    UiInput {
+        keyboard: KeyboardInput {
+            modifiers: Modifiers::default(),
+            events: vec![KeyEvent::new(
+                key,
+                KeyState::Pressed,
+                Modifiers::default(),
+                false,
+            )],
+        },
+        ..UiInput::default()
+    }
 }
 
 #[test]
@@ -691,4 +708,182 @@ fn hidden_and_overflowed_actions_register_no_labels_and_trigger_stays_generic() 
     assert_eq!(store.len(), 2);
     assert_eq!(run.output.responses.len(), 2);
     assert!(run.frame.actions.is_empty());
+}
+
+#[test]
+fn non_toolbar_chrome_rows_remain_complete_source_generic_visible_consumers() {
+    let menu_source = "Complete menu heading remains generic Visible";
+    let toolbar_source = "Complete toolbar label receives explicit end ellipsis";
+    let tab_source = "Complete tab label remains generic Visible";
+    let status_source = "Complete status label remains generic Visible";
+    let menu_id = MenuBarMenuId::from_raw(11);
+    let panel_id = PanelId::from_raw(12);
+    let status_id = StatusItemId::from_raw(13);
+    let toolbar_action = ActionDescriptor::new("toolbar.generic-boundary", toolbar_source);
+    let menu = MenuBar::from_menus([MenuBarMenu::from_actions(
+        menu_id,
+        menu_source,
+        [ActionDescriptor::new("menu.open", "Open")],
+    )]);
+    let toolbar = Toolbar::from_groups([ToolbarGroup::from_actions(
+        GROUP,
+        "Boundary",
+        [toolbar_action.clone()],
+    )]);
+    let tabs = TabStrip::from_tabs([FrameTab {
+        panel: panel_id,
+        title: tab_source.to_owned(),
+        active: true,
+        close_visible: true,
+        draggable: true,
+    }]);
+    let status = StatusBar::from_items([StatusItem::new(
+        status_id,
+        "Status",
+        status_source,
+        StatusItemKind::Ready,
+    )]);
+    let root = WidgetId::from_raw(0xB0A);
+    let config = ChromeSceneConfig::new(
+        root,
+        Rect::new(0.0, 0.0, 200.0, 28.0),
+        Rect::new(0.0, 32.0, 200.0, 28.0),
+        Rect::new(0.0, 64.0, 200.0, 28.0),
+        Rect::new(0.0, 96.0, 200.0, 28.0),
+        ActionContext::Global,
+    )
+    .with_tab_close_width(20.0)
+    .with_widths([
+        (ChromeSceneItemKey::Menu(menu_id), 80.0),
+        (key(&toolbar_action), 80.0),
+        (ChromeSceneItemKey::Tab(panel_id), 80.0),
+        (ChromeSceneItemKey::Status(status_id), 80.0),
+    ]);
+    let scene = ChromeScene::new(config, &menu, &toolbar, &tabs, &status);
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let theme = default_dark_theme();
+    let mut ui = Ui::begin_frame(context(UiInput::default()), &mut memory, &theme)
+        .with_text_layouts(&mut store);
+    ui.resolve_pointer_targets(|plan| {
+        scene.declare_pointer_targets(plan, PointerOrder::new(100));
+    })
+    .expect("valid mixed chrome pointer plan");
+    let _ = ui.chrome_scene(&scene);
+    let frame = ui.finish_output();
+
+    for source in [menu_source, tab_source, status_source, "×"] {
+        let text = toolbar_text(&frame, source);
+        let stored = store
+            .stored_layout(text.layout.expect("generic chrome layout"))
+            .expect("resident generic chrome layout");
+        assert_eq!(text.text, source);
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.width_bits, 0.0_f32.to_bits());
+        assert_eq!(stored.key.overflow, TextOverflow::Visible);
+    }
+    let toolbar_text = toolbar_text(&frame, toolbar_source);
+    let toolbar_stored = store
+        .stored_layout(toolbar_text.layout.expect("explicit toolbar layout"))
+        .expect("resident explicit toolbar layout");
+    assert_eq!(toolbar_stored.key.text, toolbar_source);
+    assert_eq!(toolbar_stored.key.width_bits, 64.0_f32.to_bits());
+    assert_eq!(toolbar_stored.key.overflow, TextOverflow::EndEllipsis);
+}
+
+#[test]
+fn pointer_and_keyboard_activation_preserve_exact_single_toolbar_invocation() {
+    let source = "Complete invoked toolbar source remains intact";
+    let action = ActionDescriptor::new("toolbar.invoke", source);
+    let mut store = TextLayoutStore::new();
+    let mut idle_memory = UiMemory::new();
+    let idle = run_toolbar(
+        Some(&mut store),
+        &mut idle_memory,
+        BOUNDS,
+        std::slice::from_ref(&action),
+        &[80.0],
+        UiInput::default(),
+    );
+    let id = toolbar_text(&idle.frame, source).layout.unwrap();
+    let row_id = idle.row_ids[0];
+    let center = idle.output.responses[0].rect.center();
+
+    let mut pointer_memory = UiMemory::new();
+    let pressed = run_toolbar(
+        Some(&mut store),
+        &mut pointer_memory,
+        BOUNDS,
+        std::slice::from_ref(&action),
+        &[80.0],
+        pointer_input(center, Some(true)),
+    );
+    assert!(pressed.frame.actions.is_empty());
+    let mut pointer = run_toolbar(
+        Some(&mut store),
+        &mut pointer_memory,
+        BOUNDS,
+        std::slice::from_ref(&action),
+        &[80.0],
+        pointer_input(center, Some(false)),
+    );
+    assert_eq!(toolbar_text(&pointer.frame, source).layout, Some(id));
+    assert_eq!(pointer.output.intents.len(), 1);
+    assert_eq!(pointer.frame.actions.len(), 1);
+    let ChromeSceneIntent::Action(pointer_intent) = &pointer.output.intents[0] else {
+        panic!("pointer toolbar invocation");
+    };
+    assert_eq!(pointer_intent.action_id, ActionId::new("toolbar.invoke"));
+    assert_eq!(pointer_intent.source, ActionSource::Button);
+    assert_eq!(pointer_intent.context, ActionContext::Editor);
+    assert_eq!(
+        pointer.frame.actions.pop_front(),
+        Some(pointer_intent.clone())
+    );
+    assert!(pointer.frame.actions.is_empty());
+
+    let mut keyboard_memory = UiMemory::new();
+    keyboard_memory.focus(row_id);
+    let mut keyboard = run_toolbar(
+        Some(&mut store),
+        &mut keyboard_memory,
+        BOUNDS,
+        std::slice::from_ref(&action),
+        &[80.0],
+        keyboard_input(Key::Enter),
+    );
+    assert_eq!(toolbar_text(&keyboard.frame, source).layout, Some(id));
+    assert_eq!(keyboard.output.intents.len(), 1);
+    assert_eq!(keyboard.frame.actions.len(), 1);
+    let ChromeSceneIntent::Action(keyboard_intent) = &keyboard.output.intents[0] else {
+        panic!("keyboard toolbar invocation");
+    };
+    assert_eq!(keyboard_intent, pointer_intent);
+    assert_eq!(
+        keyboard.frame.actions.pop_front(),
+        Some(keyboard_intent.clone())
+    );
+    assert!(keyboard.frame.actions.is_empty());
+
+    let mut disabled = action;
+    disabled.state.enabled = false;
+    let mut disabled_memory = UiMemory::new();
+    let _ = run_toolbar(
+        Some(&mut store),
+        &mut disabled_memory,
+        BOUNDS,
+        std::slice::from_ref(&disabled),
+        &[80.0],
+        pointer_input(center, Some(true)),
+    );
+    let disabled_run = run_toolbar(
+        Some(&mut store),
+        &mut disabled_memory,
+        BOUNDS,
+        &[disabled],
+        &[80.0],
+        pointer_input(center, Some(false)),
+    );
+    assert!(disabled_run.output.intents.is_empty());
+    assert!(disabled_run.frame.actions.is_empty());
 }
