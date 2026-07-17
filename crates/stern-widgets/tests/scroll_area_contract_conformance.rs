@@ -1,7 +1,18 @@
 //! Public scroll-area extent, clamping, staging, and ownership conformance.
 
-use stern_core::{Rect, Size, UiInput, UiMemory, Vec2, WidgetId, default_dark_theme};
+use stern_core::{
+    LayoutItem, Measurement, Rect, Size, SizeRule, UiInput, UiMemory, Vec2, WidgetId,
+    default_dark_theme,
+};
 use stern_widgets::Ui;
+
+fn fixed_item(width: f32, height: f32) -> LayoutItem {
+    LayoutItem::new(
+        SizeRule::Fixed(width),
+        SizeRule::Fixed(height),
+        Measurement::default(),
+    )
+}
 
 #[test]
 fn scroll_area_exposes_exact_viewport_extent_offset_and_maximum() {
@@ -37,5 +48,60 @@ fn scroll_area_exposes_exact_viewport_extent_offset_and_maximum() {
             .bounds,
         viewport
     );
+    assert!(frame.warnings.is_empty());
+}
+
+#[test]
+fn scroll_row_and_column_expose_deterministic_axis_policy() {
+    let root = WidgetId::from_key("root");
+    let row_id = root.child("row-policy");
+    let column_id = root.child("column-policy");
+    let generic_id = root.child("two-axis-policy");
+    let mut memory = UiMemory::new();
+    memory.set_scroll_offset(row_id, Vec2::new(999.0, 999.0));
+    memory.set_scroll_offset(column_id, Vec2::new(999.0, 999.0));
+    memory.set_scroll_offset(generic_id, Vec2::new(13.0, 17.0));
+    let input = UiInput::default();
+    let theme = default_dark_theme();
+    let items = [fixed_item(30.0, 30.0), fixed_item(30.0, 30.0)];
+    let mut ui = Ui::new(&input, &mut memory, &theme);
+
+    let row = ui.scroll_row(
+        "row-policy",
+        Rect::new(0.0, 0.0, 40.0, 40.0),
+        &items,
+        4.0,
+        false,
+        |_ui, _, rect| rect,
+    );
+    let column = ui.scroll_column(
+        "column-policy",
+        Rect::new(60.0, 0.0, 40.0, 40.0),
+        &items,
+        4.0,
+        false,
+        |_ui, _, rect| rect,
+    );
+    let generic = ui.scroll_area(
+        "two-axis-policy",
+        Rect::new(120.0, 0.0, 40.0, 40.0),
+        Size::new(100.0, 90.0),
+        false,
+        |_ui, offset| offset,
+    );
+    let frame = ui.finish_output();
+
+    assert_eq!(row.scroll.offset, Vec2::new(24.0, 0.0));
+    assert_eq!(row.scroll.max_offset, Vec2::new(24.0, 0.0));
+    assert_eq!(row.inner[1], Rect::new(34.0, 0.0, 30.0, 30.0));
+    assert_eq!(column.scroll.offset, Vec2::new(0.0, 24.0));
+    assert_eq!(column.scroll.max_offset, Vec2::new(0.0, 24.0));
+    assert_eq!(column.inner[1], Rect::new(60.0, 34.0, 30.0, 30.0));
+    assert_eq!(generic.scroll.offset, Vec2::new(13.0, 17.0));
+    assert_eq!(generic.scroll.max_offset, Vec2::new(60.0, 50.0));
+    assert_eq!(generic.inner, Vec2::new(13.0, 17.0));
+    assert_eq!(memory.scroll_offset(row_id), Vec2::new(24.0, 0.0));
+    assert_eq!(memory.scroll_offset(column_id), Vec2::new(0.0, 24.0));
+    assert_eq!(memory.scroll_offset(generic_id), Vec2::new(13.0, 17.0));
     assert!(frame.warnings.is_empty());
 }
