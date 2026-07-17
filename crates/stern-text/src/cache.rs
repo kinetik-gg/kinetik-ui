@@ -363,6 +363,7 @@ fn compare_keys(left: &TextLayoutKey, right: &TextLayoutKey) -> Ordering {
                 .line_height_bits
                 .cmp(&right.style.line_height_bits)
         })
+        .then_with(|| left.style.weight.cmp(&right.style.weight))
         .then_with(|| {
             left.style
                 .features
