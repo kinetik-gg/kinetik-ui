@@ -1,8 +1,10 @@
 //! Deterministic conformance evidence for shortcut presentation policy.
 
 use stern_core::{
-    Key, Modifiers, PhysicalKey, Shortcut, ShortcutLabelLocalizer, ShortcutLabelToken,
-    ShortcutModifier, ShortcutPlatform,
+    ActionBinding, ActionContext, ActionDescriptor, ActionId, ActionInvocation, ActionPriority,
+    ActionQueue, ActionRouter, ActionSource, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
+    PhysicalKey, Shortcut, ShortcutLabelLocalizer, ShortcutLabelToken, ShortcutModifier,
+    ShortcutPlatform,
 };
 
 const PLATFORMS: [ShortcutPlatform; 3] = [
@@ -382,4 +384,53 @@ fn a_missing_or_empty_required_token_rejects_the_complete_label() {
             None
         );
     }
+}
+
+#[test]
+fn repeated_presentation_preserves_shortcut_routing_and_action_state() {
+    let modifiers = Modifiers::new(false, true, false, false);
+    let shortcut =
+        Shortcut::new(modifiers, Key::Character("k".into())).with_physical_key(PhysicalKey::KeyK);
+    let original_shortcut = shortcut.clone();
+    let mut descriptor = ActionDescriptor::new("edit.keep", "Keep");
+    descriptor.shortcut = Some(shortcut.clone());
+    let original_descriptor = descriptor.clone();
+    let mut router = ActionRouter::new();
+    router.bind(ActionBinding::new(
+        descriptor.clone(),
+        ActionContext::Global,
+        ActionPriority::Global,
+    ));
+    let input = KeyboardInput {
+        modifiers,
+        events: vec![KeyEvent::with_physical_key(
+            Key::Character("л".into()),
+            PhysicalKey::KeyK,
+            KeyState::Pressed,
+            modifiers,
+            false,
+        )],
+    };
+    let before_route = router.resolve_shortcut(&input);
+    let mut queue = ActionQueue::new();
+    queue.push(ActionInvocation::new(
+        ActionId::new("existing"),
+        ActionSource::Programmatic,
+        ActionContext::Global,
+    ));
+    let before_queue = queue.clone();
+
+    assert_labels(
+        &shortcut,
+        [Some("Ctrl+K"), Some("Control+K"), Some("Ctrl+K")],
+    );
+    let owned_label: String = shortcut
+        .english_label(ShortcutPlatform::Windows)
+        .expect("complete owned presentation label");
+    assert_eq!(owned_label, "Ctrl+K");
+
+    assert_eq!(shortcut, original_shortcut);
+    assert_eq!(descriptor, original_descriptor);
+    assert_eq!(router.resolve_shortcut(&input), before_route);
+    assert_eq!(queue, before_queue);
 }
