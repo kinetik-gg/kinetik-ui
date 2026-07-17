@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use stern_core::{
-    ActionContext, ActionDescriptor, FrameContext, FrameOutput, PhysicalSize, Point, PointerOrder,
-    Primitive, Rect, ScaleFactor, Size, TextPrimitive, TimeInfo, UiInput, UiMemory, ViewportInfo,
-    WidgetId, default_dark_theme,
+    ActionContext, ActionDescriptor, ActionIcon, FrameContext, FrameOutput, Key, Modifiers,
+    MouseButton, PhysicalSize, Point, PointerOrder, Primitive, Rect, ScaleFactor, Shortcut, Size,
+    TextPrimitive, TimeInfo, UiInput, UiMemory, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_text::{TextFeatureSet, TextLayoutStore, TextOverflow};
 use stern_widgets::{
@@ -117,6 +117,17 @@ fn marker_count(store: &TextLayoutStore, text: &TextPrimitive) -> usize {
         .flat_map(|run| &run.glyphs)
         .filter(|glyph| glyph.elided)
         .count()
+}
+
+fn pointer_input(point: Point, down: Option<bool>) -> UiInput {
+    let mut input = UiInput::default();
+    input.pointer.position = Some(point);
+    if let Some(down) = down {
+        input
+            .pointer
+            .apply_button_transition(MouseButton::Primary, down);
+    }
+    input
 }
 
 #[test]
@@ -513,4 +524,171 @@ fn hot_translation_source_and_width_obey_retained_identity_boundaries() {
             .width_bits,
         first_width_bits
     );
+}
+
+#[test]
+fn interaction_and_descriptor_metadata_preserve_toolbar_label_identity() {
+    let source = "Metadata-rich complete toolbar source remains one retained identity";
+    let plain = ActionDescriptor::new("toolbar.metadata", source);
+    let mut store = TextLayoutStore::new();
+    let mut idle_memory = UiMemory::new();
+    let idle = run_toolbar(
+        Some(&mut store),
+        &mut idle_memory,
+        BOUNDS,
+        std::slice::from_ref(&plain),
+        &[80.0],
+        UiInput::default(),
+    );
+    let id = toolbar_text(&idle.frame, source)
+        .layout
+        .expect("idle toolbar identity");
+    let row_id = idle.row_ids[0];
+    let row_rect = idle.output.responses[0].rect;
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    let mut hover_memory = UiMemory::new();
+    let hover = run_toolbar(
+        Some(&mut store),
+        &mut hover_memory,
+        BOUNDS,
+        std::slice::from_ref(&plain),
+        &[80.0],
+        pointer_input(row_rect.center(), None),
+    );
+    assert!(hover.output.responses[0].state.hovered);
+    assert_eq!(toolbar_text(&hover.frame, source).layout, Some(id));
+
+    let mut pressed_memory = UiMemory::new();
+    let pressed = run_toolbar(
+        Some(&mut store),
+        &mut pressed_memory,
+        BOUNDS,
+        std::slice::from_ref(&plain),
+        &[80.0],
+        pointer_input(row_rect.center(), Some(true)),
+    );
+    assert!(pressed.output.responses[0].state.pressed);
+    assert_eq!(toolbar_text(&pressed.frame, source).layout, Some(id));
+    assert!(pressed.frame.actions.is_empty());
+
+    let mut focus_memory = UiMemory::new();
+    focus_memory.focus(row_id);
+    let focused = run_toolbar(
+        Some(&mut store),
+        &mut focus_memory,
+        BOUNDS,
+        std::slice::from_ref(&plain),
+        &[80.0],
+        UiInput::default(),
+    );
+    assert!(focused.output.responses[0].state.focused);
+    assert_eq!(toolbar_text(&focused.frame, source).layout, Some(id));
+    assert_eq!(
+        focused.frame.primitives.len(),
+        idle.frame.primitives.len() + 2
+    );
+
+    let mut rich = plain.clone();
+    rich.icon = Some(ActionIcon::new("render"));
+    rich.tooltip = Some("Application-owned toolbar tooltip".to_owned());
+    rich.keywords = vec!["render".to_owned(), "start".to_owned()];
+    rich.shortcut = Some(Shortcut::new(
+        Modifiers::new(false, true, false, false),
+        Key::Character("r".to_owned()),
+    ));
+    rich.state.checked = Some(true);
+    let mut rich_memory = UiMemory::new();
+    let rich_run = run_toolbar(
+        Some(&mut store),
+        &mut rich_memory,
+        BOUNDS,
+        std::slice::from_ref(&rich),
+        &[80.0],
+        UiInput::default(),
+    );
+    assert_eq!(toolbar_text(&rich_run.frame, source).layout, Some(id));
+    let rich_semantic = rich_run.frame.semantics.get(row_id).unwrap();
+    assert_eq!(rich_semantic.state.checked, Some(true));
+    assert!(rich_semantic.state.selected);
+
+    let mut disabled = rich;
+    disabled.state.enabled = false;
+    let mut disabled_memory = UiMemory::new();
+    let disabled_run = run_toolbar(
+        Some(&mut store),
+        &mut disabled_memory,
+        BOUNDS,
+        &[disabled],
+        &[80.0],
+        pointer_input(row_rect.center(), Some(true)),
+    );
+    assert!(disabled_run.output.responses[0].state.disabled);
+    assert_eq!(toolbar_text(&disabled_run.frame, source).layout, Some(id));
+    assert!(disabled_run.frame.actions.is_empty());
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+}
+
+#[test]
+fn hidden_and_overflowed_actions_register_no_labels_and_trigger_stays_generic() {
+    let visible = ActionDescriptor::new("toolbar.visible", "Visible retained toolbar label");
+    let mut hidden = ActionDescriptor::new("toolbar.hidden", "Hidden toolbar label");
+    hidden.state.visible = false;
+    let overflowed = ActionDescriptor::new("toolbar.overflowed", "Overflowed toolbar label");
+    let mut disabled = ActionDescriptor::new("toolbar.tail", "Overflowed disabled toolbar label");
+    disabled.state.enabled = false;
+    let actions = [visible, hidden, overflowed, disabled];
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let run = run_toolbar(
+        Some(&mut store),
+        &mut memory,
+        Rect::new(BOUNDS.x, BOUNDS.y, 70.0, BOUNDS.height),
+        &actions,
+        &[50.0, 50.0, 50.0, 50.0],
+        UiInput::default(),
+    );
+
+    let visible_text = toolbar_text(&run.frame, "Visible retained toolbar label");
+    let visible_entry = store
+        .stored_layout(visible_text.layout.unwrap())
+        .expect("visible toolbar entry");
+    assert_eq!(visible_entry.key.overflow, TextOverflow::EndEllipsis);
+    for (index, source) in [
+        "Hidden toolbar label",
+        "Overflowed toolbar label",
+        "Overflowed disabled toolbar label",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert!(
+            run.frame.primitives.iter().all(
+                |primitive| !matches!(primitive, Primitive::Text(text) if text.text == *source)
+            )
+        );
+        assert!(store.layouts().all(|entry| entry.key.text != *source));
+        assert!(run.frame.semantics.get(run.row_ids[index + 1]).is_none());
+    }
+    let trigger = toolbar_text(&run.frame, "…");
+    let trigger_entry = store
+        .stored_layout(trigger.layout.expect("generic overflow trigger identity"))
+        .expect("resident generic overflow trigger");
+    assert_eq!(trigger_entry.key.text, "…");
+    assert_eq!(trigger_entry.key.width_bits, 0.0_f32.to_bits());
+    assert_eq!(trigger_entry.key.overflow, TextOverflow::Visible);
+    assert_eq!(store.len(), 2);
+    assert_eq!(run.output.responses.len(), 2);
+    assert!(run.frame.actions.is_empty());
 }
