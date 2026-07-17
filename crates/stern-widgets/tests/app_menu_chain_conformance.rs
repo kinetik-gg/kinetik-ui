@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 use stern_core::{
-    ActionContext, ActionDescriptor, ActionId, ActionQueue, ActionSource, FrameContext,
-    PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, PointerRoute, Rect,
-    ScaleFactor, SemanticActionKind, Size, TimeInfo, UiInput, UiMemory, ViewportInfo, WidgetId,
+    ActionContext, ActionDescriptor, ActionId, ActionSource, FrameContext, PhysicalSize, Point,
+    PointerButtonState, PointerInput, PointerOrder, PointerRoute, Rect, ScaleFactor,
+    SemanticActionKind, Size, TimeInfo, UiInput, UiMemory, ViewportInfo, WidgetId,
     default_dark_theme,
 };
 use stern_widgets::{
@@ -151,6 +151,11 @@ fn action_ids(overlay: &MenuOverlay) -> Vec<ActionId> {
         })
         .collect()
 }
+fn action_row(overlay: OverlayId, action: &str) -> WidgetId {
+    WidgetId::from_raw(overlay.raw())
+        .child("overlay-scene")
+        .child(("overlay-action", action))
+}
 fn pointer_input(point: Point, state: Option<bool>) -> UiInput {
     UiInput {
         pointer: PointerInput {
@@ -243,51 +248,22 @@ fn adjacent_hover_reuses_one_root_and_leaves_one_application_menu_chain() {
 }
 
 #[test]
+#[rustfmt::skip]
 fn left_right_switching_reuses_one_root_and_skips_unavailable_headings() {
     let unrelated = unrelated_entry();
+    let unrelated_surface = OverlaySceneSurface::passive(unrelated.clone(), "Unrelated", "Unrelated");
     let mut bar = MenuBar::from_menus(menu_definitions());
     let mut stack = OverlayStack::new();
     let mut scene = OverlayScene::new();
     stack.open(unrelated.clone());
-    scene.push(OverlaySceneSurface::passive(
-        unrelated.clone(),
-        "Unrelated",
-        "Unrelated",
-    ));
+    scene.push(unrelated_surface.clone());
     assert!(bar.open(FILE));
-
-    for (active, x, policy) in [
-        (
-            EDIT,
-            80.0,
-            (
-                PopoverPlacement::Right,
-                OverlayDismissal::Escape,
-                ActionSource::Shortcut,
-                ActionContext::Editor,
-            ),
-        ),
-        (
-            VIEW,
-            120.0,
-            (
-                PopoverPlacement::Above,
-                OverlayDismissal::OutsideClickOrEscape,
-                ActionSource::Programmatic,
-                ActionContext::Widget(WidgetId::from_key("view")),
-            ),
-        ),
-        (
-            FILE,
-            40.0,
-            (
-                PopoverPlacement::Left,
-                OverlayDismissal::Manual,
-                ActionSource::Menu,
-                ActionContext::Global,
-            ),
-        ),
-    ] {
+    let transitions = [
+        (EDIT, 80.0, (PopoverPlacement::Right, OverlayDismissal::Escape, ActionSource::Shortcut, ActionContext::Editor)),
+        (VIEW, 120.0, (PopoverPlacement::Above, OverlayDismissal::OutsideClickOrEscape, ActionSource::Programmatic, ActionContext::Widget(WidgetId::from_key("view")))),
+        (FILE, 40.0, (PopoverPlacement::Left, OverlayDismissal::Manual, ActionSource::Menu, ActionContext::Global)),
+    ];
+    for (active, x, policy) in transitions {
         assert_eq!(bar.move_next(), Some(active));
         let request = request(x, policy.0, policy.1, policy.2, policy.3);
         let expected = request.clone();
@@ -297,9 +273,25 @@ fn left_right_switching_reuses_one_root_and_skips_unavailable_headings() {
         assert_eq!(overlay.entry.dismissal, expected.dismissal);
         assert_eq!(overlay.source, expected.source);
         assert_eq!(overlay.context, expected.context);
-        assert_eq!(scene.surfaces()[0].entry(), &unrelated);
+        assert_eq!(&stack.entries()[0], &unrelated);
+        assert_eq!(&stack.entries()[1], &overlay.entry);
+        assert_eq!(&scene.surfaces()[0], &unrelated_surface);
+        assert_eq!(scene_menu(&scene, ROOT), &overlay);
     }
     assert_eq!(bar.move_previous(), Some(VIEW));
+    let request = request(120.0, PopoverPlacement::Above, OverlayDismissal::OutsideClickOrEscape,
+        ActionSource::Programmatic, ActionContext::Widget(WidgetId::from_key("view")));
+    let expected = request.clone();
+    let overlay = project(&bar, &mut stack, &mut scene, request);
+    assert_eq!(stack_ids(&stack), [unrelated.id, ROOT]);
+    assert_eq!(scene_ids(&scene), [unrelated.id, ROOT]);
+    assert_eq!(overlay.entry.dismissal, expected.dismissal);
+    assert_eq!(overlay.source, expected.source);
+    assert_eq!(overlay.context, expected.context);
+    assert_eq!(&stack.entries()[0], &unrelated);
+    assert_eq!(&stack.entries()[1], &overlay.entry);
+    assert_eq!(&scene.surfaces()[0], &unrelated_surface);
+    assert_eq!(scene_menu(&scene, ROOT), &overlay);
 }
 
 #[test]
@@ -315,9 +307,7 @@ fn replaced_descendant_loses_routes_focus_intents_and_actions() {
         menu_request(0.0, ActionContext::Global),
     );
     let (child, _) = add_descendants(&mut stack, &mut scene, 120);
-    let stale_row = WidgetId::from_raw(child.raw())
-        .child("overlay-scene")
-        .child(("overlay-action", "stale.120.child"));
+    let stale_row = action_row(child, "stale.120.child");
     let stale_point = Point::new(230.0, 30.0);
     let mut memory = UiMemory::new();
     let (route, before, frame) =
@@ -381,37 +371,30 @@ fn replaced_descendant_loses_routes_focus_intents_and_actions() {
 }
 
 #[test]
+#[rustfmt::skip]
 fn repeated_switching_and_menu_reconciliation_remain_deterministic() {
     let unrelated = unrelated_entry();
     let mut bar = MenuBar::from_menus(menu_definitions());
     let mut stack = OverlayStack::new();
     let mut scene = OverlayScene::new();
     stack.open(unrelated.clone());
-    scene.push(OverlaySceneSurface::passive(
-        unrelated.clone(),
-        "Unrelated",
-        "Unrelated",
-    ));
+    scene.push(OverlaySceneSurface::passive(unrelated.clone(), "Unrelated", "Unrelated"));
     assert!(bar.open(FILE));
-    project(
-        &bar,
-        &mut stack,
-        &mut scene,
-        menu_request(0.0, ActionContext::Global),
-    );
-    for (seed, active, x) in [(130, EDIT, 80.0), (140, VIEW, 120.0)] {
+    project(&bar, &mut stack, &mut scene, menu_request(0.0, ActionContext::Global));
+    for (seed, movement, active, x) in [(130, 0, VIEW, 120.0), (140, -1, EDIT, 80.0), (150, 1, VIEW, 120.0)] {
         let stale = add_descendants(&mut stack, &mut scene, seed);
-        assert_eq!(bar.move_next(), Some(active));
-        project(
-            &bar,
-            &mut stack,
-            &mut scene,
-            menu_request(x, ActionContext::Global),
-        );
+        assert!(match movement {
+            0 => bar.hover_open(active),
+            -1 => bar.move_previous() == Some(active),
+            _ => bar.move_next() == Some(active),
+        });
+        let overlay = project(&bar, &mut stack, &mut scene, menu_request(x, ActionContext::Global));
+        assert_eq!(stack_ids(&stack), [unrelated.id, ROOT]);
+        assert_eq!(scene_ids(&scene), [unrelated.id, ROOT]);
+        assert_eq!(scene_menu(&scene, ROOT), &overlay);
         assert!(!stack_ids(&stack).contains(&stale.0));
         assert!(!scene_ids(&scene).contains(&stale.1));
     }
-
     let mut definitions = bar.menus().to_vec();
     definitions.reverse();
     let stack_before = stack.clone();
@@ -420,50 +403,39 @@ fn repeated_switching_and_menu_reconciliation_remain_deterministic() {
     assert_eq!(bar.active_id(), Some(VIEW));
     assert_eq!(stack, stack_before);
     assert_eq!(scene, scene_before);
-    bar.replace_menus(
-        bar.menus()
-            .iter()
-            .filter(|menu| menu.id != FILE)
-            .cloned()
-            .collect::<Vec<_>>(),
-    );
+    bar.replace_menus(bar.menus().iter().filter(|menu| menu.id != FILE).cloned().collect::<Vec<_>>());
     assert_eq!(bar.active_id(), Some(VIEW));
     assert!(!bar.open(MenuBarMenuId::from_raw(999)) && !bar.open(HIDDEN) && !bar.open(EMPTY));
     assert_eq!(stack, stack_before);
     assert_eq!(scene, scene_before);
-
-    bar.replace_menus(
-        bar.menus()
-            .iter()
-            .filter(|menu| menu.id != VIEW)
-            .cloned()
-            .collect::<Vec<_>>(),
-    );
+    bar.replace_menus(bar.menus().iter().filter(|menu| menu.id != VIEW).cloned().collect::<Vec<_>>());
     assert_eq!(bar.active_id(), None);
     assert_eq!(stack, stack_before);
     assert_eq!(scene, scene_before);
     assert!(bar.open(EDIT));
-    let stale = add_descendants(&mut stack, &mut scene, 150);
-    let final_overlay = project(
-        &bar,
-        &mut stack,
-        &mut scene,
-        request(
-            80.0,
-            PopoverPlacement::Below,
-            OverlayDismissal::OutsideClickOrEscape,
-            ActionSource::Menu,
-            ActionContext::Editor,
-        ),
-    );
+    let stale = add_descendants(&mut stack, &mut scene, 160);
+    let request = request(80.0, PopoverPlacement::Below, OverlayDismissal::OutsideClickOrEscape,
+        ActionSource::Menu, ActionContext::Editor);
+    project(&bar, &mut stack, &mut scene, request);
     assert!(!stack_ids(&stack).contains(&stale.0));
     assert!(!scene_ids(&scene).contains(&stale.1));
     assert_eq!(scene_ids(&scene), [unrelated.id, ROOT]);
-    let mut queue = ActionQueue::new();
-    assert!(final_overlay.invoke_visible(0, &mut queue));
-    assert_eq!(
-        queue.pop_front().map(|item| item.action_id),
-        Some(ActionId::new("edit.copy"))
-    );
-    assert!(queue.is_empty());
+    let final_row = action_row(ROOT, "edit.copy");
+    let obsolete_rows = [action_row(ROOT, "file.open"), action_row(ROOT, "view.guides"),
+        action_row(stale.0, "stale.160.child"), action_row(stale.1, "stale.160.grandchild")];
+    let mut memory = UiMemory::new();
+    let point = Point::new(90.0, 30.0);
+    let (route, pressed, frame) = run_frame(&mut scene, &mut memory, pointer_input(point, Some(true)));
+    assert_eq!(route, PointerRoute::Target(final_row));
+    assert!(pressed.responses.iter().any(|response| response.id == final_row && response.state.pressed));
+    assert!(pressed.intents.is_empty() && frame.actions.is_empty());
+    let (route, released, mut frame) = run_frame(&mut scene, &mut memory, pointer_input(point, Some(false)));
+    assert_eq!(route, PointerRoute::Target(final_row));
+    let response = released.responses.iter().find(|response| response.id == final_row).expect("final Edit response");
+    assert!(response.clicked && !response.state.pressed);
+    assert!(released.responses.iter().all(|response| !obsolete_rows.contains(&response.id)));
+    let expected = stern_core::ActionInvocation::new(ActionId::new("edit.copy"), ActionSource::Menu, ActionContext::Editor);
+    assert_eq!(released.intents, [OverlaySceneIntent::Action(expected.clone())]);
+    assert_eq!(frame.actions.pop_front(), Some(expected));
+    assert!(frame.actions.is_empty());
 }
