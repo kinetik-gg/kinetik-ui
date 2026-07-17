@@ -258,6 +258,25 @@ fn text_style_transports_exactly_the_bounded_low_level_weight_and_feature_set() 
 }
 
 #[test]
+fn weight_assignment_inventory_distinguishes_assignments_from_field_access() {
+    for source in ["style.weight=600", "style.weight = local_weight"] {
+        let executable = mask_rust_comments_and_literals(source);
+        assert!(contains_weight_assignment(&executable));
+    }
+    for source in [
+        "layout.weight",
+        "layout.weight()",
+        "layout.weight == value",
+        "layout.weight => value",
+        r#"let claim = "style.weight = 600";"#,
+        "// style.weight = 600\nlayout.weight",
+    ] {
+        let executable = mask_rust_comments_and_literals(source);
+        assert!(!contains_weight_assignment(&executable));
+    }
+}
+
+#[test]
 fn production_weight_adoption_is_exactly_one_semantic_property_section() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let weight_use_indicators = [
@@ -266,7 +285,6 @@ fn production_weight_adoption_is_exactly_one_semantic_property_section() {
         ".with_weight(",
         "typography.weights",
         "weight:",
-        ".weight",
     ];
     let roots = [
         workspace.join("crates/stern-widgets/src"),
@@ -290,6 +308,7 @@ fn production_weight_adoption_is_exactly_one_semantic_property_section() {
         if weight_use_indicators
             .iter()
             .any(|indicator| executable.contains(indicator))
+            || contains_weight_assignment(&executable)
         {
             adopters.insert(relative.clone());
         }
@@ -433,6 +452,21 @@ fn struct_declaration<'a>(source: &'a str, name: &str) -> &'a str {
         .find("\n}")
         .expect("public struct declaration end");
     &declaration[..end + 2]
+}
+
+fn contains_weight_assignment(source: &str) -> bool {
+    let mut remaining = source;
+    while let Some(index) = remaining.find(".weight") {
+        let after_weight = &remaining[index + ".weight".len()..];
+        let after_whitespace = after_weight.trim_start_matches(char::is_whitespace);
+        if let Some(after_equals) = after_whitespace.strip_prefix('=')
+            && !after_equals.starts_with(['=', '>'])
+        {
+            return true;
+        }
+        remaining = after_weight;
+    }
+    false
 }
 
 fn collect_rust_sources(root: &Path, sources: &mut Vec<std::path::PathBuf>) {
