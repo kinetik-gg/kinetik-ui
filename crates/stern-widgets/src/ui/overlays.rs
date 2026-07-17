@@ -10,6 +10,38 @@ use crate::overlays::{
     OverlaySceneRow, OverlaySceneRowKind, overlay_semantics,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MenuColumnGeometry {
+    state: Rect,
+    icon: Rect,
+    label: Rect,
+    status: Rect,
+    shortcut: Rect,
+    disclosure: Rect,
+}
+
+fn menu_column_geometry(row: Rect) -> Option<MenuColumnGeometry> {
+    if !row.width.is_finite() || row.width < 272.0 {
+        return None;
+    }
+
+    let state = Rect::new(row.x + 8.0, row.y, 16.0, row.height);
+    let icon = Rect::new(state.max_x() + 8.0, row.y, 16.0, row.height);
+    let label = Rect::new(icon.max_x() + 8.0, row.y, row.width - 232.0, row.height);
+    let status = Rect::new(label.max_x() + 8.0, row.y, 16.0, row.height);
+    let shortcut = Rect::new(status.max_x() + 8.0, row.y, 112.0, row.height);
+    let disclosure = Rect::new(shortcut.max_x() + 8.0, row.y, 16.0, row.height);
+
+    Some(MenuColumnGeometry {
+        state,
+        icon,
+        label,
+        status,
+        shortcut,
+        disclosure,
+    })
+}
+
 impl Ui<'_> {
     /// Paints and evaluates one public overlay scene after its targets joined the frame plan.
     ///
@@ -310,4 +342,51 @@ fn primary_activation(input: &UiInput) -> Option<Point> {
         } => (*position).or(input.pointer.position),
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MenuColumnGeometry, Rect, menu_column_geometry};
+
+    #[test]
+    fn menu_column_geometry_conformance() {
+        assert_eq!(
+            menu_column_geometry(Rect::new(0.0, 0.0, 272.0, 28.0)),
+            Some(MenuColumnGeometry {
+                state: Rect::new(8.0, 0.0, 16.0, 28.0),
+                icon: Rect::new(32.0, 0.0, 16.0, 28.0),
+                label: Rect::new(56.0, 0.0, 40.0, 28.0),
+                status: Rect::new(104.0, 0.0, 16.0, 28.0),
+                shortcut: Rect::new(128.0, 0.0, 112.0, 28.0),
+                disclosure: Rect::new(248.0, 0.0, 16.0, 28.0),
+            })
+        );
+        assert_eq!(
+            menu_column_geometry(Rect::new(0.0, 0.0, 320.0, 36.0)),
+            Some(MenuColumnGeometry {
+                state: Rect::new(8.0, 0.0, 16.0, 36.0),
+                icon: Rect::new(32.0, 0.0, 16.0, 36.0),
+                label: Rect::new(56.0, 0.0, 88.0, 36.0),
+                status: Rect::new(152.0, 0.0, 16.0, 36.0),
+                shortcut: Rect::new(176.0, 0.0, 112.0, 36.0),
+                disclosure: Rect::new(296.0, 0.0, 16.0, 36.0),
+            })
+        );
+        assert_eq!(
+            menu_column_geometry(Rect::new(13.0, 17.0, 272.0, 24.0)),
+            Some(MenuColumnGeometry {
+                state: Rect::new(21.0, 17.0, 16.0, 24.0),
+                icon: Rect::new(45.0, 17.0, 16.0, 24.0),
+                label: Rect::new(69.0, 17.0, 40.0, 24.0),
+                status: Rect::new(117.0, 17.0, 16.0, 24.0),
+                shortcut: Rect::new(141.0, 17.0, 112.0, 24.0),
+                disclosure: Rect::new(261.0, 17.0, 16.0, 24.0),
+            })
+        );
+
+        let below_threshold = f32::from_bits(272.0_f32.to_bits() - 1);
+        for width in [below_threshold, 271.0, 264.0, 0.0] {
+            assert_eq!(menu_column_geometry(Rect::new(3.0, 5.0, width, 28.0)), None);
+        }
+    }
 }
