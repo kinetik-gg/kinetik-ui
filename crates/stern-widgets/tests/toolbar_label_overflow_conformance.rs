@@ -216,7 +216,7 @@ fn long_fitting_and_empty_labels_preserve_complete_source_and_explicit_policy() 
             Some(&mut store),
             &mut memory,
             BOUNDS,
-            &[action.clone()],
+            std::slice::from_ref(&action),
             &[80.0],
             UiInput::default(),
         );
@@ -409,6 +409,7 @@ fn rejected_and_layoutless_labels_preserve_complete_source_without_identity_leak
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn hot_translation_source_and_width_obey_retained_identity_boundaries() {
     let source = "Stable complete toolbar source remains retained across hot frames";
     let action = ActionDescriptor::new("toolbar.stable", source);
@@ -544,6 +545,7 @@ fn hot_translation_source_and_width_obey_retained_identity_boundaries() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn interaction_and_descriptor_metadata_preserve_toolbar_label_identity() {
     let source = "Metadata-rich complete toolbar source remains one retained identity";
     let plain = ActionDescriptor::new("toolbar.metadata", source);
