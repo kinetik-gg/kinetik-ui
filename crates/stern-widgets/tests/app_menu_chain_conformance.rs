@@ -256,9 +256,10 @@ fn left_right_switching_reuses_one_root_and_skips_unavailable_headings() {
     ));
     assert!(bar.open(FILE));
 
-    for (active, policy) in [
+    for (active, x, policy) in [
         (
             EDIT,
+            80.0,
             (
                 PopoverPlacement::Right,
                 OverlayDismissal::Escape,
@@ -268,6 +269,7 @@ fn left_right_switching_reuses_one_root_and_skips_unavailable_headings() {
         ),
         (
             VIEW,
+            120.0,
             (
                 PopoverPlacement::Above,
                 OverlayDismissal::OutsideClickOrEscape,
@@ -277,6 +279,7 @@ fn left_right_switching_reuses_one_root_and_skips_unavailable_headings() {
         ),
         (
             FILE,
+            40.0,
             (
                 PopoverPlacement::Left,
                 OverlayDismissal::Manual,
@@ -286,13 +289,7 @@ fn left_right_switching_reuses_one_root_and_skips_unavailable_headings() {
         ),
     ] {
         assert_eq!(bar.move_next(), Some(active));
-        let request = request(
-            40.0 * active.raw() as f32,
-            policy.0,
-            policy.1,
-            policy.2,
-            policy.3,
-        );
+        let request = request(x, policy.0, policy.1, policy.2, policy.3);
         let expected = request.clone();
         let overlay = project(&bar, &mut stack, &mut scene, request);
         assert_eq!(stack_ids(&stack), [unrelated.id, ROOT]);
@@ -402,14 +399,14 @@ fn repeated_switching_and_menu_reconciliation_remain_deterministic() {
         &mut scene,
         menu_request(0.0, ActionContext::Global),
     );
-    for (seed, active) in [(130, EDIT), (140, VIEW)] {
+    for (seed, active, x) in [(130, EDIT, 80.0), (140, VIEW, 120.0)] {
         let stale = add_descendants(&mut stack, &mut scene, seed);
         assert_eq!(bar.move_next(), Some(active));
         project(
             &bar,
             &mut stack,
             &mut scene,
-            menu_request(active.raw() as f32 * 40.0, ActionContext::Global),
+            menu_request(x, ActionContext::Global),
         );
         assert!(!stack_ids(&stack).contains(&stale.0));
         assert!(!scene_ids(&scene).contains(&stale.1));
