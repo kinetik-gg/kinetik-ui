@@ -955,7 +955,10 @@ fn context_escape_dismissal_restores_outliner_trigger_focus_without_mutating_sel
         &mut state,
         &mut memory,
     );
-    assert_eq!(opened.output.context_opened, state.context_target().cloned());
+    assert_eq!(
+        opened.output.context_opened,
+        state.context_target().cloned()
+    );
     assert_eq!(memory.focused(), Some(trigger));
     let menu = run_frame(
         &model,
@@ -990,13 +993,7 @@ fn context_escape_dismissal_restores_outliner_trigger_focus_without_mutating_sel
     assert!(dismissed.frame.actions.is_empty());
     assert_eq!(dismissed.frame.repaint, RepaintRequest::NextFrame);
 
-    let settled = run_frame(
-        &model,
-        cfg,
-        &mut state,
-        &mut memory,
-        UiInput::default(),
-    );
+    let settled = run_frame(&model, cfg, &mut state, &mut memory, UiInput::default());
     assert_eq!(memory.focused(), Some(trigger));
     assert_eq!(state.cursor.active(), expected_cursor);
     assert_eq!(state.selection.selected(), expected_selection);

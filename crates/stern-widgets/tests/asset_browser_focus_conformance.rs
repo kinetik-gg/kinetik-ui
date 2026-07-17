@@ -1460,13 +1460,7 @@ fn context_escape_dismissal_restores_asset_trigger_focus_without_mutating_select
         UiInput::default(),
     );
     let trigger_point = item_rect(&idle, id(2)).rect.center();
-    let selected = click(
-        trigger_point,
-        &model,
-        cfg.clone(),
-        &mut state,
-        &mut memory,
-    );
+    let selected = click(trigger_point, &model, cfg.clone(), &mut state, &mut memory);
     let trigger = selected.root.child(("asset-browser-item", 2_u64));
     let expected_cursor = state.cursor.active();
     let expected_selection = state.selection.selected();
@@ -1474,14 +1468,11 @@ fn context_escape_dismissal_restores_asset_trigger_focus_without_mutating_select
     assert_eq!(expected_selection, vec![id(2)]);
     assert_eq!(memory.focused(), Some(trigger));
 
-    let opened = context_click(
-        trigger_point,
-        &model,
-        cfg.clone(),
-        &mut state,
-        &mut memory,
+    let opened = context_click(trigger_point, &model, cfg.clone(), &mut state, &mut memory);
+    assert_eq!(
+        opened.output.context_opened,
+        state.context_target().cloned()
     );
-    assert_eq!(opened.output.context_opened, state.context_target().cloned());
     assert_eq!(memory.focused(), Some(trigger));
     let menu = run_frame_with_options(
         &model,
