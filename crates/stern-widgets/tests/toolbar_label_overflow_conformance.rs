@@ -226,3 +226,156 @@ fn long_fitting_and_empty_labels_preserve_complete_source_and_explicit_policy() 
         assert!(run.frame.warnings.is_empty());
     }
 }
+
+#[test]
+fn narrow_spans_and_paragraph_sources_keep_registered_full_source_policy() {
+    for row_width in [16.0_f32, 15.999, 1.0] {
+        let source = "Complete narrow toolbar source remains visible";
+        let action = ActionDescriptor::new("toolbar.narrow", source);
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let run = run_toolbar(
+            Some(&mut store),
+            &mut memory,
+            BOUNDS,
+            &[action],
+            &[row_width],
+            UiInput::default(),
+        );
+        let text = toolbar_text(&run.frame, source);
+        let stored = store
+            .stored_layout(text.layout.expect("registered narrow toolbar policy"))
+            .expect("resident narrow toolbar policy");
+
+        assert_eq!(stored.key.width_bits, 0.0_f32.to_bits());
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert_eq!(stored.key.text, source);
+        assert!(!stored.layout.is_elided());
+        assert_eq!(marker_count(&store, text), 0);
+        assert_eq!(text.text, source);
+        assert_eq!(
+            run.frame
+                .semantics
+                .get(run.row_ids[0])
+                .unwrap()
+                .label
+                .as_deref(),
+            Some(source)
+        );
+    }
+
+    for source in [
+        "First complete line\nSecond complete line",
+        "First complete line\r\nSecond complete line",
+        "First complete paragraph\u{2029}Second complete paragraph",
+    ] {
+        let action = ActionDescriptor::new("toolbar.paragraph", source);
+        let mut store = TextLayoutStore::new();
+        let mut memory = UiMemory::new();
+        let run = run_toolbar(
+            Some(&mut store),
+            &mut memory,
+            BOUNDS,
+            &[action],
+            &[80.0],
+            UiInput::default(),
+        );
+        let text = toolbar_text(&run.frame, source);
+        let stored = store
+            .stored_layout(text.layout.expect("registered paragraph toolbar policy"))
+            .expect("resident paragraph toolbar policy");
+
+        assert_eq!(stored.key.text, source);
+        assert_eq!(stored.key.overflow, TextOverflow::EndEllipsis);
+        assert!(!stored.layout.is_elided());
+        assert_eq!(marker_count(&store, text), 0);
+        assert_eq!(text.text, source);
+        assert_eq!(
+            run.frame
+                .semantics
+                .get(run.row_ids[0])
+                .unwrap()
+                .label
+                .as_deref(),
+            Some(source)
+        );
+    }
+}
+
+#[test]
+fn rejected_and_layoutless_labels_preserve_complete_source_without_identity_leaks() {
+    const RETAINED_PAYLOAD_CEILING: usize = 32 * 1024 * 1024;
+
+    let mut store = TextLayoutStore::new();
+    let mut memory = UiMemory::new();
+    let warm = ActionDescriptor::new("toolbar.warm", "Warm retained toolbar label");
+    let _ = run_toolbar(
+        Some(&mut store),
+        &mut memory,
+        BOUNDS,
+        &[warm],
+        &[80.0],
+        UiInput::default(),
+    );
+    let accounting = (
+        store.len(),
+        store.retained_payload_bytes(),
+        store.change_cursor(),
+    );
+
+    let source = "x".repeat(RETAINED_PAYLOAD_CEILING + 1);
+    let rejected = ActionDescriptor::new("toolbar.rejected", &source);
+    let run = run_toolbar(
+        Some(&mut store),
+        &mut memory,
+        BOUNDS,
+        &[rejected],
+        &[80.0],
+        UiInput::default(),
+    );
+    let text = toolbar_text(&run.frame, &source);
+
+    assert_eq!(text.layout, None);
+    assert_eq!(text.text, source);
+    assert_eq!(
+        (
+            store.len(),
+            store.retained_payload_bytes(),
+            store.change_cursor()
+        ),
+        accounting
+    );
+    assert_eq!(
+        run.frame
+            .semantics
+            .get(run.row_ids[0])
+            .unwrap()
+            .label
+            .as_deref(),
+        Some(source.as_str())
+    );
+    assert!(run.frame.actions.is_empty());
+    assert!(run.frame.warnings.is_empty());
+
+    let layoutless_source = "Layoutless complete chrome toolbar source";
+    let layoutless = ActionDescriptor::new("toolbar.layoutless", layoutless_source);
+    let mut layoutless_memory = UiMemory::new();
+    let run = run_toolbar(
+        None,
+        &mut layoutless_memory,
+        BOUNDS,
+        &[layoutless],
+        &[80.0],
+        UiInput::default(),
+    );
+    assert_eq!(toolbar_text(&run.frame, layoutless_source).layout, None);
+    assert_eq!(
+        run.frame
+            .semantics
+            .get(run.row_ids[0])
+            .unwrap()
+            .label
+            .as_deref(),
+        Some(layoutless_source)
+    );
+}
