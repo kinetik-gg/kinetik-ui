@@ -64,6 +64,18 @@ fn optical_box() -> Rect {
     )
 }
 
+fn pointer_input(down: bool, pressed: bool, released: bool) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(OUTER.center()),
+            primary: PointerButtonState::new(down, pressed, released),
+            click_count: u8::from(released),
+            ..PointerInput::default()
+        },
+        ..UiInput::default()
+    }
+}
+
 fn assert_outer_contract(output: &WidgetOutput) {
     let response = output.response.expect("icon response");
     assert_eq!(response.id, widget_id());
@@ -180,4 +192,57 @@ fn registered_missing_and_unpaintable_icons_keep_exact_outer_contract_bounds() {
     }
     assert_eq!(missing_before.primitives, missing_after.primitives);
     assert_ne!(registered.primitives, missing_before.primitives);
+}
+
+#[test]
+fn icon_bounds_survive_idle_hover_press_and_disabled_states() {
+    let icon = icon_id(11);
+    let mut icons = IconLibrary::new();
+    icons.register(icon, graphic(3.0));
+
+    let idle = render_vector(
+        &icons,
+        icon,
+        &UiInput::default(),
+        &mut UiMemory::new(),
+        false,
+    );
+    let hovered = render_vector(
+        &icons,
+        icon,
+        &pointer_input(false, false, false),
+        &mut UiMemory::new(),
+        false,
+    );
+    let pressed = render_vector(
+        &icons,
+        icon,
+        &pointer_input(true, true, false),
+        &mut UiMemory::new(),
+        false,
+    );
+    let disabled = render_vector(
+        &icons,
+        icon,
+        &pointer_input(true, true, false),
+        &mut UiMemory::new(),
+        true,
+    );
+
+    for output in [&idle, &hovered, &pressed, &disabled] {
+        assert_outer_contract(output);
+        assert_icon_tail_contained(output, 1);
+    }
+    assert!(!idle.response.expect("idle response").state.hovered);
+    assert!(hovered.response.expect("hover response").state.hovered);
+    assert!(pressed.response.expect("pressed response").state.pressed);
+
+    let disabled_response = disabled.response.expect("disabled response");
+    assert!(disabled_response.state.disabled);
+    assert!(!disabled_response.clicked);
+    assert!(!disabled_response.keyboard_activated);
+    let disabled_semantic = &disabled.semantics[0];
+    assert!(disabled_semantic.state.disabled);
+    assert!(!disabled_semantic.focusable);
+    assert_eq!(disabled_semantic.label.as_deref(), Some(LABEL));
 }
