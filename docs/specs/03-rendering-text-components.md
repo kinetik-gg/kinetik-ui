@@ -899,10 +899,11 @@ source/context, queue order, and action-only semantic label remain authoritative
 This is bounded Partial evidence for `STERN-MENU-COMP-002` and `STERN-MENU-001`;
 the existing bounded Partial shortcut dispositions are preserved. Unverified
 areas are active-platform and locale discovery, non-English translation
-quality, check/radio/icon/status/destructive painting, mixed state, right-to-left
-layout, narrow-menu columns, work-area fitting and scrolling, platform-menu
-entry, context-menu convergence, browser/raster/GPU output, manual review, and
-reference-image equivalence. Maturity does not advance beyond bounded Partial.
+quality, sequential chords, check/radio/icon/status/destructive painting, mixed
+state, right-to-left layout, narrow-menu columns, work-area fitting and
+scrolling, platform-menu entry, context-menu convergence, browser/raster/GPU
+output, manual review, and reference-image equivalence. Maturity does not
+advance beyond bounded Partial.
 
 Overlay primitives must be first-class because menus, tooltips, command palettes, dropdowns, context menus, drag previews, and popovers often escape normal parent clipping.
 
