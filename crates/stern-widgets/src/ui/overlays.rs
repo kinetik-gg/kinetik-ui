@@ -93,7 +93,12 @@ impl Ui<'_> {
             .any(|event| event.state == KeyState::Pressed && matches!(event.key, Key::Escape));
         let now_millis = u64::try_from(self.time().now.as_millis()).unwrap_or(u64::MAX);
 
+        let mut escape_consumed = false;
         if let Some(surface_index) = scene.top_keyboard_surface() {
+            if escape_pressed && scene.clear_command_palette_query(surface_index) {
+                self.request_repaint(RepaintRequest::NextFrame);
+                escape_consumed = true;
+            }
             for event in &keyboard_events {
                 if event.state != KeyState::Pressed || matches!(event.key, Key::Escape) {
                     continue;
@@ -149,7 +154,9 @@ impl Ui<'_> {
             }
         }
 
-        if let Some(request) = scene.dismissal_request(outside_activation, escape_pressed) {
+        if let Some(request) =
+            scene.dismissal_request(outside_activation, escape_pressed && !escape_consumed)
+        {
             self.record_overlay_intent(&mut output, OverlaySceneIntent::Dismiss(request));
         }
 
