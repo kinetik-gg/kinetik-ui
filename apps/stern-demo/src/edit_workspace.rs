@@ -159,7 +159,7 @@ impl EditWorkspace {
             self.overlay = Some(command_palette_scene(actions, bounds));
         }
         let context_target = ui.make_id("edit-workspace.shared-action-context");
-        let route_context_pointer = secondary_pointer_active(ui.input());
+        let route_context_pointer = secondary_route_active(ui.input());
 
         ui.resolve_pointer_targets(|plan| {
             let mut next = dock_scene.declare_pointer_targets_with_content(
@@ -292,7 +292,7 @@ fn command_palette_requested(input: &UiInput) -> bool {
     })
 }
 
-fn secondary_pointer_active(input: &UiInput) -> bool {
+fn secondary_route_active(input: &UiInput) -> bool {
     let secondary = input.pointer.secondary;
     secondary.down || secondary.pressed || secondary.released
 }
