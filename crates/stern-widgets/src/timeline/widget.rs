@@ -406,6 +406,10 @@ fn paint(ui: &mut Ui<'_>, widget: &TimelineWidget<'_>) {
             theme.colors.accent.pressed,
         ));
     }
+    paint_ruler(ui, widget);
+}
+fn paint_ruler(ui: &mut Ui<'_>, widget: &TimelineWidget<'_>) {
+    let theme = *ui.theme();
     for tick in TimelineRulerTickRequest::new(
         widget.scale.visible_range(),
         widget.config.frame_rate,
