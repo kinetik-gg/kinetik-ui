@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use stern_core::{
-    ActionDescriptor, ActionId, ActionInvocation, FrameContext, FrameOutput, Key, KeyEvent,
-    KeyState, KeyboardInput, Modifiers, PhysicalSize, Point, PointerButtonState, PointerInput,
-    PointerOrder, Rect, ScaleFactor, Size, TimeInfo, UiInput, UiMemory, ViewportInfo,
+    ActionDescriptor, ActionId, ActionInvocation, ActionSource, FrameContext, FrameOutput, Key,
+    KeyEvent, KeyState, KeyboardInput, Modifiers, PhysicalSize, Point, PointerButtonState,
+    PointerInput, PointerOrder, Rect, ScaleFactor, Size, TimeInfo, UiInput, UiMemory, ViewportInfo,
     default_dark_theme,
 };
 use stern_widgets::asset_browser::{
@@ -82,6 +82,16 @@ fn pointer(point: Point, primary: bool, down: bool) -> UiInput {
     }
     UiInput {
         pointer,
+        ..UiInput::default()
+    }
+}
+
+fn position_only(point: Point) -> UiInput {
+    UiInput {
+        pointer: PointerInput {
+            position: Some(point),
+            ..PointerInput::default()
+        },
         ..UiInput::default()
     }
 }
@@ -185,7 +195,7 @@ fn entry_input(entry: Entry) -> UiInput {
 #[rustfmt::skip]
 fn prove_convergence<S>(mut fresh: impl FnMut() -> S, mut selected: impl FnMut(&S) -> Vec<ItemId>,
     mut run: impl FnMut(&mut S, &mut UiMemory, UiInput, bool) -> Run,
-    target: CollectionContextTarget) {
+    target: &CollectionContextTarget) {
     let mut expected: Option<(Request, ActionInvocation)> = None;
     for entry in [Entry::Menu, Entry::ShiftF10, Entry::Pointer] {
         let mut state = fresh();
@@ -199,18 +209,21 @@ fn prove_convergence<S>(mut fresh: impl FnMut() -> S, mut selected: impl FnMut(&
         } else {
             run(&mut state, &mut memory, entry_input(entry), false)
         };
-        assert_eq!(opened.opened, Some(target.clone()));
+        assert_eq!(opened.opened.as_ref(), Some(target));
         assert_eq!(selected(&state), vec![id(1)]);
         assert!(opened.requests.is_empty() && opened.frame.actions.is_empty());
         let shown = run(&mut state, &mut memory, UiInput::default(), false);
         let (inventory, center) = menu_evidence(&shown.frame);
         assert_eq!(inventory, [("Open", false), ("Remove", true)]);
-        let hover = run(&mut state, &mut memory, pointer(center, true, true), false);
-        assert!(hover.requests.is_empty() && hover.frame.actions.is_empty());
+        let neutral = run(&mut state, &mut memory, position_only(center), false);
+        assert!(neutral.requests.is_empty() && neutral.frame.actions.is_empty());
+        let press = run(&mut state, &mut memory, pointer(center, true, true), false);
+        assert!(press.requests.is_empty() && press.frame.actions.is_empty());
         let mut invoked = run(&mut state, &mut memory, pointer(center, true, false), false);
         assert_eq!(invoked.requests.len(), 1);
         let evidence = (invoked.requests.pop().expect("typed request"),
             invoked.frame.actions.pop_front().expect("menu invocation"));
+        assert_eq!(evidence.1.source, ActionSource::Menu);
         assert_eq!(expected.get_or_insert_with(|| evidence.clone()), &evidence);
         assert!(invoked.requests.is_empty() && invoked.frame.actions.is_empty());
     }
@@ -244,7 +257,7 @@ fn asset_browser_pointer_menu_key_and_shift_f10_converge() {
         },
         |state| state.selection.selected(),
         |state, memory, input, disabled| asset_run(&model, state, memory, input, disabled),
-        target,
+        &target,
     );
 }
 
@@ -260,6 +273,6 @@ fn outliner_pointer_menu_key_and_shift_f10_converge() {
         },
         |state| state.selection.selected(),
         |state, memory, input, disabled| outliner_run(&model, state, memory, input, disabled),
-        target,
+        &target,
     );
 }

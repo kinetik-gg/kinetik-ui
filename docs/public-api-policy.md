@@ -375,9 +375,9 @@ Partial. Candidate remains Candidate.
 Public `Key::ContextMenu` is a prerelease breaking enum addition; exhaustive
 `Key` matches must handle it or add a wildcard. The two Asset Browser and
 Outliner tests in issue #750 prove that a real focused selection converges on
-the same target, ordered command descriptors, enabled command request, and
-application action through secondary click, the Menu key, and unmodified
-`Shift+F10`. Released Menu keys, unfocused collections, and disabled
+the same target, ordered enabled/disabled command inventory, enabled command
+request, and application action through secondary click, the Menu key, and
+unmodified `Shift+F10`. Released Menu keys, unfocused collections, and disabled
 collections fail closed. This advances only the covered portion of
 `STERN-CONTEXT-002` to bounded Partial; Candidate remains Candidate.
 
