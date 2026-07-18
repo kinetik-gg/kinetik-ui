@@ -787,8 +787,18 @@ fn command_palette_escape_clears_query_before_dismissal() {
     scene.push(OverlaySceneSurface::command_palette("Commands", palette));
     let mut memory = UiMemory::new();
 
-    let (_, first, first_frame) =
-        run_frame(&mut scene, &mut memory, pressed_key(Key::Escape), false);
+    let (_, armed, armed_frame) = run_frame(&mut scene, &mut memory, pressed_at(30.0, 30.0), false);
+    assert!(armed.intents.is_empty());
+    assert!(armed_frame.actions.is_empty());
+    let mut consumed_input = released_at(30.0, 30.0);
+    consumed_input.keyboard = KeyboardInput {
+        modifiers: Modifiers::default(),
+        events: [Key::Escape, Key::Enter]
+            .into_iter()
+            .map(|key| KeyEvent::new(key, KeyState::Pressed, Modifiers::default(), false))
+            .collect(),
+    };
+    let (_, first, first_frame) = run_frame(&mut scene, &mut memory, consumed_input, false);
     assert!(first.intents.is_empty());
     assert!(first_frame.actions.is_empty());
     assert_eq!(first_frame.repaint, stern_core::RepaintRequest::NextFrame);
