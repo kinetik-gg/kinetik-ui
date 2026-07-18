@@ -768,6 +768,50 @@ fn command_palette_paints_query_and_invokes_the_selected_match() {
 }
 
 #[test]
+fn command_palette_escape_clears_query_before_dismissal() {
+    let overlay_id = OverlayId::from_raw(71);
+    let mut palette = CommandPaletteOverlay::from_actions(
+        OverlayEntry::new(
+            overlay_id,
+            OverlayKind::CommandPalette,
+            Rect::new(20.0, 20.0, 220.0, 120.0),
+        )
+        .modal(true)
+        .dismiss_on(OverlayDismissal::OutsideClickOrEscape),
+        &[action("file.save", "Save"), action("file.open", "Open")],
+        ActionContext::Global,
+    );
+    palette.palette.query = "save".to_owned();
+    palette.palette.selected = usize::MAX;
+    let mut scene = OverlayScene::new();
+    scene.push(OverlaySceneSurface::command_palette("Commands", palette));
+    let mut memory = UiMemory::new();
+
+    let (_, first, first_frame) =
+        run_frame(&mut scene, &mut memory, pressed_key(Key::Escape), false);
+    assert!(first.intents.is_empty());
+    assert!(first_frame.actions.is_empty());
+    assert_eq!(first_frame.repaint, stern_core::RepaintRequest::NextFrame);
+    assert_eq!(scene.surfaces().len(), 1);
+    let OverlaySceneSurface::CommandPalette { overlay, .. } = &scene.surfaces()[0] else {
+        panic!("command palette surface");
+    };
+    assert_eq!(overlay.entry.id, overlay_id);
+    assert!(overlay.palette.query.is_empty());
+    assert_eq!(overlay.palette.selected, 1);
+
+    let (_, second, second_frame) =
+        run_frame(&mut scene, &mut memory, pressed_key(Key::Escape), false);
+    assert!(second_frame.actions.is_empty());
+    assert_eq!(second.intents.len(), 1);
+    let OverlaySceneIntent::Dismiss(request) = second.intents[0] else {
+        panic!("command palette dismissal");
+    };
+    assert_eq!(request.overlay_id, overlay_id);
+    assert_eq!(request.reason, OverlaySceneDismissReason::Escape);
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn every_overlay_kind_paints_an_ordered_themed_surface_and_children() {
     let mut scene = OverlayScene::new();
