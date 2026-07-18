@@ -1,23 +1,31 @@
+use std::collections::BTreeMap;
+
 use stern::core::{
     ActionContext, ActionInvocation, ActionSource, Axis, Key, KeyState, PointerOrder,
-    PointerTarget, Rect, Size, TextureId, UiInput, WidgetId,
+    PointerTarget, PointerTargetPlan, Rect, Size, TextureId, UiInput, WidgetId,
 };
 use stern::render::{RenderImage, RenderImageSampling, RenderResources, TextureResource};
+use stern::text::TextEditState;
 use stern::widgets::asset_browser::{
     AssetBrowserConfig, AssetBrowserItem, AssetBrowserLayout, AssetBrowserModel,
     AssetBrowserRequest, AssetBrowserState, AssetBrowserViewMode,
 };
 use stern::widgets::dock::{DockScene, DockSceneConfig};
-use stern::widgets::inspector::PropertyGridConfig;
+use stern::widgets::inspector::{
+    InspectorPickerCommit, InspectorPickerState, PropertyGridConfig, PropertyGridIntent,
+    property_grid_row_affordance_rects, property_grid_row_widget_id, property_grid_value_widget_id,
+};
 use stern::widgets::{
     ChromeScene, ChromeSceneConfig, ChromeSceneIntent, ChromeSceneItemKey, CommandPaletteOverlay,
-    Dock, DockNode, Frame, FrameId, FrameTab, GridColumns, GridLayout, InlineEditDraftDisposition,
-    InlineEditDraftPolicy, InlineEditFocusLossPolicy, InlineEditRequest, ItemId, ListLayout, Menu,
-    MenuBar, MenuBarMenu, MenuBarMenuId, MenuBarOverlayRequest, MenuOverlay, OverlayDismissal,
-    OverlayId, OverlayKind, OverlayScene, OverlaySceneIntent, OverlaySceneSurface, PanZoom, Panel,
-    PanelId, PopoverPlacement, PropertyGridRow, StatusBar, StatusItem, StatusItemId,
-    StatusItemKind, TabStrip, Toolbar, ToolbarGroup, ToolbarGroupId, Ui, ViewportSurface,
-    ViewportWidget, ViewportWidgetConfig,
+    Dock, DockNode, DropdownItem, DropdownItemId, DropdownModel, Frame, FrameId, FrameTab,
+    GridColumns, GridLayout, InlineEditDraftDisposition, InlineEditDraftPolicy,
+    InlineEditFocusLossPolicy, InlineEditRequest, ItemId, ListLayout, Menu, MenuBar, MenuBarMenu,
+    MenuBarMenuId, MenuBarOverlayRequest, MenuOverlay, NumericInputDraft, NumericScrubInputConfig,
+    OverlayDismissal, OverlayId, OverlayKind, OverlayScene, OverlaySceneIntent,
+    OverlaySceneSurface, PanZoom, Panel, PanelId, PopoverPlacement, PropertyGridRow,
+    SelectFieldConfig, StatusBar, StatusItem, StatusItemId, StatusItemKind, TabStrip,
+    TextFieldAccess, Toolbar, ToolbarGroup, ToolbarGroupId, Ui, ViewportSurface, ViewportWidget,
+    ViewportWidgetConfig,
 };
 
 use crate::{DemoActionRegistry, DemoWorkspace};
@@ -31,6 +39,12 @@ const APPLICATION_MENU: MenuBarMenuId = MenuBarMenuId::from_raw(1);
 const APPLICATION_MENU_OVERLAY: OverlayId = OverlayId::from_raw(1);
 const CONTEXT_MENU_OVERLAY: OverlayId = OverlayId::from_raw(2);
 const COMMAND_PALETTE_OVERLAY: OverlayId = OverlayId::from_raw(3);
+const KIND_PICKER_OVERLAY: OverlayId = OverlayId::from_raw(4);
+const INSPECTOR_SECTION: ItemId = ItemId::from_raw(100);
+const NAME_PROPERTY: ItemId = ItemId::from_raw(101);
+const KIND_PROPERTY: ItemId = ItemId::from_raw(102);
+const VISIBLE_PROPERTY: ItemId = ItemId::from_raw(103);
+const OPACITY_PROPERTY: ItemId = ItemId::from_raw(104);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssetKind {
@@ -49,6 +63,25 @@ impl AssetKind {
             Self::Text => "Text layer",
         }
     }
+
+    const fn dropdown_id(self) -> DropdownItemId {
+        DropdownItemId::from_raw(match self {
+            Self::Raster => 1,
+            Self::Vector => 2,
+            Self::Adjustment => 3,
+            Self::Text => 4,
+        })
+    }
+
+    const fn from_dropdown(id: DropdownItemId) -> Option<Self> {
+        match id.raw() {
+            1 => Some(Self::Raster),
+            2 => Some(Self::Vector),
+            3 => Some(Self::Adjustment),
+            4 => Some(Self::Text),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,16 +89,35 @@ struct AssetRecord {
     id: ItemId,
     name: String,
     kind: AssetKind,
+    visible: bool,
+    opacity: f32,
     selected: bool,
+    defaults: AssetDefaults,
+}
+
+#[derive(Debug, Clone)]
+struct AssetDefaults {
+    name: String,
+    kind: AssetKind,
+    visible: bool,
+    opacity: f32,
 }
 
 impl AssetRecord {
-    fn new(id: u64, name: &str, kind: AssetKind) -> Self {
+    fn new(id: u64, name: &str, kind: AssetKind, visible: bool, opacity: f32) -> Self {
         Self {
             id: ItemId::from_raw(id),
             name: name.to_owned(),
             kind,
+            visible,
+            opacity,
             selected: id == 1,
+            defaults: AssetDefaults {
+                name: name.to_owned(),
+                kind,
+                visible,
+                opacity,
+            },
         }
     }
 }
@@ -75,6 +127,8 @@ pub(crate) struct EditWorkspace {
     dock: Dock,
     assets: Vec<AssetRecord>,
     asset_browser: AssetBrowserState,
+    opacity_drafts: BTreeMap<ItemId, TextEditState>,
+    inspector_picker: InspectorPickerState,
     pan_zoom: PanZoom,
     texture: TextureResource,
     overlay: Option<OverlayScene>,
@@ -89,11 +143,17 @@ impl EditWorkspace {
         let _ = asset_browser
             .cursor
             .activate(&model.projection(), assets[0].id);
+        let opacity_drafts = assets
+            .iter()
+            .map(|asset| (asset.id, TextEditState::new(asset.opacity.to_string())))
+            .collect();
 
         Self {
             dock: edit_dock(),
             assets,
             asset_browser,
+            opacity_drafts,
+            inspector_picker: InspectorPickerState::new(),
             pan_zoom: PanZoom::default(),
             texture: viewport_texture(),
             overlay: None,
@@ -127,11 +187,11 @@ impl EditWorkspace {
             workspace_tab(101, "Edit Workspace", workspace == DemoWorkspace::Edit),
             workspace_tab(102, "Graph Workspace", workspace == DemoWorkspace::Graph),
         ]);
-        let status_bar = StatusBar::from_items([StatusItem::new(
-            StatusItemId::from_raw(1),
-            "Revision",
-            format!("Applied revision {revision}"),
-            StatusItemKind::Ready,
+        let status_bar = StatusBar::from_items([workspace_status(
+            revision,
+            self.asset_browser
+                .rename_conflict()
+                .map(|conflict| conflict.message.as_str()),
         )]);
         let chrome = ChromeScene::new(
             chrome_config(layout, actions),
@@ -147,9 +207,21 @@ impl EditWorkspace {
 
         let assets_bounds = panel_bounds(&dock_scene, ASSETS_PANEL).map(|rect| rect.inset(8.0));
         let viewport_bounds = panel_bounds(&dock_scene, VIEWPORT_PANEL).map(|rect| rect.inset(8.0));
+        let inspector_bounds =
+            panel_bounds(&dock_scene, INSPECTOR_PANEL).map(|rect| rect.inset(8.0));
+        let inspector_root = panel_widget_id(&dock_scene, INSPECTOR_PANEL).map(|panel| {
+            ui.make_id(("dock-panel-content", panel.raw()))
+                .child("selected-asset")
+        });
+        let inspector_rows = self
+            .assets
+            .iter()
+            .find(|asset| asset.selected)
+            .map_or_else(Vec::new, inspector_rows);
         let asset_model = asset_browser_model(&self.assets);
         let asset_browser =
             prepare_asset_browser(ui, assets_bounds, &asset_model, &self.asset_browser);
+        let picker_scene = self.inspector_picker.scene().cloned();
         let viewport = viewport_bounds.map(|rect| {
             ui.prepare_viewport_widget(ViewportWidgetConfig::new(
                 WidgetId::from_key("edit-workspace.viewport"),
@@ -163,42 +235,34 @@ impl EditWorkspace {
         });
 
         open_palette_if_requested(&mut self.overlay, ui.input(), actions, bounds);
-        let context_target = ui.make_id("edit-workspace.shared-action-context");
-        let route_context_pointer = secondary_route_active(ui.input());
+        let context_route = workspace_context_route(ui, viewport_bounds);
 
-        ui.resolve_pointer_targets(|plan| {
-            let mut next = dock_scene.declare_pointer_targets_with_content(
-                plan,
-                PointerOrder::new(0),
-                |plan, mut next| {
-                    if let Some(asset_browser) = &asset_browser {
-                        next =
-                            asset_browser.declare_pointer_targets(plan, next, &self.asset_browser);
-                    }
-                    if let Some(viewport) = &viewport {
-                        next = viewport.declare_pointer_targets(plan, next);
-                    }
-                    next
-                },
-            );
-            if route_context_pointer && let Some(rect) = viewport_bounds {
-                plan.target(PointerTarget::new(context_target, rect, next));
-                next = PointerOrder::new(next.raw() + 1);
-            }
-            next = chrome.declare_pointer_targets(plan, next);
-            if let Some(overlay) = &self.overlay {
-                overlay.declare_pointer_targets(plan, next);
-            }
-        })
-        .expect("Edit workspace pointer targets are valid");
+        declare_workspace_targets(
+            ui,
+            &dock_scene,
+            asset_browser.as_ref(),
+            &self.asset_browser,
+            viewport.as_ref(),
+            inspector_bounds,
+            inspector_root,
+            &inspector_rows,
+            context_route,
+            &chrome,
+            self.overlay.as_ref(),
+            picker_scene.as_ref(),
+        );
 
         compose_workspace_panels(
             ui,
             &dock_scene,
             asset_browser.as_ref(),
             viewport.as_ref(),
+            inspector_bounds,
+            &inspector_rows,
             &mut self.asset_browser,
             &mut self.assets,
+            &mut self.opacity_drafts,
+            &mut self.inspector_picker,
             &mut self.pan_zoom,
         );
         let context_requested = shared_context_requested(ui, viewport_bounds);
@@ -261,6 +325,65 @@ impl EditWorkspace {
     }
 }
 
+fn workspace_context_route(
+    ui: &Ui<'_>,
+    viewport_bounds: Option<Rect>,
+) -> Option<(WidgetId, Option<Rect>)> {
+    secondary_route_active(ui.input()).then(|| {
+        (
+            ui.make_id("edit-workspace.shared-action-context"),
+            viewport_bounds,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn declare_workspace_targets(
+    ui: &mut Ui<'_>,
+    dock_scene: &DockScene,
+    asset_browser: Option<&stern::widgets::asset_browser::AssetBrowserScene<'_>>,
+    asset_state: &AssetBrowserState,
+    viewport: Option<&ViewportWidget>,
+    inspector_bounds: Option<Rect>,
+    inspector_root: Option<WidgetId>,
+    inspector_rows: &[PropertyGridRow],
+    context: Option<(WidgetId, Option<Rect>)>,
+    chrome: &ChromeScene<'_>,
+    overlay: Option<&OverlayScene>,
+    picker: Option<&stern::widgets::inspector::InspectorPickerScene>,
+) {
+    ui.resolve_pointer_targets(|plan| {
+        let mut next = dock_scene.declare_pointer_targets_with_content(
+            plan,
+            PointerOrder::new(0),
+            |plan, mut next| {
+                if let Some(asset_browser) = asset_browser {
+                    next = asset_browser.declare_pointer_targets(plan, next, asset_state);
+                }
+                if let Some(viewport) = viewport {
+                    next = viewport.declare_pointer_targets(plan, next);
+                }
+                if let (Some(bounds), Some(root)) = (inspector_bounds, inspector_root) {
+                    next = declare_inspector_targets(plan, next, root, bounds, inspector_rows);
+                }
+                next
+            },
+        );
+        if let Some((target, Some(rect))) = context {
+            plan.target(PointerTarget::new(target, rect, next));
+            next = PointerOrder::new(next.raw() + 1);
+        }
+        next = chrome.declare_pointer_targets(plan, next);
+        if let Some(overlay) = overlay {
+            next = overlay.declare_pointer_targets(plan, next);
+        }
+        if let Some(picker) = picker {
+            picker.declare_pointer_targets(plan, next);
+        }
+    })
+    .expect("Edit workspace pointer targets are valid");
+}
+
 fn open_palette_if_requested(
     overlay: &mut Option<OverlayScene>,
     input: &UiInput,
@@ -278,8 +401,12 @@ fn compose_workspace_panels(
     dock_scene: &DockScene,
     asset_browser: Option<&stern::widgets::asset_browser::AssetBrowserScene<'_>>,
     viewport: Option<&ViewportWidget>,
+    inspector_bounds: Option<Rect>,
+    inspector_rows: &[PropertyGridRow],
     asset_state: &mut AssetBrowserState,
     assets: &mut [AssetRecord],
+    opacity_drafts: &mut BTreeMap<ItemId, TextEditState>,
+    inspector_picker: &mut InspectorPickerState,
     pan_zoom: &mut PanZoom,
 ) {
     let _ = ui.dock_scene(dock_scene, |ui, panel| match panel.panel {
@@ -302,43 +429,53 @@ fn compose_workspace_panels(
             }
         }
         INSPECTOR_PANEL => {
-            let selected = assets.iter().find(|asset| asset.selected);
-            inspector(ui, panel.rect.inset(8.0), selected);
+            let selected = assets.iter_mut().find(|asset| asset.selected);
+            if let (Some(bounds), Some(selected)) = (inspector_bounds, selected)
+                && let Some(opacity_draft) = opacity_drafts.get_mut(&selected.id)
+            {
+                inspector(
+                    ui,
+                    bounds,
+                    inspector_rows,
+                    selected,
+                    opacity_draft,
+                    inspector_picker,
+                );
+            }
         }
         _ => {}
     });
 }
 
 fn asset_records() -> Vec<AssetRecord> {
-    use AssetKind::{Adjustment, Raster, Text, Vector};
     [
-        (1, "Backdrop", Raster),
-        (2, "Character", Vector),
-        (3, "Lighting", Adjustment),
-        (4, "Title", Text),
-        (5, "Clouds", Raster),
-        (6, "Foreground", Vector),
-        (7, "Grade", Adjustment),
-        (8, "Subtitle", Text),
-        (9, "Mountains", Raster),
-        (10, "Effects", Vector),
-        (11, "Bloom", Adjustment),
-        (12, "Credits", Text),
-        (13, "Sky", Raster),
-        (14, "Props", Vector),
-        (15, "Contrast", Adjustment),
-        (16, "Location", Text),
-        (17, "Ground", Raster),
-        (18, "Particles", Vector),
-        (19, "Vignette", Adjustment),
-        (20, "Watermark", Text),
-        (21, "Reflections", Raster),
-        (22, "Guides", Vector),
-        (23, "Exposure", Adjustment),
-        (24, "Notes", Text),
+        (1, "Backdrop", AssetKind::Raster, true, 1.0),
+        (2, "Character", AssetKind::Vector, true, 0.9),
+        (3, "Lighting", AssetKind::Adjustment, true, 0.75),
+        (4, "Title", AssetKind::Text, true, 1.0),
+        (5, "Clouds", AssetKind::Raster, true, 0.8),
+        (6, "Foreground", AssetKind::Vector, true, 1.0),
+        (7, "Grade", AssetKind::Adjustment, true, 0.65),
+        (8, "Subtitle", AssetKind::Text, false, 1.0),
+        (9, "Mountains", AssetKind::Raster, true, 0.95),
+        (10, "Effects", AssetKind::Vector, true, 0.85),
+        (11, "Bloom", AssetKind::Adjustment, true, 0.5),
+        (12, "Credits", AssetKind::Text, false, 1.0),
+        (13, "Sky", AssetKind::Raster, true, 1.0),
+        (14, "Props", AssetKind::Vector, true, 1.0),
+        (15, "Contrast", AssetKind::Adjustment, true, 0.4),
+        (16, "Location", AssetKind::Text, true, 0.9),
+        (17, "Ground", AssetKind::Raster, true, 1.0),
+        (18, "Particles", AssetKind::Vector, true, 0.7),
+        (19, "Vignette", AssetKind::Adjustment, true, 0.55),
+        (20, "Watermark", AssetKind::Text, false, 0.6),
+        (21, "Reflections", AssetKind::Raster, true, 0.8),
+        (22, "Guides", AssetKind::Vector, false, 1.0),
+        (23, "Exposure", AssetKind::Adjustment, true, 0.5),
+        (24, "Notes", AssetKind::Text, true, 1.0),
     ]
     .into_iter()
-    .map(|(id, name, kind)| AssetRecord::new(id, name, kind))
+    .map(|(id, name, kind, visible, opacity)| AssetRecord::new(id, name, kind, visible, opacity))
     .collect()
 }
 
@@ -590,11 +727,32 @@ fn workspace_tab(panel: u64, title: &str, active: bool) -> FrameTab {
     }
 }
 
+fn workspace_status(revision: u32, rename_error: Option<&str>) -> StatusItem {
+    rename_error.map_or_else(
+        || {
+            StatusItem::new(
+                StatusItemId::from_raw(1),
+                "Revision",
+                format!("Applied revision {revision}"),
+                StatusItemKind::Ready,
+            )
+        },
+        |message| {
+            StatusItem::new(
+                StatusItemId::from_raw(1),
+                "Rename validation",
+                message,
+                StatusItemKind::Error,
+            )
+        },
+    )
+}
+
 fn edit_dock() -> Dock {
     let assets = dock_frame(1, ASSETS_PANEL, "Assets");
     let viewport = dock_frame(2, VIEWPORT_PANEL, "Viewport");
     let inspector = dock_frame(3, INSPECTOR_PANEL, "Inspector");
-    let right = split(Axis::Horizontal, 0.72, viewport, inspector);
+    let right = split(Axis::Horizontal, 0.60, viewport, inspector);
     let mut dock = Dock::new(split(Axis::Horizontal, 0.22, assets, right));
     let _ = dock.set_active_frame(FrameId::from_raw(2));
     dock
@@ -626,29 +784,197 @@ fn panel_bounds(scene: &DockScene, panel: PanelId) -> Option<Rect> {
         .map(|panel| panel.rect)
 }
 
-fn inspector(ui: &mut Ui<'_>, bounds: Rect, selected: Option<&AssetRecord>) {
-    let rows = [
-        PropertyGridRow::section(ItemId::from_raw(100), "Selection"),
-        PropertyGridRow::property(ItemId::from_raw(101), "Name", 0).with_read_only(true),
-        PropertyGridRow::property(ItemId::from_raw(102), "Kind", 0).with_read_only(true),
-    ];
-    let values = selected.map_or(("No selection", "Unavailable"), |asset| {
-        (asset.name.as_str(), asset.kind.label())
-    });
-    let _ = ui.property_grid(
-        "selected-asset",
+fn panel_widget_id(scene: &DockScene, panel: PanelId) -> Option<WidgetId> {
+    scene
+        .layout()
+        .frames
+        .iter()
+        .find_map(|frame| frame.panel.as_ref().filter(|item| item.panel == panel))
+        .map(|panel| panel.id)
+}
+
+fn inspector_rows(asset: &AssetRecord) -> Vec<PropertyGridRow> {
+    vec![
+        PropertyGridRow::section(INSPECTOR_SECTION, "Selection"),
+        PropertyGridRow::property(NAME_PROPERTY, "Name", 0)
+            .with_resettable(true, asset.name == asset.defaults.name),
+        PropertyGridRow::property(KIND_PROPERTY, "Kind", 0)
+            .with_resettable(true, asset.kind == asset.defaults.kind),
+        PropertyGridRow::property(VISIBLE_PROPERTY, "Visible", 0)
+            .with_resettable(true, asset.visible == asset.defaults.visible),
+        PropertyGridRow::property(OPACITY_PROPERTY, "Opacity", 0).with_resettable(
+            true,
+            asset.opacity.to_bits() == asset.defaults.opacity.to_bits(),
+        ),
+    ]
+}
+
+fn declare_inspector_targets(
+    plan: &mut PointerTargetPlan,
+    mut next: PointerOrder,
+    root: WidgetId,
+    bounds: Rect,
+    rows: &[PropertyGridRow],
+) -> PointerOrder {
+    let config = PropertyGridConfig::default();
+    plan.target(PointerTarget::wheel_only(
+        root.child("property-grid-scroll"),
         bounds,
-        &rows,
-        PropertyGridConfig::default(),
-        |ui, cell| {
-            let value = if cell.row.id == ItemId::from_raw(101) {
-                values.0
-            } else {
-                values.1
-            };
-            ui.label_keyed(("value", cell.row.id.raw()), cell.value_rect, value);
-        },
+        next,
+    ));
+    next = PointerOrder::new(next.raw() + 1);
+    for geometry in config.layout.visible_row_rects(bounds, rows, 0.0, 0) {
+        let row = &rows[geometry.index];
+        if row.id == INSPECTOR_SECTION {
+            continue;
+        }
+        let rects = property_grid_row_affordance_rects(
+            row,
+            geometry.value_rect.inset(2.0).max_zero(),
+            config.affordances,
+        );
+        let value = property_grid_value_widget_id(root, row.id);
+        let key = match row.id {
+            NAME_PROPERTY => "name",
+            KIND_PROPERTY => "kind",
+            VISIBLE_PROPERTY => "visible",
+            OPACITY_PROPERTY => "opacity",
+            _ => continue,
+        };
+        let target = PointerTarget::new(value.child(key), rects.value_rect, next);
+        plan.target(if row.id == OPACITY_PROPERTY {
+            target.domain_drag_source()
+        } else {
+            target
+        });
+        next = PointerOrder::new(next.raw() + 1);
+        if let Some(reset) = rects.reset_rect {
+            let reset_id = property_grid_row_widget_id(root, row.id)
+                .child("affordances")
+                .child("reset");
+            plan.target(PointerTarget::new(reset_id, reset, next));
+            next = PointerOrder::new(next.raw() + 1);
+        }
+    }
+    next
+}
+
+fn inspector(
+    ui: &mut Ui<'_>,
+    bounds: Rect,
+    rows: &[PropertyGridRow],
+    asset: &mut AssetRecord,
+    opacity_draft: &mut TextEditState,
+    picker: &mut InspectorPickerState,
+) {
+    let kind_model = kind_model(asset.kind);
+    let picker_bounds = Rect::new(
+        bounds.x + 4.0,
+        bounds.y + 56.0,
+        (bounds.width - 8.0).max(0.0),
+        112.0,
     );
+    let mut name = TextEditState::new(asset.name.clone());
+    let output = ui
+        .property_grid(
+            "selected-asset",
+            bounds,
+            rows,
+            PropertyGridConfig::default(),
+            |ui, cell| match cell.row.id {
+                NAME_PROPERTY => {
+                    let _ = ui.text_field_with_access(
+                        "name",
+                        cell.value_rect,
+                        &mut name,
+                        TextFieldAccess::ReadOnly,
+                    );
+                }
+                KIND_PROPERTY => {
+                    let field = ui.select_field(
+                        "kind",
+                        cell.value_rect,
+                        asset.kind.label(),
+                        &kind_model,
+                        SelectFieldConfig::new("Select kind").open(picker.kind().is_some()),
+                    );
+                    let _ = ui.select_picker(
+                        picker,
+                        &field,
+                        KIND_PICKER_OVERLAY,
+                        picker_bounds,
+                        "Asset kind",
+                        &kind_model,
+                    );
+                }
+                VISIBLE_PROPERTY => {
+                    let _ = ui.checkbox_value_with_label(
+                        "visible",
+                        cell.value_rect,
+                        "Visible",
+                        &mut asset.visible,
+                        false,
+                    );
+                }
+                OPACITY_PROPERTY => {
+                    let output = ui.numeric_scrub_input(
+                        "opacity",
+                        cell.value_rect,
+                        &mut asset.opacity,
+                        opacity_draft,
+                        NumericScrubInputConfig::new(0.01).with_range(0.0, 1.0),
+                    );
+                    if output.input.policy.commit_requested
+                        && let NumericInputDraft::Valid(value) = output.input.policy.draft
+                    {
+                        asset.opacity = value.clamp(0.0, 1.0);
+                        *opacity_draft = TextEditState::new(asset.opacity.to_string());
+                    } else if output.input.policy.revert_requested {
+                        *opacity_draft = TextEditState::new(asset.opacity.to_string());
+                    }
+                }
+                _ => unreachable!("property-grid callback skips section rows"),
+            },
+        )
+        .expect("deterministic inspector rows have unique identities");
+
+    for intent in output.intents {
+        if let PropertyGridIntent::Reset { row } = intent {
+            reset_asset_property(asset, opacity_draft, row);
+        }
+    }
+    if let Some(InspectorPickerCommit::Select(kind)) = ui.inspector_picker_scene(picker).commit
+        && let Some(kind) = AssetKind::from_dropdown(kind)
+    {
+        asset.kind = kind;
+    }
+}
+
+fn kind_model(selected: AssetKind) -> DropdownModel {
+    let mut model = DropdownModel::from_items([
+        DropdownItem::new(AssetKind::Raster.dropdown_id(), AssetKind::Raster.label()),
+        DropdownItem::new(AssetKind::Vector.dropdown_id(), AssetKind::Vector.label()),
+        DropdownItem::new(
+            AssetKind::Adjustment.dropdown_id(),
+            AssetKind::Adjustment.label(),
+        ),
+        DropdownItem::new(AssetKind::Text.dropdown_id(), AssetKind::Text.label()),
+    ]);
+    let _ = model.set_selected_id(selected.dropdown_id());
+    model
+}
+
+fn reset_asset_property(asset: &mut AssetRecord, opacity_draft: &mut TextEditState, row: ItemId) {
+    match row {
+        NAME_PROPERTY => asset.defaults.name.clone_into(&mut asset.name),
+        KIND_PROPERTY => asset.kind = asset.defaults.kind,
+        VISIBLE_PROPERTY => asset.visible = asset.defaults.visible,
+        OPACITY_PROPERTY => {
+            asset.opacity = asset.defaults.opacity;
+            *opacity_draft = TextEditState::new(asset.opacity.to_string());
+        }
+        _ => {}
+    }
 }
 
 fn viewport_texture() -> TextureResource {
