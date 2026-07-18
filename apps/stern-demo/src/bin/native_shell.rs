@@ -1,3 +1,4 @@
+//! Public-facade native shell spike for the Stern integration demo.
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -29,7 +30,6 @@ use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
 const TITLE: &str = "Stern Public Native Shell";
-
 fn shell_dock() -> Dock {
     Dock::new(DockNode::Frame(Frame::new(
         FrameId::from_raw(2),
@@ -357,4 +357,96 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("native shell exited without a successful present".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+fn test_context() -> FrameContext {
+    stern::core::FrameContext::new(
+        stern::core::ViewportInfo::new(
+            stern::core::Size::new(960.0, 640.0),
+            stern::core::PhysicalSize::new(960, 640),
+            stern::core::ScaleFactor::ONE,
+        ),
+        stern::core::UiInput::default(),
+        stern::core::TimeInfo::default(),
+    )
+}
+
+#[cfg(test)]
+#[test]
+fn native_shell_composes_public_chrome_dock_frame_and_panel() {
+    let output = build_shell_frame(&mut UiState::new(), &shell_dock(), test_context()).unwrap();
+    let roles = output
+        .semantics
+        .nodes()
+        .iter()
+        .map(|node| &node.role)
+        .collect::<Vec<_>>();
+
+    for role in [
+        stern::core::SemanticRole::Dock,
+        stern::core::SemanticRole::Frame,
+        stern::core::SemanticRole::Panel,
+        stern::core::SemanticRole::TabList,
+    ] {
+        assert!(roles.contains(&&role), "missing {role:?}");
+    }
+    for role in ["menu-bar", "toolbar", "status-bar"] {
+        assert!(roles.contains(&&stern::core::SemanticRole::Custom(role.to_owned())));
+    }
+    assert!(!output.primitives.is_empty());
+    assert!(output.warnings.is_empty());
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct FakeWindow {
+    cursor: Option<winit::window::CursorIcon>,
+    title: Option<String>,
+    ime_allowed: bool,
+    ime_rect: Option<Rect>,
+}
+
+#[cfg(test)]
+impl stern::platform_winit::WinitWindowOps for FakeWindow {
+    fn set_cursor(&mut self, cursor: winit::window::CursorIcon) {
+        self.cursor = Some(cursor);
+    }
+    fn set_title(&mut self, title: &str) {
+        self.title = Some(title.to_owned());
+    }
+    fn set_ime_allowed(&mut self, allowed: bool) {
+        self.ime_allowed = allowed;
+    }
+    fn set_ime_cursor_area(&mut self, rect: Rect) {
+        self.ime_rect = Some(rect);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn native_shell_translates_one_frame_platform_batch() {
+    let output = build_shell_frame(&mut UiState::new(), &shell_dock(), test_context()).unwrap();
+    let mut window = FakeWindow::default();
+    let applied =
+        WinitPlatformRequests::from_frame_output(&output).apply_to_window_ops(&mut window);
+
+    assert_eq!(window.title.as_deref(), Some(TITLE));
+    assert!(window.cursor.is_some());
+    assert!(!window.ime_allowed);
+    assert_eq!(window.ime_rect, None);
+    assert!(applied.shell().is_empty());
+    assert_eq!(applied.repaint(), output.repaint);
+}
+
+#[cfg(test)]
+#[test]
+fn native_shell_presenter_constructs_detached_without_gpu() {
+    let presenter = VelloWindowPresenter::new(VelloPresenterConfig::new()).unwrap();
+
+    assert_eq!(
+        presenter.status().attachment(),
+        stern::vello_winit::VelloAttachmentStatus::Detached
+    );
+    assert!(presenter.status().device_scope().is_none());
 }
