@@ -100,6 +100,7 @@ fn action_conformance_descriptors_expose_presentation_state() {
         visible: true,
         enabled: true,
         checked: Some(false),
+        mixed: false,
     };
 
     assert_eq!(descriptor.id, ActionId::new("view.grid"));
