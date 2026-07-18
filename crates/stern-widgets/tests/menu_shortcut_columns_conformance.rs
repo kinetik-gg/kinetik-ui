@@ -1058,7 +1058,7 @@ fn destructive_menu_rows_preserve_geometry_paint_precedence_and_invocation() {
 }
 
 #[test]
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::float_cmp, clippy::too_many_lines)]
 fn mixed_and_checked_menu_rows_preserve_geometry_semantics_and_routing() {
     let mut mixed = ActionDescriptor::new("menu.mixed", "Mixed");
     mixed.state.checked = Some(true);
