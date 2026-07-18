@@ -21,6 +21,7 @@ const FORBIDDEN_MARKERS = Object.freeze([
 const CANONICAL_PACKAGES = Object.freeze([
   Object.freeze({ name: "stern", crate: "stern", path: "crates/stern" }),
   Object.freeze({ name: "stern-core", crate: "stern_core", path: "crates/stern-core" }),
+  Object.freeze({ name: "stern-icon-atlas", crate: "stern_icon_atlas", path: "crates/stern-icon-atlas" }),
   Object.freeze({ name: "stern-render", crate: "stern_render", path: "crates/stern-render" }),
   Object.freeze({ name: "stern-text", crate: "stern_text", path: "crates/stern-text" }),
   Object.freeze({ name: "stern-vello", crate: "stern_vello", path: "crates/stern-vello" }),
