@@ -368,7 +368,7 @@ impl Ui<'_> {
         controller: &mut TimelineScrubController,
         actions: &[DomainDragGestureAction],
     ) -> Vec<TimelineScrubIntent> {
-        if widget.config.read_only {
+        if widget.config.disabled || widget.config.read_only {
             let mut intents = Vec::new();
             if controller.capture.is_some() {
                 push_scrub_cancel(controller, &mut intents);
