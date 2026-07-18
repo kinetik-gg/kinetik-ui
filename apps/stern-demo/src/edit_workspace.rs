@@ -1,16 +1,18 @@
 use stern::core::{
-    ActionContext, ActionInvocation, ActionSource, Axis, PointerOrder, Rect, Size, TextureId,
-    WidgetId,
+    ActionContext, ActionInvocation, ActionSource, Axis, Key, KeyState, PointerOrder,
+    PointerTarget, Rect, Size, TextureId, UiInput, WidgetId,
 };
 use stern::render::{RenderImage, RenderImageSampling, RenderResources, TextureResource};
 use stern::widgets::dock::{DockScene, DockSceneConfig};
 use stern::widgets::inspector::PropertyGridConfig;
 use stern::widgets::{
     ChromeScene, ChromeSceneConfig, ChromeSceneIntent, ChromeSceneItemKey, CollectionCursor,
-    CollectionProjection, Dock, DockNode, Frame, FrameId, FrameTab, ItemId, MenuBar, MenuBarMenu,
-    MenuBarMenuId, PanZoom, Panel, PanelId, PropertyGridRow, Selection, StatusBar, StatusItem,
-    StatusItemId, StatusItemKind, TabStrip, Toolbar, ToolbarGroup, ToolbarGroupId, Ui,
-    ViewportSurface, ViewportWidgetConfig, VirtualListConfig, VirtualListRow,
+    CollectionProjection, CommandPaletteOverlay, Dock, DockNode, Frame, FrameId, FrameTab, ItemId,
+    Menu, MenuBar, MenuBarMenu, MenuBarMenuId, MenuBarOverlayRequest, MenuOverlay,
+    OverlayDismissal, OverlayId, OverlayKind, OverlayScene, OverlaySceneIntent,
+    OverlaySceneSurface, PanZoom, Panel, PanelId, PopoverPlacement, PropertyGridRow, Selection,
+    StatusBar, StatusItem, StatusItemId, StatusItemKind, TabStrip, Toolbar, ToolbarGroup,
+    ToolbarGroupId, Ui, ViewportSurface, ViewportWidgetConfig, VirtualListConfig, VirtualListRow,
 };
 
 use crate::{DemoActionRegistry, DemoWorkspace};
@@ -20,6 +22,10 @@ const VIEWPORT_PANEL: PanelId = PanelId::from_raw(21);
 const INSPECTOR_PANEL: PanelId = PanelId::from_raw(31);
 const VIEWPORT_TEXTURE: TextureId = TextureId::from_raw(1);
 const TOOLBAR_GROUP: ToolbarGroupId = ToolbarGroupId::from_raw(1);
+const APPLICATION_MENU: MenuBarMenuId = MenuBarMenuId::from_raw(1);
+const APPLICATION_MENU_OVERLAY: OverlayId = OverlayId::from_raw(1);
+const CONTEXT_MENU_OVERLAY: OverlayId = OverlayId::from_raw(2);
+const COMMAND_PALETTE_OVERLAY: OverlayId = OverlayId::from_raw(3);
 
 #[derive(Debug, Clone, Copy)]
 struct AssetFixture {
@@ -59,6 +65,7 @@ pub(crate) struct EditWorkspace {
     selection: Selection,
     pan_zoom: PanZoom,
     texture: TextureResource,
+    overlay: Option<OverlayScene>,
 }
 
 impl EditWorkspace {
@@ -78,7 +85,12 @@ impl EditWorkspace {
             selection,
             pan_zoom: PanZoom::default(),
             texture: viewport_texture(),
+            overlay: None,
         }
+    }
+
+    pub(crate) const fn has_overlay(&self) -> bool {
+        self.overlay.is_some()
     }
 
     pub(crate) fn compose(
@@ -90,8 +102,8 @@ impl EditWorkspace {
         bounds: Size,
     ) {
         let layout = WorkspaceLayout::new(bounds);
-        let menu_bar = MenuBar::from_menus([MenuBarMenu::from_actions(
-            MenuBarMenuId::from_raw(1),
+        let mut menu_bar = MenuBar::from_menus([MenuBarMenu::from_actions(
+            APPLICATION_MENU,
             "Workspace",
             actions.iter().cloned(),
         )]);
@@ -143,8 +155,14 @@ impl EditWorkspace {
             ))
         });
 
+        if self.overlay.is_none() && command_palette_requested(ui.input()) {
+            self.overlay = Some(command_palette_scene(actions, bounds));
+        }
+        let context_target = ui.make_id("edit-workspace.shared-action-context");
+        let route_context_pointer = secondary_pointer_active(ui.input());
+
         ui.resolve_pointer_targets(|plan| {
-            let next = dock_scene.declare_pointer_targets_with_content(
+            let mut next = dock_scene.declare_pointer_targets_with_content(
                 plan,
                 PointerOrder::new(0),
                 |plan, mut next| {
@@ -157,7 +175,14 @@ impl EditWorkspace {
                     next
                 },
             );
-            chrome.declare_pointer_targets(plan, next);
+            if route_context_pointer && let Some(rect) = viewport_bounds {
+                plan.target(PointerTarget::new(context_target, rect, next));
+                next = PointerOrder::new(next.raw() + 1);
+            }
+            next = chrome.declare_pointer_targets(plan, next);
+            if let Some(overlay) = &self.overlay {
+                overlay.declare_pointer_targets(plan, next);
+            }
         })
         .expect("Edit workspace pointer targets are valid");
 
@@ -188,8 +213,44 @@ impl EditWorkspace {
             }
             _ => {}
         });
+        let context_requested = viewport_bounds.is_some_and(|rect| {
+            ui.context_menu_trigger("edit-workspace.shared-action-context", rect, false)
+                .context_requested
+        });
         let chrome_output = ui.chrome_scene(&chrome);
-        route_workspace_tabs(ui, actions, chrome_output.intents);
+        route_workspace_tabs(ui, actions, &chrome_output.intents);
+
+        let close_overlay = self.overlay.as_mut().is_some_and(|overlay| {
+            ui.overlay_scene(overlay).intents.iter().any(|intent| {
+                matches!(
+                    intent,
+                    OverlaySceneIntent::Action(_) | OverlaySceneIntent::Dismiss(_)
+                )
+            })
+        });
+        if close_overlay {
+            self.overlay = None;
+        }
+        if self.overlay.is_none() {
+            if let Some((menu, anchor)) = chrome_output.intents.iter().find_map(|intent| {
+                let ChromeSceneIntent::OpenMenu { menu, anchor } = intent else {
+                    return None;
+                };
+                Some((*menu, *anchor))
+            }) {
+                let _ = menu_bar.open(menu);
+                self.overlay = application_menu_scene(&menu_bar, anchor, bounds);
+            } else if context_requested {
+                let anchor = ui
+                    .input()
+                    .pointer
+                    .position
+                    .map_or(Rect::new(0.0, 0.0, 1.0, 1.0), |point| {
+                        Rect::new(point.x, point.y, 1.0, 1.0)
+                    });
+                self.overlay = Some(context_menu_scene(actions, anchor, bounds));
+            }
+        }
     }
 
     pub(crate) fn register_resources(&self, resources: &mut RenderResources) {
@@ -200,7 +261,7 @@ impl EditWorkspace {
 fn route_workspace_tabs(
     ui: &mut Ui<'_>,
     actions: &DemoActionRegistry,
-    intents: impl IntoIterator<Item = ChromeSceneIntent>,
+    intents: &[ChromeSceneIntent],
 ) {
     for intent in intents {
         let ChromeSceneIntent::ActivateTab(target) = intent else {
@@ -219,6 +280,87 @@ fn route_workspace_tabs(
             ActionContext::Editor,
         ));
     }
+}
+
+fn command_palette_requested(input: &UiInput) -> bool {
+    input.keyboard.events.iter().any(|event| {
+        event.state == KeyState::Pressed
+            && !event.repeat
+            && event.modifiers.ctrl
+            && event.modifiers.shift
+            && matches!(&event.key, Key::Character(value) if value.eq_ignore_ascii_case("p"))
+    })
+}
+
+fn secondary_pointer_active(input: &UiInput) -> bool {
+    let secondary = input.pointer.secondary;
+    secondary.down || secondary.pressed || secondary.released
+}
+
+fn viewport_rect(bounds: Size) -> Rect {
+    Rect::new(0.0, 0.0, bounds.width.max(0.0), bounds.height.max(0.0))
+}
+
+fn application_menu_scene(menu_bar: &MenuBar, anchor: Rect, bounds: Size) -> Option<OverlayScene> {
+    let overlay = menu_bar.active_overlay(MenuBarOverlayRequest {
+        overlay_id: APPLICATION_MENU_OVERLAY,
+        kind: OverlayKind::Menu,
+        anchor,
+        size: Size::new(320.0, 96.0),
+        placement: PopoverPlacement::Below,
+        offset: 2.0,
+        fit_viewport: true,
+        viewport: viewport_rect(bounds),
+        dismissal: OverlayDismissal::OutsideClickOrEscape,
+        source: ActionSource::Menu,
+        context: ActionContext::Editor,
+    })?;
+    let mut scene = OverlayScene::new();
+    scene.push(OverlaySceneSurface::menu("Workspace commands", overlay));
+    Some(scene)
+}
+
+fn context_menu_scene(actions: &DemoActionRegistry, anchor: Rect, bounds: Size) -> OverlayScene {
+    let overlay = MenuOverlay::anchored(
+        CONTEXT_MENU_OVERLAY,
+        OverlayKind::ContextMenu,
+        Menu::from_actions([actions.apply_shared_state().clone()]),
+        anchor,
+        Size::new(320.0, 40.0),
+        PopoverPlacement::Below,
+        2.0,
+        true,
+        viewport_rect(bounds),
+        OverlayDismissal::OutsideClickOrEscape,
+        ActionSource::Menu,
+        ActionContext::Editor,
+    );
+    let mut scene = OverlayScene::new();
+    scene.push(OverlaySceneSurface::menu("Viewport commands", overlay));
+    scene
+}
+
+fn command_palette_scene(actions: &DemoActionRegistry, bounds: Size) -> OverlayScene {
+    let viewport = viewport_rect(bounds);
+    let anchor = Rect::new(viewport.width * 0.5, 24.0, 1.0, 1.0);
+    let overlay = CommandPaletteOverlay::anchored_from_actions(
+        COMMAND_PALETTE_OVERLAY,
+        &[actions.apply_shared_state().clone()],
+        anchor,
+        Size::new(360.0, 96.0),
+        PopoverPlacement::Below,
+        4.0,
+        true,
+        viewport,
+        OverlayDismissal::OutsideClickOrEscape,
+        ActionContext::Editor,
+    );
+    let mut scene = OverlayScene::new();
+    scene.push(OverlaySceneSurface::command_palette(
+        "Shared command palette",
+        overlay,
+    ));
+    scene
 }
 
 #[derive(Debug, Clone, Copy)]
