@@ -12,7 +12,8 @@ use stern::widgets::{
     OverlayDismissal, OverlayId, OverlayKind, OverlayScene, OverlaySceneIntent,
     OverlaySceneSurface, PanZoom, Panel, PanelId, PopoverPlacement, PropertyGridRow, Selection,
     StatusBar, StatusItem, StatusItemId, StatusItemKind, TabStrip, Toolbar, ToolbarGroup,
-    ToolbarGroupId, Ui, ViewportSurface, ViewportWidgetConfig, VirtualListConfig, VirtualListRow,
+    ToolbarGroupId, Ui, ViewportSurface, ViewportWidget, ViewportWidgetConfig, VirtualList,
+    VirtualListConfig, VirtualListRow,
 };
 
 use crate::{DemoActionRegistry, DemoWorkspace};
@@ -155,9 +156,7 @@ impl EditWorkspace {
             ))
         });
 
-        if self.overlay.is_none() && command_palette_requested(ui.input()) {
-            self.overlay = Some(command_palette_scene(actions, bounds));
-        }
+        open_palette_if_requested(&mut self.overlay, ui.input(), actions, bounds);
         let context_target = ui.make_id("edit-workspace.shared-action-context");
         let route_context_pointer = secondary_route_active(ui.input());
 
@@ -186,40 +185,38 @@ impl EditWorkspace {
         })
         .expect("Edit workspace pointer targets are valid");
 
-        let projection = &self.projection;
-        let cursor = &mut self.cursor;
-        let selection = &mut self.selection;
-        let pan_zoom = &mut self.pan_zoom;
-        let _ = ui.dock_scene(&dock_scene, |ui, panel| match panel.panel {
-            ASSETS_PANEL => {
-                if let Some(list) = &list {
-                    let _ = ui.virtual_list(list, cursor, selection, |item| {
-                        VirtualListRow::new(ASSETS[item.source_index].name)
-                    });
-                }
-            }
-            VIEWPORT_PANEL => {
-                if let Some(viewport) = &viewport {
-                    let output = ui.viewport_widget(viewport, pan_zoom, &[]);
-                    *pan_zoom = output.next_pan_zoom;
-                }
-            }
-            INSPECTOR_PANEL => {
-                let selected = selection
-                    .active
-                    .and_then(|id| projection.source_index(id))
-                    .map(|index| ASSETS[index]);
-                inspector(ui, panel.rect.inset(8.0), selected);
-            }
-            _ => {}
-        });
-        let context_requested = viewport_bounds.is_some_and(|rect| {
-            ui.context_menu_trigger("edit-workspace.shared-action-context", rect, false)
-                .context_requested
-        });
+        compose_workspace_panels(
+            ui,
+            &dock_scene,
+            list.as_ref(),
+            viewport.as_ref(),
+            &self.projection,
+            &mut self.cursor,
+            &mut self.selection,
+            &mut self.pan_zoom,
+        );
+        let context_requested = shared_context_requested(ui, viewport_bounds);
         let chrome_output = ui.chrome_scene(&chrome);
         route_workspace_tabs(ui, actions, &chrome_output.intents);
+        self.reconcile_overlay(
+            ui,
+            actions,
+            &mut menu_bar,
+            &chrome_output.intents,
+            context_requested,
+            bounds,
+        );
+    }
 
+    fn reconcile_overlay(
+        &mut self,
+        ui: &mut Ui<'_>,
+        actions: &DemoActionRegistry,
+        menu_bar: &mut MenuBar,
+        chrome_intents: &[ChromeSceneIntent],
+        context_requested: bool,
+        bounds: Size,
+    ) {
         let close_overlay = self.overlay.as_mut().is_some_and(|overlay| {
             ui.overlay_scene(overlay).intents.iter().any(|intent| {
                 matches!(
@@ -232,14 +229,14 @@ impl EditWorkspace {
             self.overlay = None;
         }
         if self.overlay.is_none() {
-            if let Some((menu, anchor)) = chrome_output.intents.iter().find_map(|intent| {
+            if let Some((menu, anchor)) = chrome_intents.iter().find_map(|intent| {
                 let ChromeSceneIntent::OpenMenu { menu, anchor } = intent else {
                     return None;
                 };
                 Some((*menu, *anchor))
             }) {
                 let _ = menu_bar.open(menu);
-                self.overlay = application_menu_scene(&menu_bar, anchor, bounds);
+                self.overlay = application_menu_scene(menu_bar, anchor, bounds);
             } else if context_requested {
                 let anchor = ui
                     .input()
@@ -256,6 +253,60 @@ impl EditWorkspace {
     pub(crate) fn register_resources(&self, resources: &mut RenderResources) {
         resources.register_texture(self.texture.clone());
     }
+}
+
+fn open_palette_if_requested(
+    overlay: &mut Option<OverlayScene>,
+    input: &UiInput,
+    actions: &DemoActionRegistry,
+    bounds: Size,
+) {
+    if overlay.is_none() && command_palette_requested(input) {
+        *overlay = Some(command_palette_scene(actions, bounds));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compose_workspace_panels(
+    ui: &mut Ui<'_>,
+    dock_scene: &DockScene,
+    list: Option<&VirtualList<'_>>,
+    viewport: Option<&ViewportWidget>,
+    projection: &CollectionProjection,
+    cursor: &mut CollectionCursor,
+    selection: &mut Selection,
+    pan_zoom: &mut PanZoom,
+) {
+    let _ = ui.dock_scene(dock_scene, |ui, panel| match panel.panel {
+        ASSETS_PANEL => {
+            if let Some(list) = list {
+                let _ = ui.virtual_list(list, cursor, selection, |item| {
+                    VirtualListRow::new(ASSETS[item.source_index].name)
+                });
+            }
+        }
+        VIEWPORT_PANEL => {
+            if let Some(viewport) = viewport {
+                let output = ui.viewport_widget(viewport, pan_zoom, &[]);
+                *pan_zoom = output.next_pan_zoom;
+            }
+        }
+        INSPECTOR_PANEL => {
+            let selected = selection
+                .active
+                .and_then(|id| projection.source_index(id))
+                .map(|index| ASSETS[index]);
+            inspector(ui, panel.rect.inset(8.0), selected);
+        }
+        _ => {}
+    });
+}
+
+fn shared_context_requested(ui: &mut Ui<'_>, bounds: Option<Rect>) -> bool {
+    bounds.is_some_and(|rect| {
+        ui.context_menu_trigger("edit-workspace.shared-action-context", rect, false)
+            .context_requested
+    })
 }
 
 fn route_workspace_tabs(
