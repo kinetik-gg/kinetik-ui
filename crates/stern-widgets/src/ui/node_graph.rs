@@ -164,7 +164,7 @@ impl Ui<'_> {
             {
                 break;
             }
-            self.apply_node_graph_connection_action(
+            Self::apply_node_graph_connection_action(
                 widget,
                 controller,
                 action,
@@ -196,7 +196,6 @@ impl Ui<'_> {
     }
 
     fn apply_node_graph_connection_action(
-        &mut self,
         widget: &NodeGraphWidget<'_>,
         controller: &mut NodeGraphConnectionController,
         action: &DomainDragGestureAction,
