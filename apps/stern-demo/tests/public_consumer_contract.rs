@@ -41,15 +41,19 @@ fn public_consumer_contract_emits_components_semantics_focus_and_platform_eviden
     let translated_requests = WinitPlatformRequests::from_frame_output(&normalized_output);
     assert_eq!(translated_requests.window_title(), Some(DEMO_TITLE));
 
-    let point = semantic_center(&normalized_output, SemanticRole::Button, "Edit Workspace");
+    let point = semantic_center(
+        &normalized_output,
+        &SemanticRole::IconButton,
+        "Edit Workspace",
+    );
     let _ = app.frame(demo_context(pointer_input(point, true, true, false)));
     let output = app.frame(demo_context(pointer_input(point, false, false, true)));
 
     assert!(has_component_semantics(&output));
     assert!(output.semantics.nodes().iter().any(|node| {
-        node.role == SemanticRole::Button && node.label.as_deref() == Some("Edit Workspace")
+        node.role == SemanticRole::IconButton && node.label.as_deref() == Some("Edit Workspace")
     }));
-    let row = semantic_center(&output, SemanticRole::ListItem, "Backdrop");
+    let row = semantic_center(&output, &SemanticRole::ListItem, "Backdrop");
     let _ = app.frame(demo_context(pointer_input(row, true, true, false)));
     let focused_output = app.frame(demo_context(pointer_input(row, false, false, true)));
     assert!(focused_output.semantics.nodes().iter().any(|node| {
@@ -77,7 +81,7 @@ fn public_consumer_contract_emits_components_semantics_focus_and_platform_eviden
 fn public_consumer_contract_routes_workspace_actions_to_application_state() {
     let mut app = DemoApp::new();
     let initial = app.frame(demo_context(UiInput::default()));
-    let point = semantic_center(&initial, SemanticRole::Button, "Graph Workspace");
+    let point = semantic_center(&initial, &SemanticRole::IconButton, "Graph Workspace");
     let _ = app.frame(demo_context(pointer_input(point, true, true, false)));
     let output = app.frame(demo_context(pointer_input(point, false, false, true)));
 
@@ -106,12 +110,12 @@ fn public_consumer_contract_routes_workspace_actions_to_application_state() {
     );
 }
 
-fn semantic_center(output: &stern::core::FrameOutput, role: SemanticRole, label: &str) -> Point {
+fn semantic_center(output: &stern::core::FrameOutput, role: &SemanticRole, label: &str) -> Point {
     output
         .semantics
         .nodes()
         .iter()
-        .find(|node| node.role == role && node.label.as_deref() == Some(label))
+        .find(|node| &node.role == role && node.label.as_deref() == Some(label))
         .expect("semantic control")
         .bounds
         .center()
