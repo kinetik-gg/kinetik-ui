@@ -544,7 +544,7 @@ mod tests {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _show_window_menu: fn(&Target, LogicalPosition<f64>) =
+            let _: fn(&Target, LogicalPosition<f64>) =
                 <Target as WindowSystemMenuTarget>::show_window_menu;
             assert!(target.0.borrow().is_empty());
             assert_eq!(
