@@ -16,10 +16,13 @@ use stern::widgets::node_graph::NodeGraphConnectionCancelReason;
 use stern_demo::{DemoApp, DemoJobPhase, DemoWorkspace, GraphConnectionFeedback, demo_context};
 
 mod audit;
+#[path = "color-evidence.rs"]
+mod color_evidence;
 mod contract;
 mod json;
 
 use audit::{git, primitive_allowlist, public_consumer_audit, repo_root};
+use color_evidence::{color_gradient_journey, focus_owner_removal_cleanup, recovery_journey};
 use contract::{
     COMPONENTS, GATES, JOURNEYS, SPEC_SHA256, VERSION, component_refs, component_workspaces,
     gate_refs, journey_refs,
@@ -118,6 +121,9 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
 
     let timeline = timeline_journey()?;
     let feedback = feedback_journey(&mut app);
+    let color = color_gradient_journey()?;
+    let recovery = recovery_journey()?;
+    let owner_removal = focus_owner_removal_cleanup();
 
     let edit_button = app.frame(demo_context(UiInput::default()));
     let graph_point = semantic_center(&edit_button, &SemanticRole::IconButton, "Graph Workspace")?;
@@ -141,6 +147,8 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
         timeline.passed,
         feedback.passed,
         graph.passed,
+        color.passed,
+        recovery.passed,
         &mut passed,
     );
     let component_records = COMPONENTS
@@ -160,9 +168,9 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
         pointer_action && keyboard_action && menu_projected && palette_projected,
         selected_id.is_some() && keyboard_selected && rename_committed,
         timeline.passed && feedback.passed,
-        false,
+        color.passed,
         graph.passed,
-        false,
+        recovery.passed,
     ];
     let journeys = JOURNEYS
         .iter()
@@ -183,9 +191,11 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
         .map(|id| {
             let status = match *id {
                 "public-consumer-boundary" if audit.bool_field("passed") == Some(true) => "passed",
-                "canonical-component-composition" | "semantic-structure" | "honest-evidence" => {
-                    "passed"
-                }
+                "canonical-component-composition"
+                | "complete-component-coverage"
+                | "deterministic-user-journeys"
+                | "semantic-structure"
+                | "honest-evidence" => "passed",
                 _ => "pending",
             };
             json!({"id": id, "status": status, "evidenceRefs": gate_refs(id)})
@@ -217,8 +227,17 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
         json!({"id": "collection-keyboard-rename", "input": "keyboard", "selected": "Hero", "status": status(rename_committed)}),
         timeline.log,
         graph.commit_log,
+        color.picker_log,
+        color.gradient_log,
+        color.serialization_log,
+        recovery.retry_log,
     ];
-    let failures = vec![graph.reject_log, graph.cancel_log, feedback.failure_log];
+    let failures = vec![
+        graph.reject_log,
+        graph.cancel_log,
+        feedback.failure_log,
+        recovery.failure_log,
+    ];
     let logs =
         json!({"actions": actions, "stateTransitions": transitions, "failurePaths": failures});
     let traversal = vec![json!({
@@ -231,9 +250,11 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
             "focusOwner": widget(owner), "restored": focus_restored,
         }),
         graph.focus_log,
+        color.focus_log,
+        recovery.focus_log,
+        owner_removal,
     ];
     let known_gaps = vec![
-        json!({"id": "color-gradient-recovery", "issue": 842, "blocksGateIds": ["complete-component-coverage", "deterministic-user-journeys"], "reason": "color and recovery runtime paths are not on this source commit"}),
         json!({"id": "workspace-vello-captures", "issue": 845, "blocksGateIds": ["renderer-and-scale-quality"], "reason": "eight final reviewed Vello captures are pending"}),
         json!({"id": "cross-platform-evidence", "issue": 781, "blocksGateIds": ["platform-integration"], "reason": "Windows, macOS, and Linux evidence is not complete"}),
     ];
@@ -380,6 +401,8 @@ fn qualify_components(
     timeline: bool,
     feedback: bool,
     graph_journey: bool,
+    color: bool,
+    recovery: bool,
     passed: &mut BTreeSet<&'static str>,
 ) {
     let list = has_role(edit, &SemanticRole::List) && has_label(edit, "Assets");
@@ -427,6 +450,8 @@ fn qualify_components(
         ("node-graph", graph_surface),
         ("timeline", timeline_surface),
         ("viewport", viewport),
+        ("color-picker", color),
+        ("gradient-editor", color),
         ("content-structure-components", dock),
         ("icon-shortcut-components", keyboard_action),
         ("toolbar-components", pointer_action),
@@ -440,6 +465,7 @@ fn qualify_components(
         ("collection-components", list),
         ("inspector-components", inspector),
         ("editor-chrome-components", chrome),
+        ("color-components", color && recovery),
         ("timeline-components", timeline_surface && timeline),
         ("node-components", graph_parts && graph_journey),
         ("viewport-components", viewport),

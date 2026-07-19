@@ -66,15 +66,15 @@ pub(super) fn gate_refs(id: &str) -> Vec<&'static str> {
             ]
         }
         "canonical-component-composition" => vec!["#/runtime/components", "#/semanticSnapshots"],
-        "complete-component-coverage" => vec!["#/runtime/components", "#/knownGaps/0"],
-        "deterministic-user-journeys" => vec!["#/runtime/journeys", "#/logs", "#/knownGaps/0"],
+        "complete-component-coverage" => vec!["#/runtime/components"],
+        "deterministic-user-journeys" => vec!["#/runtime/journeys", "#/logs"],
         "semantic-structure" => vec![
             "#/semanticSnapshots",
             "#/traversalTraces",
             "#/focusRestorationTraces",
         ],
-        "renderer-and-scale-quality" => vec!["#/knownGaps/1"],
-        "platform-integration" => vec!["#/knownGaps/2"],
+        "renderer-and-scale-quality" => vec!["#/knownGaps/0"],
+        "platform-integration" => vec!["#/knownGaps/1"],
         _ => vec!["#/source", "#/knownGaps", "#/gates"],
     }
 }
@@ -100,7 +100,7 @@ pub(super) fn component_workspaces(id: &str) -> Vec<&'static str> {
 
 pub(super) fn component_refs(id: &str) -> Vec<&'static str> {
     if ["color-picker", "gradient-editor", "color-components"].contains(&id) {
-        vec!["#/knownGaps/0"]
+        vec!["#/logs/stateTransitions/5", "#/logs/stateTransitions/6"]
     } else if ["node-graph", "node-components"].contains(&id) {
         vec!["#/semanticSnapshots/1", "#/logs/stateTransitions/4"]
     } else {
@@ -123,6 +123,18 @@ pub(super) fn journey_refs(id: &str) -> Vec<&'static str> {
             "#/logs/failurePaths/0",
             "#/logs/failurePaths/1",
         ],
-        _ => vec!["#/knownGaps/0"],
+        "color-and-gradient-edit" => vec![
+            "#/logs/stateTransitions/5",
+            "#/logs/stateTransitions/6",
+            "#/logs/stateTransitions/7",
+            "#/focusRestorationTraces/2",
+        ],
+        "overlay-and-failure-recovery" => vec![
+            "#/logs/failurePaths/3",
+            "#/logs/stateTransitions/8",
+            "#/focusRestorationTraces/3",
+            "#/focusRestorationTraces/4",
+        ],
+        _ => vec!["#/source"],
     }
 }

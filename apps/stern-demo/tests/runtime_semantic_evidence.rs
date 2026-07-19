@@ -66,8 +66,8 @@ fn assert_provisional(path: &Path) {
         "const passed=x=>x.filter(v=>v.status==='passed').length;",
         "const gate=id=>r.gates.find(v=>v.id===id).status;",
         "if(r.status!=='incomplete'||r.runtime.components.length!==34||",
-        "passed(r.runtime.components)!==31||r.runtime.journeys.length!==7||",
-        "passed(r.runtime.journeys)!==5||r.semanticSnapshots.length!==2||",
+        "passed(r.runtime.components)!==34||r.runtime.journeys.length!==7||",
+        "passed(r.runtime.journeys)!==7||r.semanticSnapshots.length!==2||",
         "!r.publicConsumerAudit.passed||gate('renderer-and-scale-quality')!=='pending'||",
         "gate('platform-integration')!=='pending')process.exit(1);",
     );
