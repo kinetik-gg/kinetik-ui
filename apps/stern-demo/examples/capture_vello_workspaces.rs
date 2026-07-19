@@ -16,11 +16,11 @@ use stern_demo::{DemoApp, DemoWorkspace};
 
 const LOGICAL_WIDTH: f32 = 960.0;
 const LOGICAL_HEIGHT: f32 = 640.0;
-const SCALES: [(f64, &str); 4] = [
-    (1.0, "1.00x"),
-    (1.25, "1.25x"),
-    (1.5, "1.50x"),
-    (2.0, "2.00x"),
+const SCALES: [(f64, &str, u32, u32); 4] = [
+    (1.0, "1.00x", 960, 640),
+    (1.25, "1.25x", 1_200, 800),
+    (1.5, "1.50x", 1_440, 960),
+    (2.0, "2.00x", 1_920, 1_280),
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,9 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (DemoWorkspace::Edit, "edit"),
         (DemoWorkspace::Graph, "graph"),
     ] {
-        for (scale, scale_label) in SCALES {
-            let width = scaled_dimension(LOGICAL_WIDTH, scale)?;
-            let height = scaled_dimension(LOGICAL_HEIGHT, scale)?;
+        for (scale, scale_label, width, height) in SCALES {
             let mut app = DemoApp::new();
             let output_frame = frame_for_workspace(&mut app, workspace, scale, width, height)?;
             let resources = app.render_resources();
@@ -168,14 +166,6 @@ fn pointer_input(point: Point, down: bool, pressed: bool, released: bool) -> UiI
         },
         ..UiInput::default()
     }
-}
-
-fn scaled_dimension(logical: f32, scale: f64) -> Result<u32, Box<dyn std::error::Error>> {
-    let physical = f64::from(logical) * scale;
-    if physical.fract() != 0.0 || !(1.0..=f64::from(u32::MAX)).contains(&physical) {
-        return Err(format!("non-integral or invalid physical dimension {physical}").into());
-    }
-    Ok(physical as u32)
 }
 
 fn readback_vello_scene(
