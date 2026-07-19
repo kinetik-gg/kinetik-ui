@@ -27,7 +27,7 @@ use stern::widgets::{
 };
 
 use crate::edit_workspace::VIEWPORT_TEXTURE;
-use crate::shared_overlay_route::SharedOverlayRoute;
+use crate::overlay_workspace::SharedOverlayRoute;
 use crate::timeline_workspace::{
     compose_tool_actions, declare_tool_actions, viewport_actions, viewport_content_rect,
     viewport_tool_rects,

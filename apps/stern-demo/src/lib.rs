@@ -3,7 +3,7 @@
 mod app_model;
 mod edit_workspace;
 mod graph_workspace;
-mod shared_overlay_route;
+mod overlay_workspace;
 mod timeline_workspace;
 
 use stern::UiState;
@@ -15,7 +15,7 @@ use stern::core::{
 use stern::render::RenderResources;
 
 use edit_workspace::EditWorkspace;
-use shared_overlay_route::SharedOverlayRoute;
+use overlay_workspace::SharedOverlayRoute;
 
 pub use app_model::{
     DemoActionRegistry, DemoApplicationModel, DemoColorSaveState, DemoJobPhase, DemoTaggedColor,

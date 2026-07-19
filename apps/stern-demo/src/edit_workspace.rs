@@ -27,7 +27,7 @@ use stern::widgets::{
     ViewportWidgetConfig,
 };
 
-use crate::shared_overlay_route::SharedOverlayRoute;
+use crate::overlay_workspace::SharedOverlayRoute;
 use crate::timeline_workspace::{
     TimelineWorkspace, apply_timeline_output, compose_tool_actions, declare_tool_actions,
     prepare_feedback, prepare_timeline, timeline_feedback_rects, viewport_actions,
