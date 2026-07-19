@@ -7,18 +7,17 @@ use stern::core::{
 use stern_demo::{DemoApp, DemoScenario, DemoWorkspace, demo_context};
 
 #[test]
-fn default_scenario_preserves_exact_frame_output() {
+fn default_scenario_matches_pinned_base_frame_output() {
+    const BASE_FRAME_FINGERPRINT: u64 = 0x2b26_63ad_1046_fead;
     let mut maintained = DemoApp::new();
     let mut explicit = DemoApp::for_scenario(DemoScenario::Default);
 
-    assert_eq!(
-        maintained.frame(demo_context(UiInput::default())),
-        explicit.frame(demo_context(UiInput::default()))
-    );
-    assert_eq!(
-        maintained.frame(demo_context(UiInput::default())),
-        explicit.frame(demo_context(UiInput::default()))
-    );
+    for _ in 0..2 {
+        let maintained = maintained.frame(demo_context(UiInput::default()));
+        let explicit = explicit.frame(demo_context(UiInput::default()));
+        assert_eq!(maintained, explicit);
+        assert_eq!(frame_fingerprint(&maintained), BASE_FRAME_FINGERPRINT);
+    }
 }
 
 #[test]
@@ -181,6 +180,23 @@ fn action_count(output: &FrameOutput, id: &str) -> usize {
         .drain()
         .filter(|invocation| invocation.action_id.as_str() == id)
         .count()
+}
+
+fn frame_fingerprint(output: &FrameOutput) -> u64 {
+    let fields = format!(
+        "{:?}",
+        (
+            &output.primitives,
+            &output.semantics,
+            &output.repaint,
+            &output.actions,
+            &output.platform_requests,
+            &output.warnings,
+        )
+    );
+    fields.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 fn click(app: &mut DemoApp, output: &FrameOutput, role: &SemanticRole, label: &str) -> FrameOutput {
