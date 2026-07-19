@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "sternVersion": "1.0.0-rc.2.dev",
   "specificationSha256": "f1d489f6f28b613c0bcfa4490b7855da341457ee20c66c892dc37ebff2d024ed",
-  "status": "incomplete",
+  "status": "final",
   "source": {
-    "commit": "30539cb837b8cd7ab29891bdab72e88eb46c3f39",
-    "tree": "5b8d2dbae3357a8932dcb5467583517fa4b4be9a",
-    "sourceRef": "30539cb837b8cd7ab29891bdab72e88eb46c3f39",
+    "commit": "3b7544994e6d240f486786353d1f1d581c0784ca",
+    "tree": "bb7ba089822b9b0b7597f7790a167d4e8c82cc1a",
+    "sourceRef": "3b7544994e6d240f486786353d1f1d581c0784ca",
     "generatedFromCleanWorktree": true
   },
   "runtime": {
@@ -2584,6 +2584,49 @@
     "artifactCount": 8,
     "sourceCompatibility": "capture-sensitive paths unchanged"
   },
+  "platformEvidence": {
+    "issue": 848,
+    "runId": 29672838723,
+    "runUrl": "https://github.com/kinetik-gg/stern/actions/runs/29672838723",
+    "artifactName": "demo-platform-smoke-verified",
+    "commit": "50edc219ae5d013c242129adf2ec7a25942f5c28",
+    "status": "pass",
+    "records": [
+      {
+        "formatVersion": 1,
+        "platform": "windows",
+        "commit": "50edc219ae5d013c242129adf2ec7a25942f5c28",
+        "runnerOs": "Windows",
+        "runnerArch": "X64",
+        "expectedBackend": "dx12",
+        "exitCode": 0,
+        "timedOut": false,
+        "presentationEvidence": "native-shell-smoke=pass status=Presented"
+      },
+      {
+        "formatVersion": 1,
+        "platform": "macos",
+        "commit": "50edc219ae5d013c242129adf2ec7a25942f5c28",
+        "runnerOs": "macOS",
+        "runnerArch": "ARM64",
+        "expectedBackend": "metal",
+        "exitCode": 0,
+        "timedOut": false,
+        "presentationEvidence": "native-shell-smoke=pass status=Presented"
+      },
+      {
+        "formatVersion": 1,
+        "platform": "linux",
+        "commit": "50edc219ae5d013c242129adf2ec7a25942f5c28",
+        "runnerOs": "Linux",
+        "runnerArch": "X64",
+        "expectedBackend": "vulkan",
+        "exitCode": 0,
+        "timedOut": false,
+        "presentationEvidence": "native-shell-smoke=pass status=Presented"
+      }
+    ]
+  },
   "publicConsumerAudit": {
     "passed": true,
     "manifestPath": "apps/stern-demo/Cargo.toml",
@@ -2720,9 +2763,9 @@
     },
     {
       "id": "platform-integration",
-      "status": "pending",
+      "status": "passed",
       "evidenceRefs": [
-        "#/knownGaps/0"
+        "#/platformEvidence"
       ]
     },
     {
@@ -2735,14 +2778,5 @@
       ]
     }
   ],
-  "knownGaps": [
-    {
-      "id": "cross-platform-evidence",
-      "issue": 848,
-      "blocksGateIds": [
-        "platform-integration"
-      ],
-      "reason": "Windows, macOS, and Linux evidence is not complete"
-    }
-  ]
+  "knownGaps": []
 }
