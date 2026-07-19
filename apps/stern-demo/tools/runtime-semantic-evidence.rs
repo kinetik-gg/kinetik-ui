@@ -229,7 +229,7 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
     });
     let platform_evidence = json!({
         "issue": 848,
-        "runId": 29672838723_u64,
+        "runId": 29_672_838_723_u64,
         "runUrl": "https://github.com/kinetik-gg/stern/actions/runs/29672838723",
         "artifactName": "demo-platform-smoke-verified",
         "commit": "50edc219ae5d013c242129adf2ec7a25942f5c28",
