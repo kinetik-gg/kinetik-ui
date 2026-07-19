@@ -7,7 +7,6 @@ use std::{
     process::ExitCode,
 };
 
-use serde_json::{Value, json};
 use stern::core::{
     AccessibilitySnapshot, ActionSource, FrameOutput, Key, KeyEvent, KeyState, Modifiers,
     MouseButton, Point, PointerButtonState, PointerInput, SemanticRole, SemanticValue, UiInput,
@@ -18,12 +17,14 @@ use stern_demo::{DemoApp, DemoJobPhase, DemoWorkspace, GraphConnectionFeedback, 
 
 mod audit;
 mod contract;
+mod json;
 
 use audit::{git, primitive_allowlist, public_consumer_audit, repo_root};
 use contract::{
     COMPONENTS, GATES, JOURNEYS, SPEC_SHA256, VERSION, component_refs, component_workspaces,
     gate_refs, journey_refs,
 };
+use json::{Json as Value, json};
 
 fn main() -> ExitCode {
     match run() {
@@ -53,11 +54,7 @@ fn run() -> Result<(), String> {
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    fs::write(
-        &output,
-        serde_json::to_vec_pretty(&record).map_err(|e| e.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
+    fs::write(&output, record.to_pretty_bytes()).map_err(|error| error.to_string())?;
     println!("runtime semantic evidence: wrote {}", output.display());
     Ok(())
 }
@@ -185,7 +182,7 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
         .iter()
         .map(|id| {
             let status = match *id {
-                "public-consumer-boundary" if audit["passed"] == true => "passed",
+                "public-consumer-boundary" if audit.bool_field("passed") == Some(true) => "passed",
                 "canonical-component-composition" | "semantic-structure" | "honest-evidence" => {
                     "passed"
                 }
@@ -195,56 +192,66 @@ fn generate(root: &Path, source_ref: &str) -> Result<Value, String> {
         })
         .collect::<Vec<_>>();
 
+    let source = json!({
+        "commit": commit,
+        "tree": tree,
+        "sourceRef": source_ref,
+        "generatedFromCleanWorktree": clean,
+    });
+    let workspaces = vec![
+        json!({"id": "edit-workspace", "semanticSnapshotRef": "#/semanticSnapshots/0", "passedComponentIds": passed.iter().copied().filter(|id| component_workspaces(id).contains(&"edit-workspace")).collect::<Vec<_>>()}),
+        json!({"id": "graph-workspace", "semanticSnapshotRef": "#/semanticSnapshots/1", "passedComponentIds": passed.iter().copied().filter(|id| component_workspaces(id).contains(&"graph-workspace")).collect::<Vec<_>>()}),
+    ];
+    let runtime = json!({
+        "components": component_records,
+        "workspaces": workspaces,
+        "journeys": journeys,
+    });
+    let actions = vec![
+        json!({"id": "pointer-apply", "input": "pointer", "actionId": "shared.apply", "source": "Button", "stateBefore": revision_before, "stateAfter": revision_before + u32::from(pointer_action), "status": status(pointer_action)}),
+        json!({"id": "keyboard-apply", "input": "keyboard", "actionId": "shared.apply", "source": "Shortcut", "stateBefore": shortcut_before, "stateAfter": shortcut_before + u32::from(keyboard_action), "status": status(keyboard_action)}),
+    ];
+    let transitions = vec![
+        json!({"id": "collection-pointer-selection", "input": "pointer", "focus": widget(selected_id), "status": status(selected_id.is_some())}),
+        json!({"id": "collection-keyboard-traversal", "input": "keyboard", "selected": "Lighting", "status": status(keyboard_selected)}),
+        json!({"id": "collection-keyboard-rename", "input": "keyboard", "selected": "Hero", "status": status(rename_committed)}),
+        timeline.log,
+        graph.commit_log,
+    ];
+    let failures = vec![graph.reject_log, graph.cancel_log, feedback.failure_log];
+    let logs =
+        json!({"actions": actions, "stateTransitions": transitions, "failurePaths": failures});
+    let traversal = vec![json!({
+        "workspaceId": "edit-workspace", "input": "Tab", "focusBefore": widget(tab_before),
+        "focusAfter": widget(tab_after), "status": status(tab_after.is_some() && tab_after != tab_before),
+    })];
+    let focus_restoration = vec![
+        json!({
+            "workspaceId": "edit-workspace", "overlay": "Workspace commands", "dismissal": "Escape",
+            "focusOwner": widget(owner), "restored": focus_restored,
+        }),
+        graph.focus_log,
+    ];
+    let known_gaps = vec![
+        json!({"id": "color-gradient-recovery", "issue": 842, "blocksGateIds": ["complete-component-coverage", "deterministic-user-journeys"], "reason": "color and recovery runtime paths are not on this source commit"}),
+        json!({"id": "workspace-vello-captures", "issue": 845, "blocksGateIds": ["renderer-and-scale-quality"], "reason": "eight final reviewed Vello captures are pending"}),
+        json!({"id": "cross-platform-evidence", "issue": 781, "blocksGateIds": ["platform-integration"], "reason": "Windows, macOS, and Linux evidence is not complete"}),
+    ];
     Ok(json!({
         "formatVersion": 1,
         "sternVersion": VERSION,
         "specificationSha256": SPEC_SHA256,
         "status": "incomplete",
-        "source": {
-            "commit": commit,
-            "tree": tree,
-            "sourceRef": source_ref,
-            "generatedFromCleanWorktree": clean,
-        },
-        "runtime": {
-            "components": component_records,
-            "workspaces": [
-                {"id": "edit-workspace", "semanticSnapshotRef": "#/semanticSnapshots/0", "passedComponentIds": passed.iter().copied().filter(|id| component_workspaces(id).contains(&"edit-workspace")).collect::<Vec<_>>()},
-                {"id": "graph-workspace", "semanticSnapshotRef": "#/semanticSnapshots/1", "passedComponentIds": passed.iter().copied().filter(|id| component_workspaces(id).contains(&"graph-workspace")).collect::<Vec<_>>()},
-            ],
-            "journeys": journeys,
-        },
-        "logs": {
-            "actions": [
-                {"id": "pointer-apply", "input": "pointer", "actionId": "shared.apply", "source": "Button", "stateBefore": revision_before, "stateAfter": revision_before + u32::from(pointer_action), "status": status(pointer_action)},
-                {"id": "keyboard-apply", "input": "keyboard", "actionId": "shared.apply", "source": "Shortcut", "stateBefore": shortcut_before, "stateAfter": shortcut_before + u32::from(keyboard_action), "status": status(keyboard_action)},
-            ],
-            "stateTransitions": [
-                {"id": "collection-pointer-selection", "input": "pointer", "focus": widget(selected_id), "status": status(selected_id.is_some())},
-                {"id": "collection-keyboard-traversal", "input": "keyboard", "selected": "Lighting", "status": status(keyboard_selected)},
-                {"id": "collection-keyboard-rename", "input": "keyboard", "selected": "Hero", "status": status(rename_committed)},
-                timeline.log,
-                graph.commit_log,
-            ],
-            "failurePaths": [graph.reject_log, graph.cancel_log, feedback.failure_log],
-        },
+        "source": source,
+        "runtime": runtime,
+        "logs": logs,
         "semanticSnapshots": [edit_snapshot, graph_snapshot],
-        "traversalTraces": [{
-            "workspaceId": "edit-workspace", "input": "Tab", "focusBefore": widget(tab_before),
-            "focusAfter": widget(tab_after), "status": status(tab_after.is_some() && tab_after != tab_before),
-        }],
-        "focusRestorationTraces": [{
-            "workspaceId": "edit-workspace", "overlay": "Workspace commands", "dismissal": "Escape",
-            "focusOwner": widget(owner), "restored": focus_restored,
-        }, graph.focus_log],
+        "traversalTraces": traversal,
+        "focusRestorationTraces": focus_restoration,
         "publicConsumerAudit": audit,
         "primitiveContentSurfaceAllowlist": primitive_allowlist(root)?,
         "gates": gates,
-        "knownGaps": [
-            {"id": "color-gradient-recovery", "issue": 842, "blocksGateIds": ["complete-component-coverage", "deterministic-user-journeys"], "reason": "color and recovery runtime paths are not on this source commit"},
-            {"id": "workspace-vello-captures", "issue": 845, "blocksGateIds": ["renderer-and-scale-quality"], "reason": "eight final reviewed Vello captures are pending"},
-            {"id": "cross-platform-evidence", "issue": 781, "blocksGateIds": ["platform-integration"], "reason": "Windows, macOS, and Linux evidence is not complete"},
-        ],
+        "knownGaps": known_gaps,
     }))
 }
 
@@ -450,7 +457,7 @@ fn semantic_snapshot(
     let nodes = snapshot.nodes.iter().map(|node| json!({
         "id": format!("{:016x}", node.id.raw()),
         "parent": node.parent.map(|id| format!("{:016x}", id.raw())),
-        "role": role(&node.role), "label": node.label,
+        "role": role(&node.role), "label": node.label.clone(),
         "bounds": [node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height],
         "focusable": node.focusable, "focused": node.state.focused,
         "selected": node.state.selected, "disabled": node.state.disabled,

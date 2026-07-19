@@ -2297,7 +2297,6 @@ name = "stern-demo"
 version = "1.0.0-rc.2.dev"
 dependencies = [
  "pollster",
- "serde_json",
  "stern",
  "stern-icons-phosphor",
  "syn",

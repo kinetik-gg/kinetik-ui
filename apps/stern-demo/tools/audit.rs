@@ -4,7 +4,7 @@ use std::{
     process::Command,
 };
 
-use serde_json::{Value, json};
+use super::json::{Json as Value, json};
 
 pub(super) fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")

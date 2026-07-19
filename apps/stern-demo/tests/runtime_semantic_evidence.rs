@@ -6,32 +6,12 @@ use std::{
     process::Command,
 };
 
-use serde_json::Value;
-
 #[test]
 fn generator_records_honest_current_runtime_packet() {
     let evidence = temp("generated");
     generate(&evidence);
-    let record: Value = serde_json::from_slice(&fs::read(&evidence).expect("evidence bytes"))
-        .expect("evidence JSON");
-
-    assert_eq!(record["status"], "incomplete");
-    assert_eq!(
-        record["runtime"]["components"].as_array().unwrap().len(),
-        34
-    );
-    assert_eq!(passed(&record["runtime"]["components"]), 31);
-    assert_eq!(record["runtime"]["journeys"].as_array().unwrap().len(), 7);
-    assert_eq!(passed(&record["runtime"]["journeys"]), 5);
-    assert_eq!(record["semanticSnapshots"].as_array().unwrap().len(), 2);
-    assert_eq!(record["publicConsumerAudit"]["passed"], true);
-    assert_eq!(
-        gate(&record, "renderer-and-scale-quality")["status"],
-        "pending"
-    );
-    assert_eq!(gate(&record, "platform-integration")["status"], "pending");
+    assert_provisional(&evidence);
     verify(&evidence, true);
-
     let _ = fs::remove_file(evidence);
 }
 
@@ -39,20 +19,15 @@ fn generator_records_honest_current_runtime_packet() {
 fn verifier_rejects_stale_source_and_premature_gate_claims() {
     let evidence = temp("tampered");
     generate(&evidence);
-    let mut record: Value = serde_json::from_slice(&fs::read(&evidence).expect("evidence bytes"))
-        .expect("evidence JSON");
-
-    record["source"]["tree"] = Value::String("0".repeat(40));
-    fs::write(&evidence, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    mutate(&evidence, "record.source.tree = '0'.repeat(40);");
     verify(&evidence, false);
 
     generate(&evidence);
-    let mut record: Value = serde_json::from_slice(&fs::read(&evidence).expect("evidence bytes"))
-        .expect("evidence JSON");
-    gate_mut(&mut record, "renderer-and-scale-quality")["status"] = Value::String("passed".into());
-    fs::write(&evidence, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    mutate(
+        &evidence,
+        "record.gates.find(gate => gate.id === 'renderer-and-scale-quality').status = 'passed';",
+    );
     verify(&evidence, false);
-
     let _ = fs::remove_file(evidence);
 }
 
@@ -85,31 +60,33 @@ fn verify(path: &Path, expected: bool) {
     );
 }
 
-fn passed(records: &Value) -> usize {
-    records
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|record| record["status"] == "passed")
-        .count()
+fn assert_provisional(path: &Path) {
+    let script = concat!(
+        "const fs=require('fs');const r=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));",
+        "const passed=x=>x.filter(v=>v.status==='passed').length;",
+        "const gate=id=>r.gates.find(v=>v.id===id).status;",
+        "if(r.status!=='incomplete'||r.runtime.components.length!==34||",
+        "passed(r.runtime.components)!==31||r.runtime.journeys.length!==7||",
+        "passed(r.runtime.journeys)!==5||r.semanticSnapshots.length!==2||",
+        "!r.publicConsumerAudit.passed||gate('renderer-and-scale-quality')!=='pending'||",
+        "gate('platform-integration')!=='pending')process.exit(1);",
+    );
+    let status = Command::new("node")
+        .args(["-e", script, path.to_str().unwrap()])
+        .status()
+        .expect("inspect provisional evidence");
+    assert!(status.success());
 }
 
-fn gate<'a>(record: &'a Value, id: &str) -> &'a Value {
-    record["gates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|gate| gate["id"] == id)
-        .expect("gate")
-}
-
-fn gate_mut<'a>(record: &'a mut Value, id: &str) -> &'a mut Value {
-    record["gates"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|gate| gate["id"] == id)
-        .expect("gate")
+fn mutate(path: &Path, mutation: &str) {
+    let script = format!(
+        "const fs=require('fs');const path=process.argv[1];const record=JSON.parse(fs.readFileSync(path,'utf8'));{mutation}fs.writeFileSync(path,JSON.stringify(record));"
+    );
+    let status = Command::new("node")
+        .args(["-e", &script, path.to_str().unwrap()])
+        .status()
+        .expect("tamper evidence fixture");
+    assert!(status.success());
 }
 
 fn repo_root() -> PathBuf {
