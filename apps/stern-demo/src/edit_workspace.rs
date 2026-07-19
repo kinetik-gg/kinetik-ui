@@ -34,7 +34,7 @@ use crate::timeline_workspace::{
     timeline_feedback_rects, timeline_transport_layout, viewport_actions, viewport_content_rect,
     viewport_tool_rects,
 };
-use crate::{DemoActionRegistry, DemoApplicationModel, DemoScenario, DemoWorkspace};
+use crate::{DemoActionRegistry, DemoApplicationModel, DemoWorkspace};
 
 const ASSETS_PANEL: PanelId = PanelId::from_raw(11);
 const VIEWPORT_PANEL: PanelId = PanelId::from_raw(21);
@@ -208,7 +208,6 @@ impl EditWorkspace {
         model: &mut DemoApplicationModel,
         overlays: &mut SharedOverlayRoute,
         bounds: Size,
-        scenario: DemoScenario,
     ) -> Option<WidgetId> {
         self.timeline.project(model);
         let layout = WorkspaceLayout::new(bounds);
@@ -326,7 +325,8 @@ impl EditWorkspace {
 
         overlays.open_palette_if_requested(ui, actions, bounds);
         let context_route = workspace_context_route(ui, viewport_bounds);
-        let overlay_help = scenario
+        let overlay_help = model
+            .scenario()
             .has_overlay_recovery_journey()
             .then(|| (ui.make_id(OVERLAY_HELP_KEY), overlay_help_rect(bounds)));
 

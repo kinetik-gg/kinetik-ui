@@ -221,7 +221,6 @@ impl DemoApp {
         let graph = self.actions.graph_workspace().clone();
         let apply = self.actions.apply_shared_state().clone();
         let workspace = self.model.workspace();
-        let scenario = self.model.scenario();
         let bounds = context.viewport.logical_size;
         let theme = default_dark_theme();
         self.actions
@@ -243,7 +242,6 @@ impl DemoApp {
                         &mut self.model,
                         &mut self.overlays,
                         bounds,
-                        scenario,
                     );
                 }
                 DemoWorkspace::Graph => {
