@@ -3,8 +3,8 @@
 use stern::core::{ActionContext, ActionDescriptor, ActionInvocation, ActionSource, Color};
 use stern::widgets::gradient_editor::GradientEditorIntent;
 use stern_demo::{
-    DemoActionRegistry, DemoApplicationModel, DemoColorSaveState, DemoJobPhase, DemoTaggedColor,
-    DemoViewportTool, DemoWorkspace,
+    DemoActionAvailability, DemoActionRegistry, DemoApplicationModel, DemoColorSaveState,
+    DemoJobPhase, DemoTaggedColor, DemoViewportTool, DemoWorkspace,
 };
 
 #[test]
@@ -30,6 +30,33 @@ fn shared_model_preserves_pinned_workspace_identity_and_revision() {
     assert!(model.execute(&invocation(registry.edit_workspace())));
     assert_eq!(model.workspace(), DemoWorkspace::Edit);
     assert_eq!(model.applied_revision(), 1);
+}
+
+#[test]
+fn shared_action_availability_is_application_owned_and_fail_closed() {
+    let mut registry = DemoActionRegistry::new();
+    let mut model = DemoApplicationModel::new();
+
+    for (availability, visible, enabled) in [
+        (DemoActionAvailability::Available, true, true),
+        (DemoActionAvailability::Unavailable, true, false),
+        (DemoActionAvailability::Hidden, false, false),
+    ] {
+        model.set_apply_availability(availability);
+        registry.project_apply_shared_state(model.apply_availability());
+        assert_eq!(registry.apply_shared_state().state.visible, visible);
+        assert_eq!(registry.apply_shared_state().state.enabled, enabled);
+
+        let revision = model.applied_revision();
+        assert_eq!(
+            model.execute(&invocation(registry.apply_shared_state())),
+            availability == DemoActionAvailability::Available
+        );
+        assert_eq!(
+            model.applied_revision(),
+            revision + u32::from(availability == DemoActionAvailability::Available)
+        );
+    }
 }
 
 #[test]

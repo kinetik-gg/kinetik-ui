@@ -11,8 +11,8 @@ use stern::core::{
 use stern::render::RenderDiagnostic;
 use stern::widgets::node_graph::{EdgeId, NodeId, PortEndpoint, PortId};
 use stern_demo::{
-    DemoApp, DemoColorSaveState, DemoJobPhase, DemoViewportTool, DemoWorkspace,
-    GraphConnectionFeedback, demo_context,
+    DemoActionAvailability, DemoApp, DemoColorSaveState, DemoJobPhase, DemoViewportTool,
+    DemoWorkspace, GraphConnectionFeedback, demo_context,
 };
 
 const REQUIRED_IDS: &str = concat!(
@@ -214,6 +214,12 @@ fn shared_menu_escape_and_outside_press_preserve_focus_owner() {
     let closed = app.frame(demo_context(pointer(outside, false, false, true)));
     assert!(!has_label(&closed, "Workspace commands"));
     assert_eq!(app.focused(), Some(owner));
+}
+
+#[test]
+fn shared_action_unavailable_and_hidden_states_are_inert_on_every_surface() {
+    assert!(unavailable_projection_evidence());
+    assert!(hidden_projection_evidence());
 }
 
 #[test]
@@ -1010,23 +1016,36 @@ fn shared_action_evidence() -> SharedActionEvidence {
             && context_exact
             && shortcut_exact
             && palette_exact,
-        disabled_consistent: disabled_projection_evidence(),
+        disabled_consistent: unavailable_projection_evidence() && hidden_projection_evidence(),
     }
 }
 
-fn disabled_projection_evidence() -> bool {
+fn unavailable_projection_evidence() -> bool {
     let mut app = DemoApp::new();
-    app.set_apply_enabled(false);
+    app.set_apply_availability(DemoActionAvailability::Unavailable);
     let initial = app.frame(demo_context(UiInput::default()));
     let toolbar = node(&initial, &SemanticRole::IconButton, "Apply Shared State")
         .state
         .disabled;
+    let toolbar_action = click(
+        &mut app,
+        &initial,
+        &SemanticRole::IconButton,
+        "Apply Shared State",
+    );
 
-    let _ = click(&mut app, &initial, &SemanticRole::MenuItem, "Workspace");
+    let base = app.frame(demo_context(UiInput::default()));
+    let _ = click(&mut app, &base, &SemanticRole::MenuItem, "Workspace");
     let menu = app.frame(demo_context(UiInput::default()));
     let menu_disabled = node(&menu, &SemanticRole::MenuItem, "Apply Shared State")
         .state
         .disabled;
+    let menu_action = click(
+        &mut app,
+        &menu,
+        &SemanticRole::MenuItem,
+        "Apply Shared State",
+    );
     let _ = app.frame(demo_context(key(Key::Escape)));
 
     let context_base = app.frame(demo_context(UiInput::default()));
@@ -1039,6 +1058,12 @@ fn disabled_projection_evidence() -> bool {
     let context_disabled = node(&context, &SemanticRole::MenuItem, "Apply Shared State")
         .state
         .disabled;
+    let context_action = click(
+        &mut app,
+        &context,
+        &SemanticRole::MenuItem,
+        "Apply Shared State",
+    );
     let _ = app.frame(demo_context(key(Key::Escape)));
 
     let palette = app.frame(demo_context(key_with_modifiers(
@@ -1059,6 +1084,52 @@ fn disabled_projection_evidence() -> bool {
         && menu_disabled
         && context_disabled
         && palette_disabled
+        && action_count(&toolbar_action, "shared.apply") == 0
+        && action_count(&menu_action, "shared.apply") == 0
+        && action_count(&context_action, "shared.apply") == 0
+        && action_count(&palette_action, "shared.apply") == 0
+        && action_count(&shortcut, "shared.apply") == 0
+        && app.applied_revision() == 0
+}
+
+fn hidden_projection_evidence() -> bool {
+    let mut app = DemoApp::new();
+    app.set_apply_availability(DemoActionAvailability::Hidden);
+    let initial = app.frame(demo_context(UiInput::default()));
+    let toolbar_hidden = !has_node(&initial, &SemanticRole::IconButton, "Apply Shared State");
+
+    let _ = click(&mut app, &initial, &SemanticRole::MenuItem, "Workspace");
+    let menu = app.frame(demo_context(UiInput::default()));
+    let menu_hidden = !has_node(&menu, &SemanticRole::MenuItem, "Apply Shared State");
+    let _ = app.frame(demo_context(key(Key::Escape)));
+
+    let context_base = app.frame(demo_context(UiInput::default()));
+    let context_point = node(&context_base, &SemanticRole::Viewport, "Viewport")
+        .bounds
+        .center();
+    let _ = app.frame(demo_context(secondary(context_point, true, true, false)));
+    let _ = app.frame(demo_context(secondary(context_point, false, false, true)));
+    let context = app.frame(demo_context(UiInput::default()));
+    let context_hidden = !has_node(&context, &SemanticRole::MenuItem, "Apply Shared State");
+    let _ = app.frame(demo_context(key(Key::Escape)));
+
+    let palette = app.frame(demo_context(key_with_modifiers(
+        Key::Character("p".to_owned()),
+        Modifiers::new(true, true, false, false),
+    )));
+    let palette_hidden = has_role(&palette, &SemanticRole::SearchField)
+        && !has_node(&palette, &SemanticRole::MenuItem, "Apply Shared State");
+    let palette_action = app.frame(demo_context(key(Key::Enter)));
+    let _ = app.frame(demo_context(key(Key::Escape)));
+    let shortcut = app.frame(demo_context(key_with_modifiers(
+        Key::Enter,
+        Modifiers::new(false, true, false, false),
+    )));
+
+    toolbar_hidden
+        && menu_hidden
+        && context_hidden
+        && palette_hidden
         && action_count(&palette_action, "shared.apply") == 0
         && action_count(&shortcut, "shared.apply") == 0
         && app.applied_revision() == 0
@@ -1273,6 +1344,14 @@ fn has_label(output: &FrameOutput, label: &str) -> bool {
         .nodes()
         .iter()
         .any(|node| node.label.as_deref() == Some(label))
+}
+
+fn has_node(output: &FrameOutput, role: &SemanticRole, label: &str) -> bool {
+    output
+        .semantics
+        .nodes()
+        .iter()
+        .any(|node| &node.role == role && node.label.as_deref() == Some(label))
 }
 
 fn has_labels(output: &FrameOutput, labels: &str) -> bool {
