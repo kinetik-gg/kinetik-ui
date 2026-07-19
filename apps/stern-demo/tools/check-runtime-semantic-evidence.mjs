@@ -7,7 +7,7 @@ import { verifyEvidence as verifyRendererEvidence } from "../../../tools/capture
 import { verifyRecords as verifyPlatformRecords } from "./platform-smoke-record.mjs";
 
 const SPEC_SHA256 = "f1d489f6f28b613c0bcfa4490b7855da341457ee20c66c892dc37ebff2d024ed";
-const EXPECTED_PACKET_SHA256 = "30c6d28b36159c517684fe137411c596802c6fce175955086962cfc4d36a712d";
+const EXPECTED_PACKET_SHA256 = "59a08fa47f48ed745e8a9d36a465114a1721aea75c6d377bc2fbf84c12d23674";
 const COMPONENTS = [
   "button", "text-field", "dropdown", "selection-controls", "value-controls",
   "progress-feedback", "overlay-system", "virtual-list", "editor-frame",
@@ -34,19 +34,10 @@ const GATES = [
   "renderer-and-scale-quality", "platform-integration", "honest-evidence",
 ];
 const RENDERER_COMPATIBLE_DRIFT = [
-  "apps/stern-demo/Cargo.toml",
   "apps/stern-demo/src/bin/native_shell.rs",
-  "apps/stern-demo/tests/evidence/runtime-semantic-evidence.provisional.json",
   "apps/stern-demo/tests/native_shell_contract.rs",
-  "apps/stern-demo/tests/runtime_semantic_evidence.rs",
-  "apps/stern-demo/tools/audit.rs",
-  "apps/stern-demo/tools/check-runtime-semantic-evidence.mjs",
-  "apps/stern-demo/tools/color-evidence.rs",
-  "apps/stern-demo/tools/contract.rs",
-  "apps/stern-demo/tools/json.rs",
   "apps/stern-demo/tools/platform-smoke-record.mjs",
   "apps/stern-demo/tools/platform-smoke-record.test.mjs",
-  "apps/stern-demo/tools/runtime-semantic-evidence.rs",
 ];
 
 const options = parseArgs(process.argv.slice(2));
