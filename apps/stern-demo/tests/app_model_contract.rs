@@ -1,7 +1,7 @@
 //! Shared application model and action identity contract.
 
 use stern::core::{ActionContext, ActionDescriptor, ActionInvocation, ActionSource, Color};
-use stern::widgets::gradient_editor::GradientEditorIntent;
+use stern::widgets::gradient_editor::{GradientEditorIntent, GradientInterpolationSpace};
 use stern_demo::{
     DemoActionAvailability, DemoActionRegistry, DemoApplicationModel, DemoColorSaveState,
     DemoJobPhase, DemoTaggedColor, DemoViewportTool, DemoWorkspace,
@@ -161,6 +161,7 @@ fn color_gradient_and_failed_save_remain_application_owned() {
     let registry = DemoActionRegistry::new();
     let mut model = DemoApplicationModel::new();
     let original_color = model.tagged_color();
+    let original_style = model.color_style().clone();
     let original_stops = model.gradient_stops().to_vec();
     let selected = model.selected_gradient_stop();
 
@@ -170,7 +171,21 @@ fn color_gradient_and_failed_save_remain_application_owned() {
         DemoTaggedColor::Srgb(Color::rgb8(12, 34, 56))
     );
     assert_ne!(model.tagged_color(), original_color);
+    assert_ne!(model.color_style(), &original_style);
     assert_eq!(model.color_revision(), 1);
+    assert_eq!(
+        model
+            .gradient_stops()
+            .iter()
+            .find(|stop| stop.id == selected)
+            .expect("selected stop")
+            .color,
+        model.tagged_color().color()
+    );
+    assert_eq!(
+        model.gradient_interpolation(),
+        GradientInterpolationSpace::Srgb
+    );
 
     model.apply_gradient_intents(&[GradientEditorIntent::MoveStop {
         id: selected,
@@ -186,6 +201,7 @@ fn color_gradient_and_failed_save_remain_application_owned() {
             .to_bits(),
         0.35_f32.to_bits()
     );
+
     model.apply_gradient_intents(&[GradientEditorIntent::Reverse]);
     assert_eq!(model.selected_gradient_stop(), selected);
     assert_eq!(
@@ -200,6 +216,22 @@ fn color_gradient_and_failed_save_remain_application_owned() {
             .map(|stop| stop.id)
             .collect::<Vec<_>>()
     );
+
+    let alternate = model
+        .gradient_stops()
+        .iter()
+        .find(|stop| stop.id != selected)
+        .expect("alternate stop")
+        .id;
+    model.apply_gradient_intents(&[GradientEditorIntent::SelectStop(alternate)]);
+    let alternate_color = model
+        .gradient_stops()
+        .iter()
+        .find(|stop| stop.id == alternate)
+        .expect("selected alternate stop")
+        .color;
+    assert_eq!(model.selected_gradient_stop(), alternate);
+    assert_eq!(model.tagged_color(), DemoTaggedColor::Srgb(alternate_color));
 
     assert!(model.execute(&invocation(registry.save_color_style())));
     assert_eq!(model.color_save_state(), DemoColorSaveState::Failed);

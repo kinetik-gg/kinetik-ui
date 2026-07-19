@@ -269,6 +269,40 @@ fn color_picker_and_gradient_editor_execute_public_commit_lifecycles() {
 }
 
 #[test]
+fn color_picker_escape_and_outside_cancel_restore_exact_style_and_focus() {
+    let mut app = DemoApp::new();
+    let initial = app.frame(demo_context(UiInput::default()));
+    let trigger = node(&initial, &SemanticRole::Button, "Fill color").id;
+    let original = app.color_style().clone();
+
+    let _ = click(&mut app, &initial, &SemanticRole::Button, "Fill color");
+    let picker = app.frame(demo_context(UiInput::default()));
+    let _ = click(&mut app, &picker, &SemanticRole::Button, "Increase Red");
+    let _ = app.frame(demo_context(key(Key::Escape)));
+    let escaped = app.frame(demo_context(UiInput::default()));
+    assert_eq!(app.color_style(), &original);
+    assert_eq!(app.color_revision(), 0);
+    assert_eq!(app.focused(), Some(trigger));
+    assert!(!has_custom_role(&escaped, "color-picker"));
+
+    let _ = click(&mut app, &escaped, &SemanticRole::Button, "Fill color");
+    let picker = app.frame(demo_context(UiInput::default()));
+    let _ = click(&mut app, &picker, &SemanticRole::Button, "Increase Green");
+    let outside = Point::new(350.0, 10.0);
+    assert!(
+        !custom_node(&picker, "color-picker", "Color picker")
+            .bounds
+            .contains_point(outside)
+    );
+    let _ = app.frame(demo_context(primary_release(outside)));
+    let cancelled = app.frame(demo_context(UiInput::default()));
+    assert_eq!(app.color_style(), &original);
+    assert_eq!(app.color_revision(), 0);
+    assert_eq!(app.focused(), Some(trigger));
+    assert!(!has_custom_role(&cancelled, "color-picker"));
+}
+
+#[test]
 fn overlays_and_failed_color_save_execute_recovery_without_optimistic_mutation() {
     let evidence = overlay_recovery_evidence();
     assert!(evidence.overlay_focus_recovered);
@@ -1571,6 +1605,10 @@ fn graph_connection_move(from: Point, to: Point) -> UiInput {
 }
 
 fn graph_connection_release(point: Point) -> UiInput {
+    primary_release(point)
+}
+
+fn primary_release(point: Point) -> UiInput {
     let mut input = UiInput::default();
     input.push_event(UiInputEvent::PointerButton {
         button: MouseButton::Primary,

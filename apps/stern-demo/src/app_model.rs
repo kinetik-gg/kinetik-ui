@@ -384,14 +384,15 @@ impl DemoApplicationModel {
                         .any(|stop| stop.id == id) =>
                 {
                     self.color_style.selected_gradient_stop = id;
-                    let color = self
+                    if let Some(color) = self
                         .color_style
                         .gradient_stops
                         .iter()
                         .find(|stop| stop.id == id)
-                        .expect("selected stop exists")
-                        .color;
-                    self.color_style.color = DemoTaggedColor::Srgb(color);
+                        .map(|stop| stop.color)
+                    {
+                        self.color_style.color = DemoTaggedColor::Srgb(color);
+                    }
                 }
                 GradientEditorIntent::MoveStop { id, position } => {
                     if let Some(stop) = self
@@ -442,7 +443,6 @@ impl DemoApplicationModel {
             APPLY_ACTION if self.apply_availability == DemoActionAvailability::Available => {
                 self.applied_revision = self.applied_revision.saturating_add(1);
             }
-            APPLY_ACTION => return false,
             VIEWPORT_SELECT_ACTION => self.viewport_tool = DemoViewportTool::Select,
             VIEWPORT_TRANSFORM_ACTION => self.viewport_tool = DemoViewportTool::Transform,
             SAVE_COLOR_STYLE_ACTION => self.save_color_style(),

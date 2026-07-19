@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use stern::core::{
-    ActionContext, ActionInvocation, ActionSource, Axis, PointerOrder, PointerTarget,
-    PointerTargetPlan, Rect, Size, TextureId, UiInput, WidgetId,
+    ActionContext, ActionInvocation, ActionSource, Axis, MouseButton, PointerOrder, PointerTarget,
+    PointerTargetPlan, Rect, Size, TextureId, UiInput, UiInputEvent, WidgetId,
 };
 use stern::render::{RenderImage, RenderImageSampling, RenderResources, TextureResource};
 use stern::text::TextEditState;
@@ -331,6 +331,7 @@ impl EditWorkspace {
             overlays.scene(),
             picker_scene.as_ref(),
         );
+        resolve_picker_outside_before_lower_ui(ui, &mut self.inspector_picker);
 
         compose_workspace_panels(
             ui,
@@ -372,6 +373,37 @@ impl EditWorkspace {
 
     pub(crate) fn register_resources(&self, resources: &mut RenderResources) {
         resources.register_texture(self.texture.clone());
+    }
+}
+
+fn resolve_picker_outside_before_lower_ui(ui: &mut Ui<'_>, picker: &mut InspectorPickerState) {
+    let Some(bounds) = picker
+        .scene()
+        .map(stern::widgets::inspector::InspectorPickerScene::bounds)
+    else {
+        return;
+    };
+    let input = ui.input();
+    let release = if input.events.is_empty() {
+        input
+            .pointer
+            .primary
+            .released
+            .then_some(input.pointer.position)
+            .flatten()
+    } else {
+        input.events.iter().rev().find_map(|event| match event {
+            UiInputEvent::PointerButton {
+                button: MouseButton::Primary,
+                down: false,
+                position,
+                ..
+            } => (*position).or(input.pointer.position),
+            _ => None,
+        })
+    };
+    if release.is_some_and(|point| !bounds.contains_point(point)) {
+        let _ = ui.inspector_picker_scene(picker);
     }
 }
 
