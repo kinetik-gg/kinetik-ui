@@ -4,9 +4,9 @@
   "specificationSha256": "f1d489f6f28b613c0bcfa4490b7855da341457ee20c66c892dc37ebff2d024ed",
   "status": "incomplete",
   "source": {
-    "commit": "4adb2ffd0f50ef4e1c8fb6605193b20aef489185",
-    "tree": "a083ef7cc6d89f144b0cd708995f13e5dff9b85f",
-    "sourceRef": "4adb2ffd0f50ef4e1c8fb6605193b20aef489185",
+    "commit": "b574f797280725fb9e34ca3af98e22c9a9d340b0",
+    "tree": "2229d546cc51723ba3aca68a6b5bc8fb1462afa4",
+    "sourceRef": "b574f797280725fb9e34ca3af98e22c9a9d340b0",
     "generatedFromCleanWorktree": true
   },
   "runtime": {
@@ -2576,6 +2576,14 @@
       "restored": true
     }
   ],
+  "rendererEvidence": {
+    "issue": 845,
+    "manifestPath": "evidence/stern-demo-vello-845/manifest.json",
+    "captureStatus": "final",
+    "reviewStatus": "approved",
+    "artifactCount": 8,
+    "sourceCompatibility": "capture-sensitive paths unchanged"
+  },
   "publicConsumerAudit": {
     "passed": true,
     "manifestPath": "apps/stern-demo/Cargo.toml",
@@ -2705,16 +2713,16 @@
     },
     {
       "id": "renderer-and-scale-quality",
-      "status": "pending",
+      "status": "passed",
       "evidenceRefs": [
-        "#/knownGaps/0"
+        "#/rendererEvidence"
       ]
     },
     {
       "id": "platform-integration",
       "status": "pending",
       "evidenceRefs": [
-        "#/knownGaps/1"
+        "#/knownGaps/0"
       ]
     },
     {
@@ -2728,14 +2736,6 @@
     }
   ],
   "knownGaps": [
-    {
-      "id": "workspace-vello-captures",
-      "issue": 845,
-      "blocksGateIds": [
-        "renderer-and-scale-quality"
-      ],
-      "reason": "eight final reviewed Vello captures are pending"
-    },
     {
       "id": "cross-platform-evidence",
       "issue": 848,
