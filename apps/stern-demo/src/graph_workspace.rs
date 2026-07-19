@@ -73,6 +73,13 @@ pub enum GraphConnectionFeedback {
     Ready,
     /// Stern resolved a typed preview candidate.
     Previewing,
+    /// Stern accepted stable source and target endpoints before release.
+    Accepted {
+        /// Stable output endpoint accepted by the canonical typed-link policy.
+        from: PortEndpoint,
+        /// Stable input endpoint accepted by the canonical typed-link policy.
+        to: PortEndpoint,
+    },
     /// Stern rejected an incompatible candidate without application mutation.
     Rejected,
     /// The application committed the accepted request as its stable final edge.
@@ -426,7 +433,12 @@ impl GraphWorkspaceState {
             NodeGraphConnectionIntent::Begin(_) | NodeGraphConnectionIntent::Preview(_) => {
                 self.connection_feedback = GraphConnectionFeedback::Previewing;
             }
-            NodeGraphConnectionIntent::Accepted(_) => {}
+            NodeGraphConnectionIntent::Accepted(request) => {
+                self.connection_feedback = GraphConnectionFeedback::Accepted {
+                    from: request.from.endpoint,
+                    to: request.to.endpoint,
+                };
+            }
             NodeGraphConnectionIntent::Rejected(_) => {
                 self.connection_feedback = GraphConnectionFeedback::Rejected;
             }
@@ -568,6 +580,17 @@ fn connection_status(feedback: GraphConnectionFeedback, selected: u32) -> Status
         GraphConnectionFeedback::Previewing => (
             "Connection",
             "Previewing typed connection".to_owned(),
+            StatusItemKind::Progress,
+        ),
+        GraphConnectionFeedback::Accepted { from, to } => (
+            "Connection",
+            format!(
+                "Accepted {}:{} -> {}:{}",
+                from.node.raw(),
+                from.port.raw(),
+                to.node.raw(),
+                to.port.raw()
+            ),
             StatusItemKind::Progress,
         ),
         GraphConnectionFeedback::Rejected => (
