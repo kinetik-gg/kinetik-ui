@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -6,6 +7,7 @@ import { verifyEvidence as verifyRendererEvidence } from "../../../tools/capture
 import { verifyRecords as verifyPlatformRecords } from "./platform-smoke-record.mjs";
 
 const SPEC_SHA256 = "f1d489f6f28b613c0bcfa4490b7855da341457ee20c66c892dc37ebff2d024ed";
+const EXPECTED_PACKET_SHA256 = "30c6d28b36159c517684fe137411c596802c6fce175955086962cfc4d36a712d";
 const COMPONENTS = [
   "button", "text-field", "dropdown", "selection-controls", "value-controls",
   "progress-feedback", "overlay-system", "virtual-list", "editor-frame",
@@ -50,7 +52,11 @@ const RENDERER_COMPATIBLE_DRIFT = [
 const options = parseArgs(process.argv.slice(2));
 const evidencePath = resolve(options.evidence ?? fail("--evidence is required"));
 const root = resolve(new URL("../../..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
-const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
+const evidenceBytes = readFileSync(evidencePath);
+const packetSha256 = createHash("sha256").update(evidenceBytes).digest("hex");
+assert(packetSha256 === EXPECTED_PACKET_SHA256,
+  `packet integrity: SHA-256 mismatch (expected ${EXPECTED_PACKET_SHA256}, observed ${packetSha256})`);
+const evidence = JSON.parse(evidenceBytes.toString("utf8"));
 const sourceRef = options.sourceRef ?? evidence.source?.sourceRef;
 
 assertExact(Object.keys(evidence).sort(), [
