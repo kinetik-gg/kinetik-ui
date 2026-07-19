@@ -4,11 +4,15 @@ use std::{collections::BTreeSet, fs, path::PathBuf};
 
 use stern::core::{
     ActionSource, FrameContext, FrameOutput, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
-    PhysicalSize, Point, PointerButtonState, PointerInput, ScaleFactor, SemanticNode, SemanticRole,
-    SemanticValue, Size, TimeInfo, UiInput, Vec2, ViewportInfo, WidgetId,
+    MouseButton, PhysicalSize, Point, PointerButtonState, PointerInput, ScaleFactor, SemanticNode,
+    SemanticRole, SemanticValue, Size, TimeInfo, UiInput, UiInputEvent, Vec2, ViewportInfo,
+    WidgetId,
 };
 use stern::render::RenderDiagnostic;
-use stern_demo::{DemoApp, DemoJobPhase, DemoViewportTool, demo_context};
+use stern::widgets::node_graph::{EdgeId, NodeId, PortEndpoint, PortId};
+use stern_demo::{
+    DemoApp, DemoJobPhase, DemoViewportTool, DemoWorkspace, GraphConnectionFeedback, demo_context,
+};
 
 const REQUIRED_IDS: &str = concat!(
     "button text-field dropdown selection-controls value-controls progress-feedback ",
@@ -212,7 +216,7 @@ fn shared_menu_escape_and_outside_press_preserve_focus_owner() {
 }
 
 #[test]
-fn edit_workspace_reports_exact_twenty_nine_public_component_ids() {
+fn global_runtime_reports_exact_thirty_one_public_component_ids() {
     let trace = edit_workspace_trace();
     let observed = observed_component_ids(&trace);
     let expected = EXPECTED_COMPONENT_IDS.split_ascii_whitespace().collect();
@@ -222,7 +226,7 @@ fn edit_workspace_reports_exact_twenty_nine_public_component_ids() {
         .collect::<BTreeSet<_>>();
     assert_eq!(required.len(), 34);
     assert!(observed.is_subset(&required));
-    assert_eq!(required.difference(&observed).count(), 5);
+    assert_eq!(required.difference(&observed).count(), 3);
 
     let evidence = runtime_journey_evidence(&trace);
     assert_eq!(
@@ -233,7 +237,7 @@ fn edit_workspace_reports_exact_twenty_nine_public_component_ids() {
             [RuntimeStepEvidence::Passed; 3],
             [RuntimeStepEvidence::Passed; 3],
             [RuntimeStepEvidence::NotExecuted; 3],
-            [RuntimeStepEvidence::NotExecuted; 3],
+            [RuntimeStepEvidence::Passed; 3],
             [RuntimeStepEvidence::NotExecuted; 3],
         ],
     );
@@ -272,6 +276,7 @@ fn edit_workspace_reports_exact_twenty_nine_public_component_ids() {
             "shared-action-projection",
             "collection-to-inspector-edit",
             "timeline-and-viewport-edit",
+            "graph-connection-edit",
         ]
     );
 }
@@ -282,7 +287,8 @@ const EXPECTED_COMPONENT_IDS: &str = concat!(
     "icon-shortcut-components menu-components command-palette-components advanced-editor-fields ",
     "choice-value-components overlay-system overlay-components navigation-surface-components ",
     "collection-components inspector-components editor-chrome-components editor-frame timeline ",
-    "viewport progress-feedback feedback-status-components timeline-components viewport-components",
+    "viewport progress-feedback feedback-status-components timeline-components viewport-components ",
+    "node-graph node-components",
 );
 const JOURNEY_COMPONENTS: &str = "\
 workspace-boot-and-traversal|editor-frame workspace-chrome dock editor-chrome-components navigation-surface-components content-structure-components
@@ -312,12 +318,16 @@ struct ExecutedEditEvidence {
     timeline_edit_lifecycle: RuntimeStepEvidence,
     viewport_tool_projected: RuntimeStepEvidence,
     feedback_states_projected: RuntimeStepEvidence,
+    graph_surface_projected: RuntimeStepEvidence,
+    graph_components_projected: RuntimeStepEvidence,
+    graph_connection_lifecycle: RuntimeStepEvidence,
 }
 
 fn edit_workspace_trace() -> EditWorkspaceTrace {
     let shared = shared_action_evidence();
     let collection = collection_inspector_evidence();
     let timeline_viewport = timeline_viewport_evidence();
+    let graph = graph_connection_evidence();
     let mut app = DemoApp::new();
     let initial = app.frame(demo_context(UiInput::default()));
     let translation =
@@ -370,6 +380,9 @@ fn edit_workspace_trace() -> EditWorkspaceTrace {
             feedback_states_projected: RuntimeStepEvidence::executed(
                 timeline_viewport.feedback_states_projected,
             ),
+            graph_surface_projected: RuntimeStepEvidence::executed(graph.surface_projected),
+            graph_components_projected: RuntimeStepEvidence::executed(graph.components_projected),
+            graph_connection_lifecycle: RuntimeStepEvidence::executed(graph.connection_lifecycle),
         },
     }
 }
@@ -390,6 +403,66 @@ struct TimelineViewportEvidence {
     timeline_edit_lifecycle: bool,
     viewport_tool_projected: bool,
     feedback_states_projected: bool,
+}
+
+struct GraphConnectionEvidence {
+    surface_projected: bool,
+    components_projected: bool,
+    connection_lifecycle: bool,
+}
+
+fn graph_connection_evidence() -> GraphConnectionEvidence {
+    let mut app = DemoApp::new();
+    let _ = app.frame(demo_context(pointer(
+        Point::new(180.0, 70.0),
+        true,
+        true,
+        false,
+    )));
+    let _ = app.frame(demo_context(pointer(
+        Point::new(180.0, 70.0),
+        false,
+        false,
+        true,
+    )));
+    assert_eq!(app.workspace(), DemoWorkspace::Graph);
+    let _ = app.frame(demo_context(graph_click(Point::new(100.0, 370.0))));
+    let initial = app.frame(demo_context(UiInput::default()));
+    let surface_projected = has_custom_role(&initial, "node-graph");
+    let components_projected = ["node", "port", "edge"]
+        .into_iter()
+        .all(|role| has_custom_role(&initial, role));
+    let source = custom_node(&initial, "port", "Output Image")
+        .bounds
+        .center();
+    let target = custom_node(&initial, "port", "Input Preview Image")
+        .bounds
+        .center();
+    let original_edges = app.graph_workspace().edges().to_vec();
+
+    let _ = app.frame(demo_context(graph_connection_press(source)));
+    let _ = app.frame(demo_context(graph_connection_move(source, target)));
+    let preview_isolated = app.graph_workspace().connection_active()
+        && app.graph_workspace().connection_feedback() == GraphConnectionFeedback::Previewing
+        && app.graph_workspace().edges() == original_edges;
+
+    let _ = app.frame(demo_context(graph_connection_release(target)));
+    let committed = app.graph_workspace().edges().last();
+    let commit_owned = !app.graph_workspace().connection_active()
+        && app.graph_workspace().connection_feedback()
+            == GraphConnectionFeedback::Committed(EdgeId::from_raw(2))
+        && app.graph_workspace().edges().len() == original_edges.len() + 1
+        && committed.is_some_and(|edge| {
+            edge.id == EdgeId::from_raw(2)
+                && edge.from == PortEndpoint::new(NodeId::from_raw(1), PortId::from_raw(1))
+                && edge.to == PortEndpoint::new(NodeId::from_raw(2), PortId::from_raw(2))
+        });
+
+    GraphConnectionEvidence {
+        surface_projected,
+        components_projected,
+        connection_lifecycle: preview_isolated && commit_owned,
+    }
 }
 
 fn timeline_viewport_evidence() -> TimelineViewportEvidence {
@@ -774,6 +847,8 @@ fn observed_component_ids(trace: &EditWorkspaceTrace) -> BTreeSet<&'static str> 
     let feedback = progress && trace.evidence.feedback_states_projected.passed();
     let timeline_components = timeline && trace.evidence.timeline_edit_lifecycle.passed();
     let viewport_components = viewport && trace.evidence.viewport_tool_projected.passed();
+    let node_graph = trace.evidence.graph_surface_projected.passed();
+    let node_components = trace.evidence.graph_components_projected.passed();
     EXPECTED_COMPONENT_IDS
         .split_ascii_whitespace()
         .zip([
@@ -806,6 +881,8 @@ fn observed_component_ids(trace: &EditWorkspaceTrace) -> BTreeSet<&'static str> 
             feedback,
             timeline_components,
             viewport_components,
+            node_graph,
+            node_components,
         ])
         .filter_map(|(id, passes)| passes.then_some(id))
         .collect()
@@ -852,7 +929,11 @@ fn runtime_journey_evidence(trace: &EditWorkspaceTrace) -> [[RuntimeStepEvidence
             trace.evidence.feedback_states_projected,
         ],
         [unexecuted; 3],
-        [unexecuted; 3],
+        [
+            trace.evidence.graph_surface_projected,
+            trace.evidence.graph_components_projected,
+            trace.evidence.graph_connection_lifecycle,
+        ],
         [unexecuted; 3],
     ]
 }
@@ -1053,6 +1134,56 @@ fn capture_lost(point: Point) -> UiInput {
         ..UiInput::default()
     };
     input.push_event(stern::core::UiInputEvent::WindowFocusChanged(false));
+    input
+}
+
+fn graph_click(point: Point) -> UiInput {
+    let mut input = UiInput::default();
+    input.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: true,
+        click_count: 1,
+        position: Some(point),
+    });
+    input.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: false,
+        click_count: 1,
+        position: Some(point),
+    });
+    input
+}
+
+fn graph_connection_press(point: Point) -> UiInput {
+    let mut input = UiInput::default();
+    input.pointer.primary.down = true;
+    input.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: true,
+        click_count: 1,
+        position: Some(point),
+    });
+    input
+}
+
+fn graph_connection_move(from: Point, to: Point) -> UiInput {
+    let mut input = UiInput::default();
+    input.pointer.primary.down = true;
+    input.push_event(UiInputEvent::PointerMoved {
+        position: to,
+        delta: Vec2::new(to.x - from.x, to.y - from.y),
+    });
+    input
+}
+
+fn graph_connection_release(point: Point) -> UiInput {
+    let mut input = UiInput::default();
+    input.push_event(UiInputEvent::PointerButton {
+        button: MouseButton::Primary,
+        down: false,
+        click_count: 1,
+        position: Some(point),
+    });
     input
 }
 
