@@ -20,7 +20,7 @@ use overlay_workspace::SharedOverlayRoute;
 
 pub use app_model::{
     DemoActionAvailability, DemoActionRegistry, DemoApplicationModel, DemoColorSaveState,
-    DemoJobPhase, DemoTaggedColor, DemoViewportTool, DemoWorkspace,
+    DemoJobPhase, DemoTaggedColor, DemoTaggedColorStyle, DemoViewportTool, DemoWorkspace,
 };
 pub use graph_workspace::{GraphConnectionFeedback, GraphWorkspaceState};
 
@@ -69,6 +69,12 @@ impl DemoApp {
         self.model.tagged_color()
     }
 
+    /// Returns the unified application-owned tagged color style.
+    #[must_use]
+    pub const fn color_style(&self) -> &DemoTaggedColorStyle {
+        self.model.color_style()
+    }
+
     /// Returns the number of committed color-picker changes.
     #[must_use]
     pub const fn color_revision(&self) -> u32 {
@@ -87,6 +93,14 @@ impl DemoApp {
         &self,
     ) -> stern::widgets::gradient_editor::GradientEditorStopId {
         self.model.selected_gradient_stop()
+    }
+
+    /// Returns the explicit application-owned gradient interpolation space.
+    #[must_use]
+    pub const fn gradient_interpolation(
+        &self,
+    ) -> stern::widgets::gradient_editor::GradientInterpolationSpace {
+        self.model.gradient_interpolation()
     }
 
     /// Returns the latest application-owned color-style save outcome.

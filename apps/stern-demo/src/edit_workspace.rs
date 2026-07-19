@@ -11,7 +11,7 @@ use stern::widgets::asset_browser::{
     AssetBrowserRequest, AssetBrowserState, AssetBrowserViewMode,
 };
 use stern::widgets::dock::{DockScene, DockSceneConfig};
-use stern::widgets::gradient_editor::{GradientEditorConfig, GradientInterpolationSpace};
+use stern::widgets::gradient_editor::GradientEditorConfig;
 use stern::widgets::inspector::{
     InspectorPickerCommit, InspectorPickerState, PropertyGridConfig, PropertyGridIntent,
     property_grid_row_affordance_rects, property_grid_row_widget_id, property_grid_value_widget_id,
@@ -1018,7 +1018,7 @@ fn compose_gradient_editor(
     model: &mut DemoApplicationModel,
 ) {
     let stops = model.gradient_stops().to_vec();
-    let config = GradientEditorConfig::new(id, bounds, GradientInterpolationSpace::Srgb, &stops)
+    let config = GradientEditorConfig::new(id, bounds, model.gradient_interpolation(), &stops)
         .selected_stop(model.selected_gradient_stop());
     let widget = ui
         .prepare_gradient_editor(config)

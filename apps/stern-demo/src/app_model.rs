@@ -5,7 +5,7 @@ use stern::core::{
     Color, Key, Modifiers, Shortcut,
 };
 use stern::widgets::gradient_editor::{
-    GradientEditorIntent, GradientEditorStop, GradientEditorStopId,
+    GradientEditorIntent, GradientEditorStop, GradientEditorStopId, GradientInterpolationSpace,
 };
 use stern_icons_phosphor as phosphor;
 
@@ -33,6 +33,41 @@ impl DemoTaggedColor {
         match self {
             Self::Srgb(color) => color,
         }
+    }
+}
+
+/// One tagged application color style shared by the inspector and gradient editor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DemoTaggedColorStyle {
+    color: DemoTaggedColor,
+    gradient_stops: Vec<GradientEditorStop>,
+    selected_gradient_stop: GradientEditorStopId,
+    interpolation: GradientInterpolationSpace,
+}
+
+impl DemoTaggedColorStyle {
+    /// Returns the tagged color projected to the picker and swatch.
+    #[must_use]
+    pub const fn color(&self) -> DemoTaggedColor {
+        self.color
+    }
+
+    /// Returns the stable gradient stops in presentation order.
+    #[must_use]
+    pub fn gradient_stops(&self) -> &[GradientEditorStop] {
+        &self.gradient_stops
+    }
+
+    /// Returns the selected gradient stop identity.
+    #[must_use]
+    pub const fn selected_gradient_stop(&self) -> GradientEditorStopId {
+        self.selected_gradient_stop
+    }
+
+    /// Returns the explicit gradient interpolation space.
+    #[must_use]
+    pub const fn interpolation(&self) -> GradientInterpolationSpace {
+        self.interpolation
     }
 }
 
@@ -118,10 +153,8 @@ pub struct DemoApplicationModel {
     viewport_tool: DemoViewportTool,
     job_phase: DemoJobPhase,
     job_progress_percent: u8,
-    tagged_color: DemoTaggedColor,
+    color_style: DemoTaggedColorStyle,
     color_revision: u32,
-    gradient_stops: Vec<GradientEditorStop>,
-    selected_gradient_stop: GradientEditorStopId,
     color_save_state: DemoColorSaveState,
     fail_next_color_save: bool,
     serialized_color_style: Option<String>,
@@ -143,13 +176,16 @@ impl DemoApplicationModel {
             viewport_tool: DemoViewportTool::Select,
             job_phase: DemoJobPhase::Running,
             job_progress_percent: 40,
-            tagged_color: DemoTaggedColor::Srgb(Color::rgb8(58, 137, 246)),
+            color_style: DemoTaggedColorStyle {
+                color: DemoTaggedColor::Srgb(Color::rgb8(58, 137, 246)),
+                gradient_stops: vec![
+                    GradientEditorStop::new(PRIMARY_STOP, 0.2, Color::rgb8(58, 137, 246)),
+                    GradientEditorStop::new(SECONDARY_STOP, 0.8, Color::rgb8(229, 108, 238)),
+                ],
+                selected_gradient_stop: PRIMARY_STOP,
+                interpolation: GradientInterpolationSpace::Srgb,
+            },
             color_revision: 0,
-            gradient_stops: vec![
-                GradientEditorStop::new(PRIMARY_STOP, 0.2, Color::rgb8(58, 137, 246)),
-                GradientEditorStop::new(SECONDARY_STOP, 0.8, Color::rgb8(229, 108, 238)),
-            ],
-            selected_gradient_stop: PRIMARY_STOP,
             color_save_state: DemoColorSaveState::Idle,
             fail_next_color_save: true,
             serialized_color_style: None,
@@ -263,7 +299,13 @@ impl DemoApplicationModel {
     /// Returns the application-owned color with its explicit color-space tag.
     #[must_use]
     pub const fn tagged_color(&self) -> DemoTaggedColor {
-        self.tagged_color
+        self.color_style.color()
+    }
+
+    /// Returns the unified application-owned tagged color style.
+    #[must_use]
+    pub const fn color_style(&self) -> &DemoTaggedColorStyle {
+        &self.color_style
     }
 
     /// Returns the number of committed picker color changes.
@@ -275,13 +317,19 @@ impl DemoApplicationModel {
     /// Returns the application-owned gradient stops in presentation order.
     #[must_use]
     pub fn gradient_stops(&self) -> &[GradientEditorStop] {
-        &self.gradient_stops
+        self.color_style.gradient_stops()
     }
 
     /// Returns the stable selected gradient stop identity.
     #[must_use]
     pub const fn selected_gradient_stop(&self) -> GradientEditorStopId {
-        self.selected_gradient_stop
+        self.color_style.selected_gradient_stop()
+    }
+
+    /// Returns the application-owned gradient interpolation space.
+    #[must_use]
+    pub const fn gradient_interpolation(&self) -> GradientInterpolationSpace {
+        self.color_style.interpolation()
     }
 
     /// Returns the latest save outcome.
@@ -309,8 +357,16 @@ impl DemoApplicationModel {
     /// Commits one picker result as an explicitly tagged sRGB color.
     pub fn commit_color(&mut self, color: Color) {
         let next = DemoTaggedColor::Srgb(color);
-        if self.tagged_color != next {
-            self.tagged_color = next;
+        if self.color_style.color != next {
+            self.color_style.color = next;
+            if let Some(stop) = self
+                .color_style
+                .gradient_stops
+                .iter_mut()
+                .find(|stop| stop.id == self.color_style.selected_gradient_stop)
+            {
+                stop.color = color;
+            }
             self.color_revision = self.color_revision.saturating_add(1);
             self.color_save_state = DemoColorSaveState::Idle;
         }
@@ -321,30 +377,53 @@ impl DemoApplicationModel {
         for intent in intents {
             match *intent {
                 GradientEditorIntent::SelectStop(id)
-                    if self.gradient_stops.iter().any(|stop| stop.id == id) =>
+                    if self
+                        .color_style
+                        .gradient_stops
+                        .iter()
+                        .any(|stop| stop.id == id) =>
                 {
-                    self.selected_gradient_stop = id;
+                    self.color_style.selected_gradient_stop = id;
+                    let color = self
+                        .color_style
+                        .gradient_stops
+                        .iter()
+                        .find(|stop| stop.id == id)
+                        .expect("selected stop exists")
+                        .color;
+                    self.color_style.color = DemoTaggedColor::Srgb(color);
                 }
                 GradientEditorIntent::MoveStop { id, position } => {
-                    if let Some(stop) = self.gradient_stops.iter_mut().find(|stop| stop.id == id) {
+                    if let Some(stop) = self
+                        .color_style
+                        .gradient_stops
+                        .iter_mut()
+                        .find(|stop| stop.id == id)
+                    {
                         stop.position = position.clamp(0.0, 1.0);
                     }
                 }
-                GradientEditorIntent::RemoveStop(id) if self.gradient_stops.len() > 2 => {
-                    self.gradient_stops.retain(|stop| stop.id != id);
+                GradientEditorIntent::RemoveStop(id)
+                    if self.color_style.gradient_stops.len() > 2 =>
+                {
+                    self.color_style.gradient_stops.retain(|stop| stop.id != id);
                     if !self
+                        .color_style
                         .gradient_stops
                         .iter()
-                        .any(|stop| stop.id == self.selected_gradient_stop)
+                        .any(|stop| stop.id == self.color_style.selected_gradient_stop)
                     {
-                        self.selected_gradient_stop = self.gradient_stops[0].id;
+                        let first = self.color_style.gradient_stops[0];
+                        self.color_style.selected_gradient_stop = first.id;
+                        self.color_style.color = DemoTaggedColor::Srgb(first.color);
                     }
                 }
                 GradientEditorIntent::Reverse => {
-                    for stop in &mut self.gradient_stops {
+                    for stop in &mut self.color_style.gradient_stops {
                         stop.position = 1.0 - stop.position;
                     }
-                    self.gradient_stops
+                    self.color_style
+                        .gradient_stops
                         .sort_by(|left, right| left.position.total_cmp(&right.position));
                 }
                 GradientEditorIntent::SelectStop(_) | GradientEditorIntent::RemoveStop(_) => {}
@@ -379,10 +458,7 @@ impl DemoApplicationModel {
             self.color_overlay_notice = Some(DemoColorOverlayNotice::SaveFailed);
             return;
         }
-        self.serialized_color_style = Some(serialize_color_style(
-            self.tagged_color,
-            &self.gradient_stops,
-        ));
+        self.serialized_color_style = Some(serialize_color_style(&self.color_style));
         self.color_save_state = DemoColorSaveState::Succeeded;
         self.color_overlay_notice = Some(DemoColorOverlayNotice::SaveRecovered);
     }
@@ -528,13 +604,17 @@ fn checkable_descriptor(
     descriptor
 }
 
-fn serialize_color_style(color: DemoTaggedColor, stops: &[GradientEditorStop]) -> String {
-    let DemoTaggedColor::Srgb(color) = color;
+fn serialize_color_style(style: &DemoTaggedColorStyle) -> String {
+    let DemoTaggedColor::Srgb(color) = style.color;
     let mut serialized = format!(
         "color=srgb({:.3},{:.3},{:.3},{:.3});gradient={}",
-        color.r, color.g, color.b, color.a, "sRGB"
+        color.r,
+        color.g,
+        color.b,
+        color.a,
+        interpolation_label(style.interpolation)
     );
-    for stop in stops {
+    for stop in &style.gradient_stops {
         write!(
             &mut serialized,
             ";{}@{:.3}=srgb({:.3},{:.3},{:.3},{:.3})",
@@ -548,4 +628,12 @@ fn serialize_color_style(color: DemoTaggedColor, stops: &[GradientEditorStop]) -
         .expect("writing to a String cannot fail");
     }
     serialized
+}
+
+const fn interpolation_label(space: GradientInterpolationSpace) -> &'static str {
+    match space {
+        GradientInterpolationSpace::Srgb => "sRGB",
+        GradientInterpolationSpace::LinearSrgb => "Linear sRGB",
+        GradientInterpolationSpace::DisplayP3 => "Display-P3",
+    }
 }
