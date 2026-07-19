@@ -86,6 +86,21 @@ test('verifier accepts the exact provisional eight-coordinate manifest', () => {
   }
 });
 
+test('verifier keeps final capture bytes separate from human approval', () => {
+  const { output, manifest, manifestPath } = fixture();
+  try {
+    manifest.capture_status = 'final';
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const verified = verifyEvidence(output, 'final', {
+      checkSourceInputs: false,
+      requiredReview: 'pending_human',
+    });
+    assert.equal(verified.review.status, 'pending_human');
+  } finally {
+    rmSync(output, { recursive: true });
+  }
+});
+
 test('verifier rejects missing, mismatched, and stale evidence', async t => {
   await t.test('missing artifact', () => {
     const { output, manifest } = fixture();

@@ -50,7 +50,7 @@ function parseArgs(argv) {
     options[name.slice(2)] = value;
   }
   if (!['capture', 'verify'].includes(command) || !options.output) {
-    throw new Error('usage: capture|verify --output <directory> [--capture-status provisional|final] [--require-status provisional|final]');
+    throw new Error('usage: capture|verify --output <directory> [--capture-status provisional|final] [--require-status provisional|final --require-review pending_human|approved]');
   }
   return options;
 }
@@ -169,8 +169,13 @@ function capture(options) {
   console.log(`captured ${artifacts.length} public DemoApp Vello artifacts (${status})`);
 }
 
-export function verifyEvidence(outputPath, requiredStatus, { checkSourceInputs = true } = {}) {
+export function verifyEvidence(
+  outputPath,
+  requiredStatus,
+  { checkSourceInputs = true, requiredReview = 'pending_human' } = {},
+) {
   assert(['provisional', 'final'].includes(requiredStatus), '--require-status must be provisional or final');
+  assert(['pending_human', 'approved'].includes(requiredReview), '--require-review must be pending_human or approved');
   const output = resolve(ROOT, outputPath);
   const manifest = JSON.parse(readFileSync(join(output, 'manifest.json')));
   assert(manifest.schema_version === '1.0' && manifest.issue === 845, 'wrong manifest identity');
@@ -210,9 +215,10 @@ export function verifyEvidence(outputPath, requiredStatus, { checkSourceInputs =
   const criteria = manifest.review?.criteria;
   assert(Array.isArray(criteria) && criteria.length === REVIEW_CRITERIA.length, 'review criteria cardinality mismatch');
   assert(REVIEW_CRITERIA.every(name => criteria.some(item => item.criterion === name)), 'review criteria are incomplete');
-  if (requiredStatus === 'provisional') {
-    assert(manifest.review.status === 'pending_human', 'provisional evidence must remain pending human review');
-    assert(criteria.every(item => item.result === 'PENDING'), 'provisional review contains a non-pending result');
+  if (requiredReview === 'pending_human') {
+    assert(manifest.review.status === 'pending_human', 'evidence is not pending human review');
+    assert(criteria.every(item => item.result === 'PENDING'), 'pending review contains a non-pending result');
+    assert(manifest.review.artifact_verdicts.length === 0 && manifest.review.overall === null, 'pending review contains a final verdict');
   } else {
     assert(manifest.review.status === 'approved', 'final evidence is not human-approved');
     assert(manifest.review.reviewer && manifest.review.reviewed_utc && manifest.review.approval_reference, 'final review metadata is incomplete');
@@ -311,9 +317,10 @@ function assert(condition, message) {
 
 function verify(options) {
   const required = options['require-status'];
-  const manifest = verifyEvidence(options.output, required);
+  const requiredReview = options['require-review'];
+  const manifest = verifyEvidence(options.output, required, { requiredReview });
   const bytes = manifest.artifacts.reduce((sum, item) => sum + item.byte_length, 0);
-  console.log(`verified ${manifest.artifacts.length} public DemoApp Vello artifacts (${bytes} bytes, ${required})`);
+  console.log(`verified ${manifest.artifacts.length} public DemoApp Vello artifacts (${bytes} bytes, capture=${required}, review=${requiredReview})`);
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
