@@ -24,6 +24,7 @@ pub(super) struct RecoveryLog {
     pub(super) focus_log: Value,
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn color_gradient_journey() -> Result<ColorLog, String> {
     let mut app = DemoApp::new();
     let initial = app.frame(demo_context(UiInput::default()));
