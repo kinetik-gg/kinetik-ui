@@ -48,11 +48,13 @@ impl DemoApp {
     /// Creates the demo with explicit production journey diagnostics enabled.
     #[must_use]
     pub fn for_scenario(scenario: DemoScenario) -> Self {
+        let model = DemoApplicationModel::for_scenario(scenario);
+        let edit_workspace = EditWorkspace::new(&model);
         Self {
             ui_state: UiState::new(),
-            model: DemoApplicationModel::for_scenario(scenario),
+            model,
             actions: DemoActionRegistry::for_scenario(scenario),
-            edit_workspace: EditWorkspace::new(),
+            edit_workspace,
             graph_workspace: GraphWorkspaceState::new(),
             overlays: SharedOverlayRoute::new(),
         }
