@@ -67,6 +67,7 @@ fn public_graph_action_reverses_only_presentation_order() {
     let feedback_before = app.graph_workspace().connection_feedback();
     let active_before = app.graph_workspace().connection_active();
     let start_before = app.graph_workspace().connection_start_endpoint();
+    let semantic_ids_before = graph_semantic_ids(&graph);
     assert_eq!(
         nodes_before.iter().map(|node| node.id).collect::<Vec<_>>(),
         [NodeId::from_raw(1), NodeId::from_raw(2)]
@@ -103,6 +104,8 @@ fn public_graph_action_reverses_only_presentation_order() {
         app.graph_workspace().connection_start_endpoint(),
         start_before
     );
+    let reordered = app.frame(demo_context(UiInput::default()));
+    assert_eq!(graph_semantic_ids(&reordered), semantic_ids_before);
 }
 
 fn semantic_center(output: &FrameOutput, label: &str) -> Point {
@@ -148,6 +151,22 @@ fn exact_action(output: &FrameOutput, source: ActionSource, action_id: &str) -> 
         if action.action_id.as_str() == action_id
             && action.source == source
             && action.context == stern::core::ActionContext::Editor)
+}
+
+fn graph_semantic_ids(output: &FrameOutput) -> Vec<(String, String, stern::core::WidgetId)> {
+    let mut identities = output
+        .semantics
+        .nodes()
+        .iter()
+        .filter_map(|node| match (&node.role, node.label.as_deref()) {
+            (SemanticRole::Custom(role), Some(label)) if role == "node" || role == "port" => {
+                Some((role.clone(), label.to_owned(), node.id))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    identities.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+    identities
 }
 
 fn click(app: &mut DemoApp, point: Point) -> FrameOutput {
