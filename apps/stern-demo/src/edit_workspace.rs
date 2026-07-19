@@ -11,14 +11,15 @@ use stern::widgets::asset_browser::{
     AssetBrowserRequest, AssetBrowserState, AssetBrowserViewMode,
 };
 use stern::widgets::dock::{DockScene, DockSceneConfig};
+use stern::widgets::gradient_editor::{GradientEditorConfig, GradientInterpolationSpace};
 use stern::widgets::inspector::{
     InspectorPickerCommit, InspectorPickerState, PropertyGridConfig, PropertyGridIntent,
     property_grid_row_affordance_rects, property_grid_row_widget_id, property_grid_value_widget_id,
 };
 use stern::widgets::{
-    ChromeScene, ChromeSceneConfig, ChromeSceneIntent, ChromeSceneItemKey, CommandPaletteOverlay,
-    Dock, DockNode, DropdownItem, DropdownItemId, DropdownModel, Frame, FrameId, FrameTab,
-    GridColumns, GridLayout, InlineEditDraftDisposition, InlineEditDraftPolicy,
+    ChromeScene, ChromeSceneConfig, ChromeSceneIntent, ChromeSceneItemKey, ColorFieldConfig,
+    CommandPaletteOverlay, Dock, DockNode, DropdownItem, DropdownItemId, DropdownModel, Frame,
+    FrameId, FrameTab, GridColumns, GridLayout, InlineEditDraftDisposition, InlineEditDraftPolicy,
     InlineEditFocusLossPolicy, InlineEditRequest, ItemId, ListLayout, Menu, MenuBar, MenuBarMenu,
     MenuBarMenuId, MenuBarOverlayRequest, MenuOverlay, NumericInputDraft, NumericScrubInputConfig,
     OverlayDismissal, OverlayId, OverlayKind, OverlayScene, OverlaySceneIntent,
@@ -45,11 +46,13 @@ const APPLICATION_MENU_OVERLAY: OverlayId = OverlayId::from_raw(1);
 const CONTEXT_MENU_OVERLAY: OverlayId = OverlayId::from_raw(2);
 const COMMAND_PALETTE_OVERLAY: OverlayId = OverlayId::from_raw(3);
 const KIND_PICKER_OVERLAY: OverlayId = OverlayId::from_raw(4);
+const COLOR_PICKER_OVERLAY: OverlayId = OverlayId::from_raw(5);
 const INSPECTOR_SECTION: ItemId = ItemId::from_raw(100);
 const NAME_PROPERTY: ItemId = ItemId::from_raw(101);
 const KIND_PROPERTY: ItemId = ItemId::from_raw(102);
 const VISIBLE_PROPERTY: ItemId = ItemId::from_raw(103);
 const OPACITY_PROPERTY: ItemId = ItemId::from_raw(104);
+const COLOR_PROPERTY: ItemId = ItemId::from_raw(105);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssetKind {
@@ -218,6 +221,10 @@ impl EditWorkspace {
         let viewport_bounds = panel_bounds(&dock_scene, VIEWPORT_PANEL).map(|rect| rect.inset(8.0));
         let inspector_bounds =
             panel_bounds(&dock_scene, INSPECTOR_PANEL).map(|rect| rect.inset(8.0));
+        let inspector_components = inspector_bounds.map(inspector_component_bounds);
+        let inspector_grid_bounds = inspector_components.map(|(grid, _)| grid);
+        let gradient_bounds = inspector_components.map(|(_, gradient)| gradient);
+        let gradient_id = ui.make_id("edit-workspace.gradient");
         let timeline_bounds = panel_bounds(&dock_scene, TIMELINE_PANEL).map(|rect| rect.inset(6.0));
         let inspector_root = panel_widget_id(&dock_scene, INSPECTOR_PANEL).map(|panel| {
             ui.make_id(("dock-panel-content", panel.raw()))
@@ -287,9 +294,11 @@ impl EditWorkspace {
             actions,
             timeline.as_ref(),
             feedback.as_ref(),
-            inspector_bounds,
+            inspector_grid_bounds,
             inspector_root,
             &inspector_rows,
+            gradient_bounds,
+            gradient_id,
             context_route,
             &chrome,
             self.overlay.as_ref(),
@@ -306,7 +315,7 @@ impl EditWorkspace {
             actions,
             timeline.as_ref(),
             feedback.as_ref(),
-            inspector_bounds,
+            inspector_grid_bounds,
             &inspector_rows,
             &mut self.asset_browser,
             &mut self.assets,
@@ -318,6 +327,9 @@ impl EditWorkspace {
             &mut self.timeline.clip_edit,
             model,
         );
+        if let Some(bounds) = gradient_bounds {
+            compose_gradient_editor(ui, bounds, gradient_id, model);
+        }
         let context_requested = shared_context_requested(ui, viewport_bounds);
         let chrome_output = ui.chrome_scene(&chrome);
         route_workspace_tabs(ui, actions, &chrome_output.intents);
@@ -406,11 +418,14 @@ fn declare_workspace_targets(
     inspector_bounds: Option<Rect>,
     inspector_root: Option<WidgetId>,
     inspector_rows: &[PropertyGridRow],
+    gradient_bounds: Option<Rect>,
+    gradient_id: WidgetId,
     context: Option<(WidgetId, Option<Rect>)>,
     chrome: &ChromeScene<'_>,
     overlay: Option<&OverlayScene>,
     picker: Option<&stern::widgets::inspector::InspectorPickerScene>,
 ) {
+    let gradient_reverse_id = ui.make_id(("gradient-reverse", gradient_id.raw()));
     ui.resolve_pointer_targets(|plan| {
         let mut next = dock_scene.declare_pointer_targets_with_content(
             plan,
@@ -436,6 +451,16 @@ fn declare_workspace_targets(
                 }
                 if let (Some(bounds), Some(root)) = (inspector_bounds, inspector_root) {
                     next = declare_inspector_targets(plan, next, root, bounds, inspector_rows);
+                }
+                if let Some(bounds) = gradient_bounds {
+                    plan.target(PointerTarget::new(gradient_id, bounds, next).domain_drag_source());
+                    next = PointerOrder::new(next.raw() + 1);
+                    plan.target(PointerTarget::new(
+                        gradient_reverse_id,
+                        Rect::new(bounds.max_x() - 120.0, bounds.y + 4.0, 112.0, 20.0),
+                        next,
+                    ));
+                    next = PointerOrder::new(next.raw() + 1);
                 }
                 next
             },
@@ -526,6 +551,7 @@ fn compose_workspace_panels(
                     selected,
                     opacity_draft,
                     inspector_picker,
+                    model,
                 );
             }
         }
@@ -909,7 +935,22 @@ fn inspector_rows(asset: &AssetRecord) -> Vec<PropertyGridRow> {
             true,
             asset.opacity.to_bits() == asset.defaults.opacity.to_bits(),
         ),
+        PropertyGridRow::property(COLOR_PROPERTY, "Color", 0),
     ]
+}
+
+fn inspector_component_bounds(bounds: Rect) -> (Rect, Rect) {
+    let grid_height = 146.0_f32.min(bounds.height.max(0.0));
+    let gap = 4.0_f32.min((bounds.height - grid_height).max(0.0));
+    (
+        Rect::new(bounds.x, bounds.y, bounds.width, grid_height),
+        Rect::new(
+            bounds.x,
+            bounds.y + grid_height + gap,
+            bounds.width,
+            (bounds.height - grid_height - gap).max(0.0),
+        ),
+    )
 }
 
 fn declare_inspector_targets(
@@ -942,6 +983,7 @@ fn declare_inspector_targets(
             KIND_PROPERTY => "kind",
             VISIBLE_PROPERTY => "visible",
             OPACITY_PROPERTY => "opacity",
+            COLOR_PROPERTY => "color",
             _ => continue,
         };
         let target = PointerTarget::new(value.child(key), rects.value_rect, next);
@@ -969,13 +1011,14 @@ fn inspector(
     asset: &mut AssetRecord,
     opacity_draft: &mut TextEditState,
     picker: &mut InspectorPickerState,
+    model: &mut DemoApplicationModel,
 ) {
     let kind_model = kind_model(asset.kind);
     let picker_bounds = Rect::new(
         bounds.x + 4.0,
-        bounds.y + 56.0,
-        (bounds.width - 8.0).max(0.0),
-        112.0,
+        bounds.y + 24.0,
+        (bounds.width + 104.0).max(128.0),
+        164.0,
     );
     let mut name = TextEditState::new(asset.name.clone());
     let output = ui
@@ -1036,6 +1079,16 @@ fn inspector(
                         *opacity_draft = TextEditState::new(asset.opacity.to_string());
                     }
                 }
+                COLOR_PROPERTY => {
+                    let field = ui.color_field(
+                        "color",
+                        cell.value_rect,
+                        "Fill color",
+                        model.tagged_color().color(),
+                        ColorFieldConfig::default(),
+                    );
+                    let _ = ui.color_picker(picker, &field, COLOR_PICKER_OVERLAY, picker_bounds);
+                }
                 _ => unreachable!("property-grid callback skips section rows"),
             },
         )
@@ -1046,11 +1099,33 @@ fn inspector(
             reset_asset_property(asset, opacity_draft, row);
         }
     }
-    if let Some(InspectorPickerCommit::Select(kind)) = ui.inspector_picker_scene(picker).commit
-        && let Some(kind) = AssetKind::from_dropdown(kind)
-    {
-        asset.kind = kind;
+    if let Some(commit) = ui.inspector_picker_scene(picker).commit {
+        match commit {
+            InspectorPickerCommit::Select(kind) => {
+                if let Some(kind) = AssetKind::from_dropdown(kind) {
+                    asset.kind = kind;
+                }
+            }
+            InspectorPickerCommit::Color(color) => model.commit_color(color),
+            InspectorPickerCommit::Asset(_) | InspectorPickerCommit::Path(_) => {}
+        }
     }
+}
+
+fn compose_gradient_editor(
+    ui: &mut Ui<'_>,
+    bounds: Rect,
+    id: WidgetId,
+    model: &mut DemoApplicationModel,
+) {
+    let stops = model.gradient_stops().to_vec();
+    let config = GradientEditorConfig::new(id, bounds, GradientInterpolationSpace::Srgb, &stops)
+        .selected_stop(model.selected_gradient_stop());
+    let widget = ui
+        .prepare_gradient_editor(config)
+        .expect("demo gradient uses valid sRGB stops");
+    let output = ui.gradient_editor(&widget);
+    model.apply_gradient_intents(&output.intents);
 }
 
 fn kind_model(selected: AssetKind) -> DropdownModel {

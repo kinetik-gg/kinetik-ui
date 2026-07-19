@@ -16,7 +16,8 @@ use stern::render::RenderResources;
 use edit_workspace::EditWorkspace;
 
 pub use app_model::{
-    DemoActionRegistry, DemoApplicationModel, DemoJobPhase, DemoViewportTool, DemoWorkspace,
+    DemoActionRegistry, DemoApplicationModel, DemoColorSaveState, DemoJobPhase, DemoTaggedColor,
+    DemoViewportTool, DemoWorkspace,
 };
 pub use graph_workspace::{GraphConnectionFeedback, GraphWorkspaceState};
 
@@ -55,6 +56,44 @@ impl DemoApp {
     #[must_use]
     pub const fn applied_revision(&self) -> u32 {
         self.model.applied_revision()
+    }
+
+    /// Returns the application-owned explicitly tagged color.
+    #[must_use]
+    pub const fn tagged_color(&self) -> DemoTaggedColor {
+        self.model.tagged_color()
+    }
+
+    /// Returns the number of committed color-picker changes.
+    #[must_use]
+    pub const fn color_revision(&self) -> u32 {
+        self.model.color_revision()
+    }
+
+    /// Returns stable application-owned gradient stops.
+    #[must_use]
+    pub fn gradient_stops(&self) -> &[stern::widgets::gradient_editor::GradientEditorStop] {
+        self.model.gradient_stops()
+    }
+
+    /// Returns the stable selected gradient stop identity.
+    #[must_use]
+    pub const fn selected_gradient_stop(
+        &self,
+    ) -> stern::widgets::gradient_editor::GradientEditorStopId {
+        self.model.selected_gradient_stop()
+    }
+
+    /// Returns the latest application-owned color-style save outcome.
+    #[must_use]
+    pub const fn color_save_state(&self) -> DemoColorSaveState {
+        self.model.color_save_state()
+    }
+
+    /// Returns the last successful explicit-sRGB serialization.
+    #[must_use]
+    pub fn serialized_color_style(&self) -> Option<&str> {
+        self.model.serialized_color_style()
     }
 
     /// Returns the application-owned projected playhead frame.
