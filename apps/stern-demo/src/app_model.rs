@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use stern::core::{
     ActionBinding, ActionContext, ActionDescriptor, ActionInvocation, ActionPriority, ActionRouter,
     Color, Key, Modifiers, Shortcut,
@@ -506,15 +508,17 @@ fn serialize_color_style(color: DemoTaggedColor, stops: &[GradientEditorStop]) -
         color.r, color.g, color.b, color.a, "sRGB"
     );
     for stop in stops {
-        serialized.push_str(&format!(
+        write!(
+            &mut serialized,
             ";{}@{:.3}=srgb({:.3},{:.3},{:.3},{:.3})",
             stop.id.raw(),
             stop.position,
             stop.color.r,
             stop.color.g,
             stop.color.b,
-            stop.color.a
-        ));
+            stop.color.a,
+        )
+        .expect("writing to a String cannot fail");
     }
     serialized
 }

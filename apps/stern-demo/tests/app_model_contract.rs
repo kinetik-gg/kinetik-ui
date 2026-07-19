@@ -155,8 +155,9 @@ fn color_gradient_and_failed_save_remain_application_owned() {
             .iter()
             .find(|stop| stop.id == selected)
             .expect("selected stop")
-            .position,
-        0.35
+            .position
+            .to_bits(),
+        0.35_f32.to_bits()
     );
     model.apply_gradient_intents(&[GradientEditorIntent::Reverse]);
     assert_eq!(model.selected_gradient_stop(), selected);
