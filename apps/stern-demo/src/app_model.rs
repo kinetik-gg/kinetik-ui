@@ -83,6 +83,17 @@ pub enum DemoWorkspace {
     Graph,
 }
 
+/// Application-owned availability projected to every shared action surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoActionAvailability {
+    /// The action is visible and can be invoked.
+    Available,
+    /// The action remains visible but cannot be invoked.
+    Unavailable,
+    /// The action is omitted from every presentation and routing surface.
+    Hidden,
+}
+
 impl DemoWorkspace {
     /// Returns the pinned workspace identity.
     #[must_use]
@@ -99,6 +110,7 @@ impl DemoWorkspace {
 pub struct DemoApplicationModel {
     workspace: DemoWorkspace,
     applied_revision: u32,
+    apply_availability: DemoActionAvailability,
     committed_playhead_frame: i64,
     preview_playhead_frame: Option<i64>,
     committed_clip_frames: (i64, i64),
@@ -123,6 +135,7 @@ impl DemoApplicationModel {
         Self {
             workspace: DemoWorkspace::Edit,
             applied_revision: 0,
+            apply_availability: DemoActionAvailability::Available,
             committed_playhead_frame: 24,
             preview_playhead_frame: None,
             committed_clip_frames: (30, 90),
@@ -154,6 +167,17 @@ impl DemoApplicationModel {
     #[must_use]
     pub const fn applied_revision(&self) -> u32 {
         self.applied_revision
+    }
+
+    /// Returns the application-owned shared action availability.
+    #[must_use]
+    pub const fn apply_availability(&self) -> DemoActionAvailability {
+        self.apply_availability
+    }
+
+    /// Replaces the shared action availability projected to every surface.
+    pub const fn set_apply_availability(&mut self, availability: DemoActionAvailability) {
+        self.apply_availability = availability;
     }
 
     /// Returns the playhead frame currently projected to the timeline.
@@ -336,9 +360,10 @@ impl DemoApplicationModel {
         match invocation.action_id.as_str() {
             EDIT_ACTION => self.workspace = DemoWorkspace::Edit,
             GRAPH_ACTION => self.workspace = DemoWorkspace::Graph,
-            APPLY_ACTION => {
+            APPLY_ACTION if self.apply_availability == DemoActionAvailability::Available => {
                 self.applied_revision = self.applied_revision.saturating_add(1);
             }
+            APPLY_ACTION => return false,
             VIEWPORT_SELECT_ACTION => self.viewport_tool = DemoViewportTool::Select,
             VIEWPORT_TRANSFORM_ACTION => self.viewport_tool = DemoViewportTool::Transform,
             SAVE_COLOR_STYLE_ACTION => self.save_color_style(),
@@ -431,9 +456,11 @@ impl DemoActionRegistry {
         &self.descriptors[3]
     }
 
-    /// Enables or disables the shared action for every projected surface.
-    pub const fn set_apply_shared_state_enabled(&mut self, enabled: bool) {
-        self.descriptors[2].state.enabled = enabled;
+    /// Projects application-owned availability to every shared action surface.
+    pub const fn project_apply_shared_state(&mut self, availability: DemoActionAvailability) {
+        self.descriptors[2].state.visible = !matches!(availability, DemoActionAvailability::Hidden);
+        self.descriptors[2].state.enabled =
+            matches!(availability, DemoActionAvailability::Available);
     }
 
     /// Returns the select-tool action descriptor.

@@ -18,8 +18,8 @@ use edit_workspace::EditWorkspace;
 use overlay_workspace::SharedOverlayRoute;
 
 pub use app_model::{
-    DemoActionRegistry, DemoApplicationModel, DemoColorSaveState, DemoJobPhase, DemoTaggedColor,
-    DemoViewportTool, DemoWorkspace,
+    DemoActionAvailability, DemoActionRegistry, DemoApplicationModel, DemoColorSaveState,
+    DemoJobPhase, DemoTaggedColor, DemoViewportTool, DemoWorkspace,
 };
 pub use graph_workspace::{GraphConnectionFeedback, GraphWorkspaceState};
 
@@ -137,7 +137,16 @@ impl DemoApp {
 
     /// Enables or disables the shared action across every public projection.
     pub const fn set_apply_enabled(&mut self, enabled: bool) {
-        self.actions.set_apply_shared_state_enabled(enabled);
+        self.model.set_apply_availability(if enabled {
+            DemoActionAvailability::Available
+        } else {
+            DemoActionAvailability::Unavailable
+        });
+    }
+
+    /// Replaces the shared action availability across every public projection.
+    pub const fn set_apply_availability(&mut self, availability: DemoActionAvailability) {
+        self.model.set_apply_availability(availability);
     }
 
     /// Returns the application-owned Graph workspace state.
@@ -150,14 +159,16 @@ impl DemoApp {
     pub fn frame(&mut self, context: FrameContext) -> FrameOutput {
         let keyboard = context.input.keyboard.clone();
         let logical_size = context.viewport.logical_size;
+        self.actions
+            .project_apply_shared_state(self.model.apply_availability());
+        self.actions
+            .project_viewport_tool(self.model.viewport_tool());
         let edit = self.actions.edit_workspace().clone();
         let graph = self.actions.graph_workspace().clone();
         let apply = self.actions.apply_shared_state().clone();
         let workspace = self.model.workspace();
         let bounds = context.viewport.logical_size;
         let theme = default_dark_theme();
-        self.actions
-            .project_viewport_tool(self.model.viewport_tool());
         let shortcut_enabled = !self.overlays.is_open();
         let focus_return;
         let mut output = {
