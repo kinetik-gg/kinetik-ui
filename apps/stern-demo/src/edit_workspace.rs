@@ -169,6 +169,7 @@ impl EditWorkspace {
         self.overlay.is_some()
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn compose(
         &mut self,
         ui: &mut Ui<'_>,
@@ -199,7 +200,7 @@ impl EditWorkspace {
                 .rename_conflict()
                 .map(|conflict| conflict.message.as_str()),
         )];
-        status_items.extend(self.timeline.status_items(model));
+        status_items.extend(TimelineWorkspace::status_items(model));
         let status_bar = StatusBar::from_items(status_items);
         let chrome = ChromeScene::new(
             chrome_config(layout, actions),
@@ -249,10 +250,9 @@ impl EditWorkspace {
                 .with_actions(viewport_actions(actions, id)),
             )
         });
-        let viewport_scene = viewport.as_ref().map(|viewport| {
-            self.timeline
-                .viewport_scene(ui, viewport, model.viewport_tool())
-        });
+        let viewport_scene = viewport
+            .as_ref()
+            .map(|viewport| TimelineWorkspace::viewport_scene(ui, viewport, model.viewport_tool()));
         let timeline_rects = timeline_bounds.map(timeline_feedback_rects);
         let timeline = timeline_rects.map(|(bounds, _)| {
             prepare_timeline(

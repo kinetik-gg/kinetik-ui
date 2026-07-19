@@ -95,7 +95,6 @@ impl TimelineWorkspace {
     }
 
     pub(crate) fn viewport_scene(
-        &self,
         ui: &Ui<'_>,
         viewport: &ViewportWidget,
         tool: DemoViewportTool,
@@ -124,7 +123,7 @@ impl TimelineWorkspace {
         )
     }
 
-    pub(crate) fn status_items(&self, model: &DemoApplicationModel) -> Vec<StatusItem> {
+    pub(crate) fn status_items(model: &DemoApplicationModel) -> Vec<StatusItem> {
         let progress = f32::from(model.job_progress_percent()) / 100.0;
         let job = match model.job_phase() {
             DemoJobPhase::Running => StatusItem::new(
@@ -303,10 +302,10 @@ pub(crate) fn apply_timeline_output(
     for intent in scrub_intents {
         match intent {
             TimelineScrubIntent::Begin(request) => {
-                model.preview_playhead(frame(request.current_time))
+                model.preview_playhead(frame(request.current_time));
             }
             TimelineScrubIntent::Update(request) => {
-                model.preview_playhead(frame(request.current_time))
+                model.preview_playhead(frame(request.current_time));
             }
             TimelineScrubIntent::End(request) => model.commit_playhead(frame(request.current_time)),
             TimelineScrubIntent::Cancel(_) => model.cancel_playhead_preview(),
