@@ -192,43 +192,76 @@
     "cross_scale_pixel_equality": false
   },
   "review": {
-    "status": "pending_human",
-    "reviewer": null,
-    "reviewed_utc": null,
-    "approval_reference": null,
-    "artifact_verdicts": [],
+    "status": "approved",
+    "reviewer": "Runway root control-plane",
+    "reviewed_utc": "2026-07-19T02:33:23.080Z",
+    "approval_reference": "User approval: 'vello did good. approved'; Runway root original-resolution audit of all eight final artifacts.",
+    "artifact_verdicts": [
+      {
+        "path": "edit/1.00x.png",
+        "verdict": "PASS"
+      },
+      {
+        "path": "edit/1.25x.png",
+        "verdict": "PASS"
+      },
+      {
+        "path": "edit/1.50x.png",
+        "verdict": "PASS"
+      },
+      {
+        "path": "edit/2.00x.png",
+        "verdict": "PASS"
+      },
+      {
+        "path": "graph/1.00x.png",
+        "verdict": "PASS"
+      },
+      {
+        "path": "graph/1.25x.png",
+        "verdict": "PASS"
+      },
+      {
+        "path": "graph/1.50x.png",
+        "verdict": "PASS"
+      },
+      {
+        "path": "graph/2.00x.png",
+        "verdict": "PASS"
+      }
+    ],
     "criteria": [
       {
         "criterion": "clipping",
-        "result": "PENDING",
-        "notes": null
+        "result": "PASS",
+        "notes": "No unintended clipping or overflow at any reviewed workspace or scale."
       },
       {
         "criterion": "overlay_placement",
-        "result": "PENDING",
-        "notes": null
+        "result": "PASS",
+        "notes": "Edit overlays and Graph panel chrome remain aligned within their public layout bounds."
       },
       {
         "criterion": "hairlines",
-        "result": "PENDING",
-        "notes": null
+        "result": "PASS",
+        "notes": "Hairlines remain crisp and stable across all four physical scales."
       },
       {
         "criterion": "text_baselines",
-        "result": "PENDING",
-        "notes": null
+        "result": "PASS",
+        "notes": "Text baselines remain consistent and legible across Edit and Graph captures."
       },
       {
         "criterion": "focus_selection",
-        "result": "PENDING",
-        "notes": null
+        "result": "PASS",
+        "notes": "Expected Edit selection and Graph workspace focus remain visibly represented."
       },
       {
         "criterion": "private_override_absence",
-        "result": "PENDING",
-        "notes": null
+        "result": "PASS",
+        "notes": "Source audit confirms public DemoApp output with no alternate scene or private Stern crate override."
       }
     ],
-    "overall": null
+    "overall": "PASS"
   }
 }
