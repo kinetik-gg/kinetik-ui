@@ -1,6 +1,6 @@
 //! Facade-only application-bar compile coverage.
 use stern::{
-    core::{Rect, WidgetId},
+    core::{Rect, WidgetId, default_dark_theme},
     widgets::{
         ApplicationBar, ApplicationBarConfig, ApplicationMenuBar, MenuBarMenu, MenuBarMenuId,
         WorkspaceTab, WorkspaceTabId,
@@ -22,5 +22,6 @@ fn application_bar_is_constructible_through_the_public_facade() {
             true,
         )],
     );
-    assert_eq!(bar.drag_safe_regions().len(), 1);
+    let prepared = bar.prepare(&default_dark_theme()).unwrap();
+    assert_eq!(prepared.drag_safe_regions().len(), 1);
 }

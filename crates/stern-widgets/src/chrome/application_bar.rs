@@ -1,5 +1,5 @@
 use super::{MenuBar, MenuBarMenuId};
-use stern_core::{PointerOrder, PointerTarget, PointerTargetPlan, Rect, Response, WidgetId};
+use stern_core::{PointerOrder, PointerTarget, PointerTargetPlan, Rect, Response, Theme, WidgetId};
 /// Stable identity for an application workspace tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WorkspaceTabId(u64);
@@ -47,7 +47,8 @@ pub struct WorkspaceTabTarget {
 pub struct ApplicationBarConfig {
     /// Stable root identity.
     pub root: WidgetId,
-    /// Application-bar bounds. Its height should use `Theme::sizes.workspace_bar`.
+    /// Caller-owned placement and width. Preparation replaces its height with
+    /// `Theme::sizes.workspace_bar`.
     pub bounds: Rect,
     /// Width assigned to each visible application-menu heading.
     pub menu_width: f32,
@@ -102,40 +103,18 @@ impl ApplicationBar {
     pub fn workspace_widget_id(&self, id: WorkspaceTabId) -> WidgetId {
         self.workspace_composite_id().child(("workspace", id.0))
     }
-    /// Declares the root blocker and valid enabled child targets.
-    pub fn declare_pointer_targets(
-        &self,
-        plan: &mut PointerTargetPlan,
-        first_order: PointerOrder,
-    ) -> PointerOrder {
-        let Some(layout) = self.layout() else {
-            return first_order;
-        };
-        let mut ordinal = first_order.raw();
-        plan.blocker(layout.bounds, take_order(&mut ordinal));
-        plan.with_clip(layout.bounds, |plan| {
-            for row in layout.menu_rows.iter().chain(&layout.workspace_rows) {
-                if row.enabled {
-                    plan.target(PointerTarget::new(
-                        row.id,
-                        row.rect,
-                        take_order(&mut ordinal),
-                    ));
-                }
-            }
-        });
-        PointerOrder::new(ordinal)
-    }
-    /// Returns finite non-interactive space between menus and workspaces.
+    /// Prepares authoritative frame geometry from the active theme.
     #[must_use]
-    pub fn drag_safe_regions(&self) -> Vec<Rect> {
-        self.layout()
-            .and_then(|layout| layout.drag_safe)
-            .into_iter()
-            .collect()
+    pub fn prepare(&self, theme: &Theme) -> Option<PreparedApplicationBar> {
+        self.layout(theme.sizes.workspace_bar)
     }
-    pub(crate) fn layout(&self) -> Option<ApplicationBarLayout> {
-        let bounds = valid_rect(self.config.bounds)?;
+    fn layout(&self, height: f32) -> Option<PreparedApplicationBar> {
+        let bounds = valid_rect(Rect::new(
+            self.config.bounds.x,
+            self.config.bounds.y,
+            self.config.bounds.width,
+            height,
+        ))?;
         let menu_ids = self
             .menu_bar
             .menus()
@@ -143,36 +122,49 @@ impl ApplicationBar {
             .filter(|menu| menu.has_visible_items())
             .map(|menu| menu.id)
             .collect::<Vec<_>>();
-        let menu_rows = self.menu_rows(bounds, &menu_ids);
-        let workspace_rows = self.workspace_rows(bounds);
-        let geometry_valid = menu_rows.is_some() && workspace_rows.is_some();
-        let (mut menu_rows, mut workspace_rows) = (
-            menu_rows.unwrap_or_default(),
-            workspace_rows.unwrap_or_default(),
-        );
-        let overlap = geometry_valid
-            && menu_rows.iter().any(|left| {
-                workspace_rows
-                    .iter()
-                    .any(|right| rects_overlap(left.rect, right.rect))
-            });
-        if overlap {
-            menu_rows.clear();
-            workspace_rows.clear();
-        }
-        let drag_safe = (geometry_valid && !overlap)
-            .then(|| {
-                let start = menu_rows.last().map_or(bounds.x, |row| row.rect.max_x());
-                let end = workspace_rows
-                    .first()
-                    .map_or(bounds.max_x(), |row| row.rect.x);
-                valid_rect(Rect::new(start, bounds.y, end - start, bounds.height))
+        let rows = self
+            .menu_rows(bounds, &menu_ids)
+            .zip(self.workspace_rows(bounds));
+        let (menu_rows, workspace_rows, menu_bounds, workspace_bounds) = rows
+            .filter(|(menus, workspaces)| {
+                !menus.is_empty()
+                    && !workspaces.is_empty()
+                    && !menus.iter().any(|left| {
+                        workspaces
+                            .iter()
+                            .any(|right| rects_overlap(left.rect, right.rect))
+                    })
             })
-            .flatten();
-        Some(ApplicationBarLayout {
+            .and_then(|(menus, workspaces)| {
+                Some((
+                    composite_bounds(&menus, bounds)?,
+                    composite_bounds(&workspaces, bounds)?,
+                    menus,
+                    workspaces,
+                ))
+            })
+            .map_or_else(
+                || (Vec::new(), Vec::new(), None, None),
+                |(menu_bounds, workspace_bounds, menus, workspaces)| {
+                    (menus, workspaces, Some(menu_bounds), Some(workspace_bounds))
+                },
+            );
+        let drag_safe = menu_bounds
+            .zip(workspace_bounds)
+            .and_then(|(menu, workspace)| {
+                valid_rect(Rect::new(
+                    menu.max_x(),
+                    bounds.y,
+                    workspace.x - menu.max_x(),
+                    bounds.height,
+                ))
+            });
+        Some(PreparedApplicationBar {
             bounds,
             menu_composite: self.menu_composite_id(),
             workspace_composite: self.workspace_composite_id(),
+            menu_bounds,
+            workspace_bounds,
             menu_rows,
             workspace_rows,
             drag_safe,
@@ -227,6 +219,49 @@ impl ApplicationBar {
         self.config.root.child("application-workspaces")
     }
 }
+/// Theme-authoritative geometry shared by pointer preparation and evaluation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedApplicationBar {
+    pub(crate) bounds: Rect,
+    pub(crate) menu_composite: WidgetId,
+    pub(crate) workspace_composite: WidgetId,
+    pub(crate) menu_bounds: Option<Rect>,
+    pub(crate) workspace_bounds: Option<Rect>,
+    pub(crate) menu_rows: Vec<ApplicationBarRow>,
+    pub(crate) workspace_rows: Vec<ApplicationBarRow>,
+    pub(crate) drag_safe: Option<Rect>,
+}
+impl PreparedApplicationBar {
+    pub(crate) fn matches(&self, bar: &ApplicationBar) -> bool {
+        bar.layout(self.bounds.height).as_ref() == Some(self)
+    }
+    /// Declares the root blocker and valid enabled child targets.
+    pub fn declare_pointer_targets(
+        &self,
+        plan: &mut PointerTargetPlan,
+        first_order: PointerOrder,
+    ) -> PointerOrder {
+        let mut ordinal = first_order.raw();
+        plan.blocker(self.bounds, take_order(&mut ordinal));
+        plan.with_clip(self.bounds, |plan| {
+            for row in self.menu_rows.iter().chain(&self.workspace_rows) {
+                if row.enabled {
+                    plan.target(PointerTarget::new(
+                        row.id,
+                        row.rect,
+                        take_order(&mut ordinal),
+                    ));
+                }
+            }
+        });
+        PointerOrder::new(ordinal)
+    }
+    /// Returns finite non-interactive space between menus and workspaces.
+    #[must_use]
+    pub fn drag_safe_regions(&self) -> Vec<Rect> {
+        self.drag_safe.into_iter().collect()
+    }
+}
 /// Application-owned intent emitted by one bar evaluation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApplicationBarIntent {
@@ -254,15 +289,6 @@ pub struct ApplicationBarOutput {
     pub intents: Vec<ApplicationBarIntent>,
     /// Non-interactive middle geometry suitable for titlebar drag policy.
     pub drag_safe_regions: Vec<Rect>,
-}
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ApplicationBarLayout {
-    pub(crate) bounds: Rect,
-    pub(crate) menu_composite: WidgetId,
-    pub(crate) workspace_composite: WidgetId,
-    pub(crate) menu_rows: Vec<ApplicationBarRow>,
-    pub(crate) workspace_rows: Vec<ApplicationBarRow>,
-    pub(crate) drag_safe: Option<Rect>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ApplicationBarRow {
@@ -306,6 +332,14 @@ fn rects_overlap(left: Rect, right: Rect) -> bool {
         && right.x < left.max_x()
         && left.y < right.max_y()
         && right.y < left.max_y()
+}
+fn composite_bounds(rows: &[ApplicationBarRow], bounds: Rect) -> Option<Rect> {
+    let first = rows.first()?.rect;
+    let last = rows.last()?.rect;
+    valid_child(
+        Rect::new(first.x, first.y, last.max_x() - first.x, first.height),
+        bounds,
+    )
 }
 fn take_order(ordinal: &mut u64) -> PointerOrder {
     let order = PointerOrder::new(*ordinal);

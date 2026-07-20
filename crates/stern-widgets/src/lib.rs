@@ -37,10 +37,10 @@ pub use chrome::{
     FeedbackActionRequest, FeedbackDismiss, FeedbackDismissRequest, FeedbackId, FeedbackItem,
     FeedbackKind, FeedbackLifetime, FeedbackStack, JobCancel, JobCancelRequest, JobList, JobPhase,
     JobProgress, JobRow, JobRowId, JobSummaryCounts, MenuBar, MenuBarMenu, MenuBarMenuId,
-    MenuBarMove, MenuBarOverlayRequest, StatusBar, StatusItem, StatusItemId, StatusItemKind,
-    StatusProgress, TabStrip, TabStripMove, TabStripTarget, Toolbar, ToolbarGroup, ToolbarGroupId,
-    ToolbarItem, ToolbarItemPresentation, WorkspaceTab, WorkspaceTabId, WorkspaceTabTarget,
-    project_chrome_overflow,
+    MenuBarMove, MenuBarOverlayRequest, PreparedApplicationBar, StatusBar, StatusItem,
+    StatusItemId, StatusItemKind, StatusProgress, TabStrip, TabStripMove, TabStripTarget, Toolbar,
+    ToolbarGroup, ToolbarGroupId, ToolbarItem, ToolbarItemPresentation, WorkspaceTab,
+    WorkspaceTabId, WorkspaceTabTarget, project_chrome_overflow,
 };
 pub use collection_actions::{
     CollectionBackgroundContextTarget, CollectionContextAction, CollectionContextActionRequest,

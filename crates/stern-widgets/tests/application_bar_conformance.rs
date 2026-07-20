@@ -2,8 +2,8 @@
 use stern_core::{
     ActionDescriptor, Brush, FrameContext, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
     PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, Primitive, Rect,
-    ScaleFactor, SemanticActionKind, SemanticRole, Size, TimeInfo, UiInput, UiInputEvent, UiMemory,
-    ViewportInfo, WidgetId, default_dark_theme,
+    ScaleFactor, SemanticActionKind, SemanticRole, Size, Theme, TimeInfo, UiInput, UiInputEvent,
+    UiMemory, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_widgets::{
     ApplicationBar, ApplicationBarConfig, ApplicationBarIntent, MenuBar, MenuBarMenu,
@@ -74,6 +74,14 @@ fn run(
     input: UiInput,
 ) -> (stern_widgets::ApplicationBarOutput, stern_core::FrameOutput) {
     let theme = default_dark_theme();
+    run_with_theme(bar, memory, input, &theme)
+}
+fn run_with_theme(
+    bar: &mut ApplicationBar,
+    memory: &mut UiMemory,
+    input: UiInput,
+    theme: &Theme,
+) -> (stern_widgets::ApplicationBarOutput, stern_core::FrameOutput) {
     let context = FrameContext::new(
         ViewportInfo::new(
             Size::new(500.0, 200.0),
@@ -83,12 +91,17 @@ fn run(
         input,
         TimeInfo::default(),
     );
-    let mut ui = Ui::begin_frame(context, memory, &theme);
+    let prepared = bar.prepare(theme);
+    let mut ui = Ui::begin_frame(context, memory, theme);
     ui.resolve_pointer_targets(|plan| {
-        bar.declare_pointer_targets(plan, PointerOrder::new(10));
+        if let Some(prepared) = &prepared {
+            prepared.declare_pointer_targets(plan, PointerOrder::new(10));
+        }
     })
     .unwrap();
-    let output = ui.application_bar(bar);
+    let output = prepared.as_ref().map_or_else(Default::default, |prepared| {
+        ui.application_bar(bar, prepared)
+    });
     (output, ui.finish_output())
 }
 #[test]
@@ -119,6 +132,31 @@ fn composition_geometry_semantics_and_ids_are_exact() {
     assert_eq!(root.children.len(), 2);
     let menu = frame.semantics.get(root.children[0]).unwrap();
     let workspaces = frame.semantics.get(root.children[1]).unwrap();
+    assert_eq!(menu.bounds, Rect::new(0.25, 0.5, 100.5, 40.0));
+    assert_eq!(workspaces.bounds, Rect::new(150.75, 0.5, 210.0, 40.0));
+    assert_eq!(
+        menu.children,
+        vec![bar.menu_widget_id(FILE), bar.menu_widget_id(VIEW)]
+    );
+    assert_eq!(
+        workspaces.children,
+        vec![
+            bar.workspace_widget_id(W1),
+            bar.workspace_widget_id(W2),
+            bar.workspace_widget_id(W3),
+        ]
+    );
+    assert!(menu.bounds.max_x() <= workspaces.bounds.x);
+    assert!(root.bounds.contains_rect(menu.bounds) && root.bounds.contains_rect(workspaces.bounds));
+    assert!(menu.children.iter().all(|id| {
+        menu.bounds
+            .contains_rect(frame.semantics.get(*id).unwrap().bounds)
+    }));
+    assert!(workspaces.children.iter().all(|id| {
+        workspaces
+            .bounds
+            .contains_rect(frame.semantics.get(*id).unwrap().bounds)
+    }));
     assert_eq!(
         (&menu.role, menu.label.as_deref()),
         (
@@ -273,39 +311,104 @@ fn keyboard_navigation_and_focus_repair_preserve_passive_active_state() {
     assert_eq!(memory.focused(), None);
 }
 #[test]
-fn invalid_empty_overlapping_and_nonfinite_geometry_fails_closed() {
-    for config in [
-        ApplicationBarConfig::new(WidgetId::from_key("invalid"), Rect::ZERO),
-        ApplicationBarConfig {
-            menu_width: f32::NAN,
-            ..ApplicationBarConfig::new(
-                WidgetId::from_key("invalid"),
-                Rect::new(0.0, 0.0, 360.0, 40.0),
+fn customized_theme_height_is_authoritative_everywhere() {
+    let mut theme = default_dark_theme();
+    theme.sizes.workspace_bar = 33.25;
+    let mut candidate = bar();
+    candidate.config.bounds.height = 5.0;
+    let point = Point::new(325.0, 30.0);
+    let mut memory = UiMemory::new();
+    memory.focus(candidate.workspace_widget_id(W3));
+    run_with_theme(
+        &mut candidate,
+        &mut memory,
+        pointer(point, Some(true)),
+        &theme,
+    );
+    let (output, frame) = run_with_theme(
+        &mut candidate,
+        &mut memory,
+        pointer(point, Some(false)),
+        &theme,
+    );
+    let expected = Rect::new(0.25, 0.5, 360.5, 33.25);
+    assert!(matches!(
+        frame.primitives.first(),
+        Some(Primitive::Rect(rect)) if rect.rect == expected
+    ));
+    assert_eq!(
+        frame.semantics.get(candidate.config.root).unwrap().bounds,
+        expected
+    );
+    assert!(output.responses.iter().all(|response| {
+        response.rect.y.to_bits() == expected.y.to_bits()
+            && response.rect.height.to_bits() == expected.height.to_bits()
+            && frame.semantics.get(response.id).unwrap().bounds == response.rect
+            && frame.primitives.iter().any(
+                |primitive| matches!(primitive, Primitive::Rect(rect) if rect.rect == response.rect),
             )
-        },
-        ApplicationBarConfig {
-            menu_width: 100.0,
-            workspace_width: 80.0,
-            ..ApplicationBarConfig::new(
-                WidgetId::from_key("invalid"),
-                Rect::new(0.0, 0.0, 360.0, 40.0),
-            )
-        },
+    }));
+    assert!(output.drag_safe_regions.iter().all(|rect| {
+        rect.y.to_bits() == expected.y.to_bits()
+            && rect.height.to_bits() == expected.height.to_bits()
+    }));
+    assert!(matches!(
+        output.intents.as_slice(),
+        [ApplicationBarIntent::ActivateWorkspace(target)] if target.id == W3
+    ));
+    let active = frame
+        .semantics
+        .get(candidate.workspace_widget_id(W1))
+        .unwrap();
+    let focused = frame
+        .semantics
+        .get(candidate.workspace_widget_id(W3))
+        .unwrap();
+    assert!(active.state.selected && !active.state.focused);
+    assert!(!focused.state.selected && focused.state.focused);
+    theme.sizes.workspace_bar = f32::NAN;
+    assert!(candidate.prepare(&theme).is_none());
+}
+#[test]
+fn invalid_duplicate_overflow_and_overlap_geometry_is_wholly_inert() {
+    let mut cases = Vec::new();
+    for (menu_width, workspace_width, point) in [
+        (f32::NAN, 70.0, Point::new(325.0, 10.0)),
+        (0.0, 70.0, Point::new(325.0, 10.0)),
+        (50.25, f32::NAN, Point::new(10.0, 10.0)),
+        (50.25, 0.0, Point::new(10.0, 10.0)),
+        (200.0, 70.0, Point::new(325.0, 10.0)),
+        (50.25, 130.0, Point::new(10.0, 10.0)),
+        (100.0, 80.0, Point::new(10.0, 10.0)),
+        (100.0, 80.0, Point::new(325.0, 10.0)),
     ] {
         let mut candidate = bar();
-        candidate.config = config;
-        let mut memory = UiMemory::new();
-        let (output, frame) = run(
-            &mut candidate,
-            &mut memory,
-            pointer(Point::new(10.0, 10.0), Some(false)),
-        );
-        assert!(output.intents.is_empty() && output.drag_safe_regions.is_empty());
-        assert!(
-            frame
-                .semantics
-                .get(candidate.menu_widget_id(FILE))
-                .is_none()
-        );
+        candidate.config.menu_width = menu_width;
+        candidate.config.workspace_width = workspace_width;
+        cases.push((candidate, point));
     }
+    let mut duplicate_menu = bar();
+    duplicate_menu.menu_bar = MenuBar::from_menus([
+        MenuBarMenu::from_actions(FILE, "File", [ActionDescriptor::new("open", "Open")]),
+        MenuBarMenu::from_actions(FILE, "Again", [ActionDescriptor::new("save", "Save")]),
+    ]);
+    cases.push((duplicate_menu, Point::new(325.0, 10.0)));
+    let mut duplicate_workspace = bar();
+    duplicate_workspace.workspaces[1].id = W1;
+    cases.push((duplicate_workspace, Point::new(10.0, 10.0)));
+    for (mut candidate, point) in cases {
+        let mut memory = UiMemory::new();
+        for down in [true, false] {
+            let (output, frame) = run(&mut candidate, &mut memory, pointer(point, Some(down)));
+            assert!(output.responses.is_empty());
+            assert!(output.intents.is_empty() && output.drag_safe_regions.is_empty());
+            let root = frame.semantics.get(candidate.config.root).unwrap();
+            assert!(root.children.is_empty());
+            assert_eq!(frame.semantics.len(), 1);
+        }
+    }
+    let mut invalid_root = bar();
+    invalid_root.config.bounds = Rect::ZERO;
+    let (_, frame) = run(&mut invalid_root, &mut UiMemory::new(), UiInput::default());
+    assert!(frame.semantics.is_empty());
 }

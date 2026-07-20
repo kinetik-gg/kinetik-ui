@@ -14,10 +14,10 @@ mod toolbar;
 mod window_system_menu;
 
 pub use application_bar::{
-    ApplicationBar, ApplicationBarConfig, ApplicationBarIntent, ApplicationBarOutput, WorkspaceTab,
-    WorkspaceTabId, WorkspaceTabTarget,
+    ApplicationBar, ApplicationBarConfig, ApplicationBarIntent, ApplicationBarOutput,
+    PreparedApplicationBar, WorkspaceTab, WorkspaceTabId, WorkspaceTabTarget,
 };
-pub(crate) use application_bar::{ApplicationBarLayout, ApplicationBarRow, ApplicationBarRowKind};
+pub(crate) use application_bar::{ApplicationBarRow, ApplicationBarRowKind};
 pub use diagnostics::{
     DiagnosticField, DiagnosticFieldValue, DiagnosticSource, DiagnosticStrip, DiagnosticStripItem,
     DiagnosticStripItemId, DiagnosticStripSeverity, DiagnosticStripSummary,

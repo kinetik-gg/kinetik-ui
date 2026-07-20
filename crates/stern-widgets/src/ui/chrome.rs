@@ -9,9 +9,9 @@ use stern_text::{TextLayoutKey, TextOverflow, TextStyle};
 
 use super::{Ui, response_activated};
 use crate::chrome::{
-    ApplicationBar, ApplicationBarIntent, ApplicationBarLayout, ApplicationBarOutput,
-    ApplicationBarRow, ApplicationBarRowKind, ChromeScene, ChromeSceneIntent, ChromeSceneOutput,
-    ChromeSceneRow, ChromeSceneRowKind, ChromeSurfaceKind, WindowSystemMenuTrigger,
+    ApplicationBar, ApplicationBarIntent, ApplicationBarOutput, ApplicationBarRow,
+    ApplicationBarRowKind, ChromeScene, ChromeSceneIntent, ChromeSceneOutput, ChromeSceneRow,
+    ChromeSceneRowKind, ChromeSurfaceKind, PreparedApplicationBar, WindowSystemMenuTrigger,
 };
 use crate::components::{
     ButtonFocusPlacement, TabFocusPlacement, button_surface_primitives, tab_surface_primitives,
@@ -21,29 +21,30 @@ use crate::icon_button;
 impl Ui<'_> {
     /// Paints and evaluates one public application menu/workspace composition.
     ///
-    /// Call [`ApplicationBar::declare_pointer_targets`] in the frame's pointer
-    /// prepass before evaluating this method.
+    /// Use the same [`PreparedApplicationBar`] for the pointer prepass and this
+    /// evaluation so hit, paint, response, output, and semantic geometry agree.
     #[allow(clippy::too_many_lines)]
-    pub fn application_bar(&mut self, bar: &mut ApplicationBar) -> ApplicationBarOutput {
-        let Some(layout) = bar.layout() else {
+    pub fn application_bar(
+        &mut self,
+        bar: &mut ApplicationBar,
+        layout: &PreparedApplicationBar,
+    ) -> ApplicationBarOutput {
+        if !layout.matches(bar) {
             return ApplicationBarOutput::default();
-        };
+        }
         let mut output = ApplicationBarOutput {
             drag_safe_regions: layout.drag_safe.into_iter().collect(),
             ..ApplicationBarOutput::default()
         };
-        reconcile_workspace_focus(self, bar, &layout);
-        let events = self.input().keyboard.events.clone();
-        let menu_owned = handle_menu_keyboard(self, bar, &layout, &events, &mut output);
-        if !menu_owned {
-            handle_workspace_keyboard(self, bar, &layout, &events);
-        }
-
         let root = bar.config.root;
         self.register_id(root);
-        self.register_id(layout.menu_composite);
-        self.register_id(layout.workspace_composite);
         self.paint_application_bar_surface(layout.bounds);
+        let composite_children = layout
+            .menu_bounds
+            .zip(layout.workspace_bounds)
+            .map_or_else(Vec::new, |_| {
+                vec![layout.menu_composite, layout.workspace_composite]
+            });
         self.push_semantic_node(
             SemanticNode::new(
                 root,
@@ -51,13 +52,27 @@ impl Ui<'_> {
                 layout.bounds,
             )
             .with_label("Application bar")
-            .with_children(vec![layout.menu_composite, layout.workspace_composite]),
+            .with_children(composite_children),
         );
+        let (Some(menu_bounds), Some(workspace_bounds)) =
+            (layout.menu_bounds, layout.workspace_bounds)
+        else {
+            return output;
+        };
+        reconcile_workspace_focus(self, bar, layout);
+        let events = self.input().keyboard.events.clone();
+        let menu_owned = handle_menu_keyboard(self, bar, layout, &events, &mut output);
+        if !menu_owned {
+            handle_workspace_keyboard(self, bar, layout, &events);
+        }
+
+        self.register_id(layout.menu_composite);
+        self.register_id(layout.workspace_composite);
         self.push_semantic_node(
             SemanticNode::new(
                 layout.menu_composite,
                 SemanticRole::Custom("menu-bar".to_owned()),
-                layout.bounds,
+                menu_bounds,
             )
             .with_label("Application menu")
             .with_children(layout.menu_rows.iter().map(|row| row.id)),
@@ -66,7 +81,7 @@ impl Ui<'_> {
             SemanticNode::new(
                 layout.workspace_composite,
                 SemanticRole::TabList,
-                layout.bounds,
+                workspace_bounds,
             )
             .with_label("Workspaces")
             .with_children(layout.workspace_rows.iter().map(|row| row.id)),
@@ -134,7 +149,7 @@ impl Ui<'_> {
             .or_else(|| {
                 bar.menu_bar
                     .active_id()
-                    .and_then(|active| menu_row(&layout, active))
+                    .and_then(|active| menu_row(layout, active))
             })
             .or_else(|| layout.menu_rows.first())
             .map(|row| row.id);
@@ -511,7 +526,7 @@ fn chrome_row_semantics(
 fn reconcile_workspace_focus(
     ui: &mut Ui<'_>,
     bar: &mut ApplicationBar,
-    layout: &ApplicationBarLayout,
+    layout: &PreparedApplicationBar,
 ) {
     let focused = ui.memory().focused();
     let focused_row = layout
@@ -552,7 +567,7 @@ fn reconcile_workspace_focus(
 
 fn workspace_fallback(
     bar: &ApplicationBar,
-    layout: &ApplicationBarLayout,
+    layout: &PreparedApplicationBar,
 ) -> Option<crate::chrome::WorkspaceTabId> {
     layout
         .workspace_rows
@@ -571,7 +586,7 @@ fn workspace_fallback(
 fn handle_menu_keyboard(
     ui: &mut Ui<'_>,
     bar: &mut ApplicationBar,
-    layout: &ApplicationBarLayout,
+    layout: &PreparedApplicationBar,
     events: &[KeyEvent],
     output: &mut ApplicationBarOutput,
 ) -> bool {
@@ -630,7 +645,7 @@ fn handle_menu_keyboard(
 fn handle_workspace_keyboard(
     ui: &mut Ui<'_>,
     bar: &mut ApplicationBar,
-    layout: &ApplicationBarLayout,
+    layout: &PreparedApplicationBar,
     events: &[KeyEvent],
 ) {
     let Some(mut index) = layout
@@ -675,7 +690,7 @@ fn handle_workspace_keyboard(
 }
 
 fn menu_row(
-    layout: &ApplicationBarLayout,
+    layout: &PreparedApplicationBar,
     id: crate::chrome::MenuBarMenuId,
 ) -> Option<&ApplicationBarRow> {
     layout
