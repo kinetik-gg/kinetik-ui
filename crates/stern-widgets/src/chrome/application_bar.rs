@@ -232,15 +232,21 @@ pub struct PreparedApplicationBar {
     pub(crate) drag_safe: Option<Rect>,
 }
 impl PreparedApplicationBar {
-    pub(crate) fn matches(&self, bar: &ApplicationBar) -> bool {
-        bar.layout(self.bounds.height).as_ref() == Some(self)
+    pub(crate) fn matches(&self, bar: &ApplicationBar, theme: &Theme) -> bool {
+        bar.prepare(theme).as_ref() == Some(self)
     }
-    /// Declares the root blocker and valid enabled child targets.
+    /// Declares the root blocker and valid enabled child targets when this
+    /// preparation still matches the current bar and active theme.
     pub fn declare_pointer_targets(
         &self,
+        bar: &ApplicationBar,
+        theme: &Theme,
         plan: &mut PointerTargetPlan,
         first_order: PointerOrder,
     ) -> PointerOrder {
+        if !self.matches(bar, theme) {
+            return first_order;
+        }
         let mut ordinal = first_order.raw();
         plan.blocker(self.bounds, take_order(&mut ordinal));
         plan.with_clip(self.bounds, |plan| {

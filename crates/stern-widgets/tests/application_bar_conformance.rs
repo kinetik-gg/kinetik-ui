@@ -1,13 +1,13 @@
 //! Windowless application-bar composition conformance.
 use stern_core::{
     ActionDescriptor, Brush, FrameContext, Key, KeyEvent, KeyState, KeyboardInput, Modifiers,
-    PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, Primitive, Rect,
-    ScaleFactor, SemanticActionKind, SemanticRole, Size, Theme, TimeInfo, UiInput, UiInputEvent,
-    UiMemory, ViewportInfo, WidgetId, default_dark_theme,
+    PhysicalSize, Point, PointerButtonState, PointerInput, PointerOrder, PointerTarget, Primitive,
+    Rect, ScaleFactor, SemanticActionKind, SemanticRole, Size, Theme, TimeInfo, UiInput,
+    UiInputEvent, UiMemory, ViewportInfo, WidgetId, default_dark_theme,
 };
 use stern_widgets::{
     ApplicationBar, ApplicationBarConfig, ApplicationBarIntent, MenuBar, MenuBarMenu,
-    MenuBarMenuId, Ui, WorkspaceTab, WorkspaceTabId,
+    MenuBarMenuId, PreparedApplicationBar, Ui, WorkspaceTab, WorkspaceTabId,
 };
 const FILE: MenuBarMenuId = MenuBarMenuId::from_raw(1);
 const VIEW: MenuBarMenuId = MenuBarMenuId::from_raw(3);
@@ -95,7 +95,7 @@ fn run_with_theme(
     let mut ui = Ui::begin_frame(context, memory, theme);
     ui.resolve_pointer_targets(|plan| {
         if let Some(prepared) = &prepared {
-            prepared.declare_pointer_targets(plan, PointerOrder::new(10));
+            prepared.declare_pointer_targets(bar, theme, plan, PointerOrder::new(10));
         }
     })
     .unwrap();
@@ -103,6 +103,45 @@ fn run_with_theme(
         ui.application_bar(bar, prepared)
     });
     (output, ui.finish_output())
+}
+fn assert_preparation_mismatch_is_inert(
+    bar: &mut ApplicationBar,
+    prepared: &PreparedApplicationBar,
+    active_theme: &Theme,
+) {
+    let input = pointer(Point::new(325.0, 10.0), Some(true));
+    let context = FrameContext::new(
+        ViewportInfo::new(
+            Size::new(500.0, 200.0),
+            PhysicalSize::new(500, 200),
+            ScaleFactor::ONE,
+        ),
+        input,
+        TimeInfo::default(),
+    );
+    let probe_id = WidgetId::from_key("application-bar-mismatch-probe");
+    let probe_rect = Rect::new(0.0, 0.0, 500.0, 200.0);
+    let mut memory = UiMemory::new();
+    let mut ui = Ui::begin_frame(context, &mut memory, active_theme);
+    let mut next_order = PointerOrder::new(u64::MAX);
+    ui.resolve_pointer_targets(|plan| {
+        plan.target(PointerTarget::new(
+            probe_id,
+            probe_rect,
+            PointerOrder::new(0),
+        ));
+        next_order =
+            prepared.declare_pointer_targets(bar, active_theme, plan, PointerOrder::new(10));
+    })
+    .unwrap();
+    let probe = ui.pressable_with_id(probe_id, probe_rect, false);
+    let output = ui.application_bar(bar, prepared);
+    let frame = ui.finish_output();
+    assert_eq!(next_order, PointerOrder::new(10));
+    assert!(probe.state.hovered && probe.state.pressed);
+    assert!(output.responses.is_empty());
+    assert!(output.intents.is_empty() && output.drag_safe_regions.is_empty());
+    assert!(frame.primitives.is_empty() && frame.semantics.is_empty());
 }
 #[test]
 fn composition_geometry_semantics_and_ids_are_exact() {
@@ -368,6 +407,28 @@ fn customized_theme_height_is_authoritative_everywhere() {
     assert!(!focused.state.selected && focused.state.focused);
     theme.sizes.workspace_bar = f32::NAN;
     assert!(candidate.prepare(&theme).is_none());
+}
+#[test]
+fn stale_bar_or_active_theme_preparation_is_inert() {
+    let mut prepared_theme = default_dark_theme();
+    prepared_theme.sizes.workspace_bar = 31.25;
+
+    let mut changed_theme_bar = bar();
+    let prepared = changed_theme_bar.prepare(&prepared_theme).unwrap();
+    let mut active_theme = prepared_theme;
+    active_theme.sizes.workspace_bar = 32.75;
+    assert_preparation_mismatch_is_inert(&mut changed_theme_bar, &prepared, &active_theme);
+
+    let mut invalid_theme_bar = bar();
+    let prepared = invalid_theme_bar.prepare(&prepared_theme).unwrap();
+    let mut invalid_theme = prepared_theme;
+    invalid_theme.sizes.workspace_bar = f32::NAN;
+    assert_preparation_mismatch_is_inert(&mut invalid_theme_bar, &prepared, &invalid_theme);
+
+    let mut changed_bar = bar();
+    let prepared = changed_bar.prepare(&prepared_theme).unwrap();
+    changed_bar.config.workspace_width = 71.0;
+    assert_preparation_mismatch_is_inert(&mut changed_bar, &prepared, &prepared_theme);
 }
 #[test]
 fn invalid_duplicate_overflow_and_overlap_geometry_is_wholly_inert() {

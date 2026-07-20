@@ -29,7 +29,7 @@ impl Ui<'_> {
         bar: &mut ApplicationBar,
         layout: &PreparedApplicationBar,
     ) -> ApplicationBarOutput {
-        if !layout.matches(bar) {
+        if !layout.matches(bar, self.theme()) {
             return ApplicationBarOutput::default();
         }
         let mut output = ApplicationBarOutput {
