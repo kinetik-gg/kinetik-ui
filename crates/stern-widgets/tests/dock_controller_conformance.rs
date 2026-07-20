@@ -11,8 +11,8 @@ use stern_core::{
 use stern_widgets::Ui;
 use stern_widgets::dock::{
     Dock, DockController, DockControllerConfig, DockControllerOutput, DockNode, DockScene,
-    DockSceneConfig, DockSplitterContextActionKind, Frame, FrameId, Panel, PanelId,
-    PanelInstanceId, PanelInstanceLocation, PanelInstanceSnapshot, PanelTypeDescriptor,
+    DockSceneConfig, DockSnapshotNode, DockSplitterContextActionKind, Frame, FrameId, Panel,
+    PanelId, PanelInstanceId, PanelInstanceLocation, PanelInstanceSnapshot, PanelTypeDescriptor,
     PanelTypeId,
 };
 
@@ -47,6 +47,44 @@ fn split_dock_with_axis(axis: Axis) -> Dock {
         ))),
         second: Box::new(DockNode::Frame(frame(2, vec![panel(21, "Viewport")]))),
     })
+}
+
+fn replacement_split_dock() -> Dock {
+    Dock::new(DockNode::Split {
+        axis: Axis::Horizontal,
+        ratio: 0.25,
+        min_first: 24.0,
+        min_second: 36.0,
+        first: Box::new(DockNode::Frame(frame(
+            7,
+            vec![panel(71, "Replacement left")],
+        ))),
+        second: Box::new(DockNode::Split {
+            axis: Axis::Vertical,
+            ratio: 0.6,
+            min_first: 18.0,
+            min_second: 22.0,
+            first: Box::new(DockNode::Frame(frame(
+                8,
+                vec![panel(81, "Replacement top")],
+            ))),
+            second: Box::new(DockNode::Frame(frame(
+                9,
+                vec![panel(91, "Replacement bottom")],
+            ))),
+        }),
+    })
+}
+
+fn root_split_ratio(dock: &Dock) -> f32 {
+    match dock.snapshot().root {
+        DockSnapshotNode::Split { ratio, .. } => ratio,
+        DockSnapshotNode::Frame { .. } => panic!("expected root split"),
+    }
+}
+
+fn snapshot_bytes(dock: &Dock) -> Vec<u8> {
+    format!("{:?}", dock.snapshot()).into_bytes()
 }
 
 fn context(input: UiInput) -> FrameContext {
@@ -517,7 +555,7 @@ fn splitter_drag_resizes_immediately_commits_on_release_and_keeps_capture_cursor
         FrameId::from_raw(90),
     );
     assert!(first_move.changed);
-    assert!((scene(&dock).layout().splitters[0].ratio - (0.5 + 40.0 / 600.0)).abs() < 1e-6);
+    assert!((root_split_ratio(&dock) - (0.5 + 40.0 / 600.0)).abs() < 1e-6);
     assert!(
         first_frame
             .platform_requests
@@ -533,7 +571,7 @@ fn splitter_drag_resizes_immediately_commits_on_release_and_keeps_capture_cursor
         FrameId::from_raw(90),
     );
     assert!(second_move.changed);
-    assert!((scene(&dock).layout().splitters[0].ratio - 0.6).abs() < 1e-6);
+    assert!((root_split_ratio(&dock) - 0.6).abs() < 1e-6);
     assert!(
         second_frame
             .platform_requests
@@ -703,6 +741,109 @@ fn splitter_owner_removal_rolls_back_but_stale_topology_is_not_resurrected() {
     assert_eq!(stale_dock.snapshot(), merged);
     assert!(!stale.changed);
     assert_eq!(stale_memory.pointer_capture(), None);
+}
+
+#[test]
+fn same_path_replacement_topology_never_receives_old_splitter_transaction() {
+    for case in [
+        "move",
+        "release",
+        "release-all",
+        "focus-loss",
+        "disabled-reconcile",
+        "ordinary-reconcile",
+    ] {
+        let mut dock = split_dock();
+        let splitter = scene(&dock).layout().splitters[0].clone();
+        let start = center(splitter.rect);
+        let moved = Point::new(start.x + 40.0, start.y);
+        let mut controller = DockController::new();
+        let mut memory = UiMemory::new();
+
+        let _ = run_frame(
+            &mut dock,
+            &mut controller,
+            &mut memory,
+            pointer_button(start, MouseButton::Primary, true),
+            FrameId::from_raw(90),
+        );
+        let _ = run_frame(
+            &mut dock,
+            &mut controller,
+            &mut memory,
+            pointer_move(moved, Vec2::new(40.0, 0.0)),
+            FrameId::from_raw(90),
+        );
+        assert!(
+            (root_split_ratio(&dock) - 0.5).abs() > f32::EPSILON,
+            "{case}"
+        );
+
+        dock = replacement_split_dock();
+        let replacement_snapshot = dock.snapshot();
+        let replacement_bytes = snapshot_bytes(&dock);
+        let (output, frame_output) = match case {
+            "move" => run_frame(
+                &mut dock,
+                &mut controller,
+                &mut memory,
+                pointer_move(Point::new(moved.x + 20.0, moved.y), Vec2::new(20.0, 0.0)),
+                FrameId::from_raw(90),
+            ),
+            "release" => run_frame(
+                &mut dock,
+                &mut controller,
+                &mut memory,
+                pointer_button(moved, MouseButton::Primary, false),
+                FrameId::from_raw(90),
+            ),
+            "release-all" => run_frame(
+                &mut dock,
+                &mut controller,
+                &mut memory,
+                pointer_release_all(moved),
+                FrameId::from_raw(90),
+            ),
+            "focus-loss" => run_frame(
+                &mut dock,
+                &mut controller,
+                &mut memory,
+                window_focus_lost(),
+                FrameId::from_raw(90),
+            ),
+            "disabled-reconcile" => run_frame_with_disabled(
+                &mut dock,
+                &mut controller,
+                &mut memory,
+                UiInput::default(),
+                FrameId::from_raw(90),
+                true,
+            ),
+            "ordinary-reconcile" => run_frame(
+                &mut dock,
+                &mut controller,
+                &mut memory,
+                UiInput::default(),
+                FrameId::from_raw(90),
+            ),
+            _ => unreachable!(),
+        };
+
+        assert_eq!(dock.snapshot(), replacement_snapshot, "{case}");
+        assert_eq!(snapshot_bytes(&dock), replacement_bytes, "{case}");
+        assert!(!output.changed, "{case}");
+        assert!(output.close_requests.is_empty(), "{case}");
+        assert!(output.splitter_context_requests.is_empty(), "{case}");
+        assert!(output.drop_preview.is_none(), "{case}");
+        assert_eq!(memory.pointer_capture(), None, "{case}");
+        assert!(
+            frame_output
+                .platform_requests
+                .iter()
+                .all(|request| !matches!(request, PlatformRequest::SetCursor(_))),
+            "{case}"
+        );
+    }
 }
 
 #[test]

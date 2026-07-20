@@ -4,7 +4,7 @@ use stern_core::{Axis, PointerOrder, PointerTarget, PointerTargetPlan, Rect, Wid
 
 use super::{
     Dock, DockChromeStyle, DockDropTarget, DockPlacement, DockSplitPath, FrameId, PanelId,
-    frame_tabs, solve_dock_layout, solve_dock_splitters_with_style,
+    frame_tabs, solve_dock_scene_geometry,
 };
 
 const DEFAULT_TAB_HEIGHT: f32 = 28.0;
@@ -143,10 +143,35 @@ pub struct DockSceneSplitter {
     pub axis: Axis,
     /// Effective hit bounds clipped to the dock.
     pub rect: Rect,
-    /// One-unit neutral shared divider painted inside the hit bounds.
-    pub divider_rect: Rect,
-    /// Current sanitized split ratio.
-    pub ratio: f32,
+}
+
+impl DockSceneSplitter {
+    /// Returns the one-unit neutral divider centered inside the hit bounds.
+    #[must_use]
+    pub fn divider_rect(&self) -> Rect {
+        const DIVIDER_THICKNESS: f32 = 1.0;
+
+        match self.axis {
+            Axis::Horizontal => {
+                let width = DIVIDER_THICKNESS.min(self.rect.width);
+                Rect::new(
+                    self.rect.x + (self.rect.width - width) * 0.5,
+                    self.rect.y,
+                    width,
+                    self.rect.height,
+                )
+            }
+            Axis::Vertical => {
+                let height = DIVIDER_THICKNESS.min(self.rect.height);
+                Rect::new(
+                    self.rect.x,
+                    self.rect.y + (self.rect.height - height) * 0.5,
+                    self.rect.width,
+                    height,
+                )
+            }
+        }
+    }
 }
 
 /// Visual kind for a prepared drop preview.
@@ -344,7 +369,9 @@ fn prepare_layout(config: DockSceneConfig, dock: &Dock) -> DockSceneLayout {
     };
 
     let tab_height = sanitize_tab_height(config.tab_height);
-    let frames = solve_dock_layout(dock, bounds)
+    let (frame_layouts, solved_splitters) =
+        solve_dock_scene_geometry(dock, bounds, config.chrome_style);
+    let frames = frame_layouts
         .into_iter()
         .filter_map(|layout| {
             let frame = dock.frame(layout.frame)?;
@@ -380,18 +407,15 @@ fn prepare_layout(config: DockSceneConfig, dock: &Dock) -> DockSceneLayout {
         })
         .collect::<Vec<_>>();
 
-    let splitters = solve_dock_splitters_with_style(dock, bounds, config.chrome_style)
+    let splitters = solved_splitters
         .into_iter()
         .filter_map(|splitter| {
             let rect = splitter.rect.intersection(bounds)?;
-            let divider_rect = splitter_divider_rect(splitter.axis, splitter.rect, rect);
             Some(DockSceneSplitter {
                 id: splitter_widget_id(config.root, &splitter.path),
                 path: splitter.path,
                 axis: splitter.axis,
                 rect,
-                divider_rect,
-                ratio: splitter.ratio,
             })
         })
         .collect();
@@ -531,25 +555,6 @@ fn panel_widget_id(root: WidgetId, panel: PanelId) -> WidgetId {
 
 fn splitter_widget_id(root: WidgetId, path: &DockSplitPath) -> WidgetId {
     root.child(("splitter", path))
-}
-
-fn splitter_divider_rect(axis: Axis, solved: Rect, hit: Rect) -> Rect {
-    const DIVIDER_THICKNESS: f32 = 1.0;
-
-    match axis {
-        Axis::Horizontal => {
-            let width = DIVIDER_THICKNESS.min(hit.width);
-            let centered = solved.x + (solved.width - width) * 0.5;
-            let x = centered.clamp(hit.min_x(), (hit.max_x() - width).max(hit.min_x()));
-            Rect::new(x, hit.y, width, hit.height)
-        }
-        Axis::Vertical => {
-            let height = DIVIDER_THICKNESS.min(hit.height);
-            let centered = solved.y + (solved.height - height) * 0.5;
-            let y = centered.clamp(hit.min_y(), (hit.max_y() - height).max(hit.min_y()));
-            Rect::new(hit.x, y, hit.width, height)
-        }
-    }
 }
 
 fn sanitize_tab_height(height: f32) -> f32 {

@@ -242,38 +242,60 @@ impl Ui<'_> {
             for action in gesture.actions {
                 match action.phase {
                     DomainDragGesturePhase::Press => {
-                        if controller.splitter_resize.is_none() {
-                            let starting_ratio = dock
-                                .split_ratio_at_path(&splitter.path)
-                                .unwrap_or(splitter.ratio);
+                        if controller.splitter_resize.is_none()
+                            && let (Some(starting_ratio), Some(topology)) = (
+                                dock.split_ratio_at_path(&splitter.path),
+                                dock.split_topology_fingerprint_at_path(&splitter.path),
+                            )
+                        {
                             controller.splitter_resize = Some(DockSplitterResizeTransaction {
                                 widget: splitter.id,
                                 path: splitter.path.clone(),
                                 starting_ratio,
+                                topology,
                             });
                         }
                     }
                     DomainDragGesturePhase::Move => {
-                        if controller
+                        let addressed = controller
                             .splitter_resize
                             .as_ref()
-                            .is_some_and(|resize| resize.path == splitter.path)
+                            .is_some_and(|resize| resize.path == splitter.path);
+                        if addressed
+                            && controller.splitter_resize.as_ref().is_some_and(|resize| {
+                                dock.split_topology_fingerprint_at_path(&resize.path)
+                                    .as_ref()
+                                    == Some(&resize.topology)
+                            })
                         {
-                            dock.resize_split_with_policy(
+                            dock.resize_split_with_policy_and_style(
                                 &splitter.path,
                                 bounds,
                                 action.delta,
                                 config.policy,
+                                scene.config().chrome_style,
                             );
+                        } else if addressed {
+                            controller.splitter_resize = None;
+                            self.runtime.memory_mut().cancel_pointer_interaction();
                         }
                     }
                     DomainDragGesturePhase::Release => {
-                        if controller
+                        let addressed = controller
                             .splitter_resize
                             .as_ref()
-                            .is_some_and(|resize| resize.path == splitter.path)
-                        {
+                            .is_some_and(|resize| resize.path == splitter.path);
+                        if addressed {
+                            let topology_matches =
+                                controller.splitter_resize.as_ref().is_some_and(|resize| {
+                                    dock.split_topology_fingerprint_at_path(&resize.path)
+                                        .as_ref()
+                                        == Some(&resize.topology)
+                                });
                             controller.splitter_resize = None;
+                            if !topology_matches {
+                                self.runtime.memory_mut().cancel_pointer_interaction();
+                            }
                         }
                     }
                     DomainDragGesturePhase::Cancel => {
@@ -283,7 +305,18 @@ impl Ui<'_> {
                             .is_some_and(|resize| resize.path == splitter.path)
                             && let Some(resize) = controller.splitter_resize.take()
                         {
-                            dock.restore_split_ratio_at_path(&resize.path, resize.starting_ratio);
+                            if dock
+                                .split_topology_fingerprint_at_path(&resize.path)
+                                .as_ref()
+                                == Some(&resize.topology)
+                            {
+                                dock.restore_split_ratio_at_path(
+                                    &resize.path,
+                                    resize.starting_ratio,
+                                );
+                            } else {
+                                self.runtime.memory_mut().cancel_pointer_interaction();
+                            }
                         }
                     }
                 }
@@ -414,17 +447,20 @@ impl Ui<'_> {
         let Some(resize) = controller.splitter_resize.clone() else {
             return;
         };
-        let path_exists = dock.split_ratio_at_path(&resize.path).is_some();
+        let topology_matches = dock
+            .split_topology_fingerprint_at_path(&resize.path)
+            .as_ref()
+            == Some(&resize.topology);
         let owner_present = scene
             .layout()
             .splitters
             .iter()
             .any(|splitter| splitter.id == resize.widget && splitter.path == resize.path);
 
-        if path_exists && owner_present && enabled {
+        if topology_matches && owner_present && enabled {
             return;
         }
-        if path_exists {
+        if topology_matches {
             dock.restore_split_ratio_at_path(&resize.path, resize.starting_ratio);
         }
         controller.splitter_resize = None;
@@ -567,7 +603,7 @@ impl Ui<'_> {
         for splitter in &layout.splitters {
             self.register_id(splitter.id);
             self.primitive(Primitive::Rect(RectPrimitive {
-                rect: splitter.divider_rect,
+                rect: splitter.divider_rect(),
                 fill: Some(Brush::Solid(self.theme.colors.border.default)),
                 stroke: None,
                 radius: self.theme.radii.none,
