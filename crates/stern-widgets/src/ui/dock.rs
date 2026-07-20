@@ -1,11 +1,12 @@
 use stern_core::{
-    Brush, ClipId, ComponentState, DomainDragGesturePhase, Key, KeyState, Point, Primitive, Rect,
-    RectPrimitive, RepaintRequest, SemanticNode, SemanticRole, Stroke, TextPrimitive, TextRole,
-    context_menu_trigger, drop_target,
+    Brush, ClipId, ComponentState, CursorShape, DomainDragGesturePhase, Key, KeyState, Point,
+    Primitive, Rect, RectPrimitive, RepaintRequest, SemanticNode, SemanticRole, Stroke,
+    TextPrimitive, TextRole, context_menu_trigger, drop_target,
 };
 
 use super::Ui;
 use crate::components::{TabFocusPlacement, tab_surface_primitives};
+use crate::dock::DockSplitterResizeTransaction;
 use crate::dock::{
     Dock, DockController, DockControllerConfig, DockControllerFocus, DockControllerOutput,
     DockDropTarget, DockNeighborDirection, DockScene, DockSceneFrame, DockScenePanel,
@@ -87,6 +88,12 @@ impl Ui<'_> {
         let mut output = DockControllerOutput::default();
 
         self.reconcile_dock_controller(scene, dock, controller);
+        self.reconcile_dock_splitter_resize(
+            scene,
+            dock,
+            controller,
+            !disabled && config.policy.splitters.allow_resize,
+        );
         let drag_was_retained = controller.drag.is_some();
 
         for frame in &scene.layout().frames {
@@ -233,15 +240,60 @@ impl Ui<'_> {
             );
             let pointer_context_requested = gesture.response.secondary_clicked;
             for action in gesture.actions {
-                if matches!(action.phase, DomainDragGesturePhase::Move) {
-                    dock.resize_split_with_policy(
-                        &splitter.path,
-                        bounds,
-                        action.delta,
-                        config.policy,
-                    );
+                match action.phase {
+                    DomainDragGesturePhase::Press => {
+                        if controller.splitter_resize.is_none() {
+                            let starting_ratio = dock
+                                .split_ratio_at_path(&splitter.path)
+                                .unwrap_or(splitter.ratio);
+                            controller.splitter_resize = Some(DockSplitterResizeTransaction {
+                                widget: splitter.id,
+                                path: splitter.path.clone(),
+                                starting_ratio,
+                            });
+                        }
+                    }
+                    DomainDragGesturePhase::Move => {
+                        if controller
+                            .splitter_resize
+                            .as_ref()
+                            .is_some_and(|resize| resize.path == splitter.path)
+                        {
+                            dock.resize_split_with_policy(
+                                &splitter.path,
+                                bounds,
+                                action.delta,
+                                config.policy,
+                            );
+                        }
+                    }
+                    DomainDragGesturePhase::Release => {
+                        if controller
+                            .splitter_resize
+                            .as_ref()
+                            .is_some_and(|resize| resize.path == splitter.path)
+                        {
+                            controller.splitter_resize = None;
+                        }
+                    }
+                    DomainDragGesturePhase::Cancel => {
+                        if controller
+                            .splitter_resize
+                            .as_ref()
+                            .is_some_and(|resize| resize.path == splitter.path)
+                            && let Some(resize) = controller.splitter_resize.take()
+                        {
+                            dock.restore_split_ratio_at_path(&resize.path, resize.starting_ratio);
+                        }
+                    }
                 }
             }
+
+            let cursor = match splitter.axis {
+                stern_core::Axis::Horizontal => CursorShape::ResizeHorizontal,
+                stern_core::Axis::Vertical => CursorShape::ResizeVertical,
+            };
+            self.runtime.request_cursor_for(splitter.id, cursor);
 
             let (input, memory) = self.runtime.input_and_memory_mut();
             let context = context_menu_trigger(splitter.id, splitter.rect, input, memory, disabled);
@@ -350,6 +402,33 @@ impl Ui<'_> {
         if let Some(focus) = scene_focus_for_widget(scene, self.memory().focused()) {
             controller.focus = Some(focus);
         }
+    }
+
+    fn reconcile_dock_splitter_resize(
+        &mut self,
+        scene: &DockScene,
+        dock: &mut Dock,
+        controller: &mut DockController,
+        enabled: bool,
+    ) {
+        let Some(resize) = controller.splitter_resize.clone() else {
+            return;
+        };
+        let path_exists = dock.split_ratio_at_path(&resize.path).is_some();
+        let owner_present = scene
+            .layout()
+            .splitters
+            .iter()
+            .any(|splitter| splitter.id == resize.widget && splitter.path == resize.path);
+
+        if path_exists && owner_present && enabled {
+            return;
+        }
+        if path_exists {
+            dock.restore_split_ratio_at_path(&resize.path, resize.starting_ratio);
+        }
+        controller.splitter_resize = None;
+        self.runtime.memory_mut().cancel_pointer_interaction();
     }
 
     fn select_and_focus_dock_tab(
@@ -488,7 +567,7 @@ impl Ui<'_> {
         for splitter in &layout.splitters {
             self.register_id(splitter.id);
             self.primitive(Primitive::Rect(RectPrimitive {
-                rect: splitter.rect,
+                rect: splitter.divider_rect,
                 fill: Some(Brush::Solid(self.theme.colors.border.default)),
                 stroke: None,
                 radius: self.theme.radii.none,

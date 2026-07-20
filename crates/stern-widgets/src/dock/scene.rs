@@ -141,8 +141,12 @@ pub struct DockSceneSplitter {
     pub path: DockSplitPath,
     /// Split orientation.
     pub axis: Axis,
-    /// Hit and paint bounds clipped to the dock.
+    /// Effective hit bounds clipped to the dock.
     pub rect: Rect,
+    /// One-unit neutral shared divider painted inside the hit bounds.
+    pub divider_rect: Rect,
+    /// Current sanitized split ratio.
+    pub ratio: f32,
 }
 
 /// Visual kind for a prepared drop preview.
@@ -380,11 +384,14 @@ fn prepare_layout(config: DockSceneConfig, dock: &Dock) -> DockSceneLayout {
         .into_iter()
         .filter_map(|splitter| {
             let rect = splitter.rect.intersection(bounds)?;
+            let divider_rect = splitter_divider_rect(splitter.axis, splitter.rect, rect);
             Some(DockSceneSplitter {
                 id: splitter_widget_id(config.root, &splitter.path),
                 path: splitter.path,
                 axis: splitter.axis,
                 rect,
+                divider_rect,
+                ratio: splitter.ratio,
             })
         })
         .collect();
@@ -524,6 +531,25 @@ fn panel_widget_id(root: WidgetId, panel: PanelId) -> WidgetId {
 
 fn splitter_widget_id(root: WidgetId, path: &DockSplitPath) -> WidgetId {
     root.child(("splitter", path))
+}
+
+fn splitter_divider_rect(axis: Axis, solved: Rect, hit: Rect) -> Rect {
+    const DIVIDER_THICKNESS: f32 = 1.0;
+
+    match axis {
+        Axis::Horizontal => {
+            let width = DIVIDER_THICKNESS.min(hit.width);
+            let centered = solved.x + (solved.width - width) * 0.5;
+            let x = centered.clamp(hit.min_x(), (hit.max_x() - width).max(hit.min_x()));
+            Rect::new(x, hit.y, width, hit.height)
+        }
+        Axis::Vertical => {
+            let height = DIVIDER_THICKNESS.min(hit.height);
+            let centered = solved.y + (solved.height - height) * 0.5;
+            let y = centered.clamp(hit.min_y(), (hit.max_y() - height).max(hit.min_y()));
+            Rect::new(hit.x, y, hit.width, height)
+        }
+    }
 }
 
 fn sanitize_tab_height(height: f32) -> f32 {

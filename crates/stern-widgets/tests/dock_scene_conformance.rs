@@ -268,18 +268,42 @@ fn nested_splits_prepare_expected_geometry_and_splitter_primitives() {
     assert_eq!(splitters.len(), 2);
     assert_eq!(splitters[0].path, DockSplitPath::root());
     assert_eq!(splitters[0].axis, Axis::Horizontal);
+    assert_eq!(splitters[0].ratio, 0.4);
     assert_eq!(splitters[0].rect, Rect::new(236.0, 0.0, 8.0, 400.0));
+    assert_eq!(splitters[0].divider_rect, Rect::new(239.5, 0.0, 1.0, 400.0));
     assert_eq!(
         splitters[1].path,
         DockSplitPath::root().child(DockPathElement::Second)
     );
     assert_eq!(splitters[1].axis, Axis::Vertical);
+    assert_eq!(splitters[1].ratio, 0.5);
     assert_eq!(splitters[1].rect, Rect::new(240.0, 196.0, 360.0, 8.0));
+    assert_eq!(
+        splitters[1].divider_rect,
+        Rect::new(240.0, 199.5, 360.0, 1.0)
+    );
 
     let output = paint(&scene);
+    let theme = default_dark_theme();
     for splitter in splitters {
-        let primitive = rect_primitive_at(&output.primitives, splitter.rect);
-        assert!(primitive.fill.is_some());
+        assert!(splitter.rect.min_x() >= BOUNDS.min_x());
+        assert!(splitter.rect.min_y() >= BOUNDS.min_y());
+        assert!(splitter.rect.max_x() <= BOUNDS.max_x());
+        assert!(splitter.rect.max_y() <= BOUNDS.max_y());
+        assert!(splitter.divider_rect.min_x() >= splitter.rect.min_x());
+        assert!(splitter.divider_rect.min_y() >= splitter.rect.min_y());
+        assert!(splitter.divider_rect.max_x() <= splitter.rect.max_x());
+        assert!(splitter.divider_rect.max_y() <= splitter.rect.max_y());
+
+        let primitive = rect_primitive_at(&output.primitives, splitter.divider_rect);
+        assert_eq!(
+            primitive.fill,
+            Some(Brush::Solid(theme.colors.border.default))
+        );
+        assert_eq!(primitive.stroke, None);
+        assert!(output.primitives.iter().all(|primitive| {
+            !matches!(primitive, Primitive::Rect(rect) if rect.rect == splitter.rect)
+        }));
     }
     assert_eq!(dock.snapshot(), snapshot);
 }

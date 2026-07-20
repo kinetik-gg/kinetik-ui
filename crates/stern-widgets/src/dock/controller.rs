@@ -45,12 +45,20 @@ pub struct DockControllerFocus {
     pub widget: WidgetId,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockSplitterResizeTransaction {
+    pub(crate) widget: WidgetId,
+    pub(crate) path: DockSplitPath,
+    pub(crate) starting_ratio: f32,
+}
+
 /// Caller-owned retained state for public Dock interactions.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DockController {
     pub(crate) drag: Option<DockTabDrag>,
     pub(crate) preview: Option<DockDropTarget>,
     pub(crate) focus: Option<DockControllerFocus>,
+    pub(crate) splitter_resize: Option<DockSplitterResizeTransaction>,
 }
 
 impl DockController {
@@ -61,6 +69,7 @@ impl DockController {
             drag: None,
             preview: None,
             focus: None,
+            splitter_resize: None,
         }
     }
 

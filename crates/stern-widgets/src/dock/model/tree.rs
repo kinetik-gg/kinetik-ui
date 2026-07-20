@@ -335,3 +335,52 @@ pub(super) fn resize_split_at_path(
         DockPathElement::Second => resize_split_at_path(second, &path[1..], second_rect, delta),
     }
 }
+
+pub(super) fn split_ratio_at_path(node: &DockNode, path: &[DockPathElement]) -> Option<f32> {
+    let DockNode::Split {
+        ratio,
+        first,
+        second,
+        ..
+    } = node
+    else {
+        return None;
+    };
+
+    match path {
+        [] => Some(*ratio),
+        [DockPathElement::First, rest @ ..] => split_ratio_at_path(first, rest),
+        [DockPathElement::Second, rest @ ..] => split_ratio_at_path(second, rest),
+    }
+}
+
+pub(super) fn set_split_ratio_at_path(
+    node: &mut DockNode,
+    path: &[DockPathElement],
+    restored_ratio: f32,
+) -> bool {
+    if !restored_ratio.is_finite() || !(0.0..=1.0).contains(&restored_ratio) {
+        return false;
+    }
+
+    let DockNode::Split {
+        ratio,
+        first,
+        second,
+        ..
+    } = node
+    else {
+        return false;
+    };
+
+    match path {
+        [] => {
+            *ratio = restored_ratio;
+            true
+        }
+        [DockPathElement::First, rest @ ..] => set_split_ratio_at_path(first, rest, restored_ratio),
+        [DockPathElement::Second, rest @ ..] => {
+            set_split_ratio_at_path(second, rest, restored_ratio)
+        }
+    }
+}

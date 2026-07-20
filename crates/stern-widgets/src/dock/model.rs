@@ -5,7 +5,8 @@ pub use split::DockSplitInsertion;
 pub(crate) use tree::{collect_frame_ids, frame_is_valid, split_children_at_path};
 use tree::{
     collect_frames, find_frame, find_frame_mut, first_valid_frame_id, insert_frame_split,
-    prune_empty_frames, resize_split_at_path, swap_frame_leaves,
+    prune_empty_frames, resize_split_at_path, set_split_ratio_at_path,
+    split_ratio_at_path as node_split_ratio_at_path, swap_frame_leaves,
 };
 
 use super::{
@@ -616,6 +617,14 @@ impl Dock {
         }
 
         resize_split_at_path(&mut self.root, path.elements(), bounds, delta)
+    }
+
+    pub(crate) fn split_ratio_at_path(&self, path: &DockSplitPath) -> Option<f32> {
+        node_split_ratio_at_path(&self.root, path.elements())
+    }
+
+    pub(crate) fn restore_split_ratio_at_path(&mut self, path: &DockSplitPath, ratio: f32) -> bool {
+        set_split_ratio_at_path(&mut self.root, path.elements(), ratio)
     }
 
     /// Creates a snapshot for persistence.
